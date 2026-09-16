@@ -34,7 +34,7 @@ jobs:
           dotnet build AgentSignaler.slnx --no-restore --configuration Release -p:Platform=x64
       - name: Build native bootstrapper policy tests
         shell: powershell
-        run: .\scripts\Build-DashboardBootstrapper.ps1 -Version 1.0.13
+        run: .\scripts\Build-DashboardBootstrapper.ps1 -Version 1.0.14
       - uses: github/codeql-action/analyze@v3
         with:
           upload: ${{ github.event.repository.private == false }}

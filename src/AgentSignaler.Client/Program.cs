@@ -30,15 +30,8 @@ internal static class Program
             var configurator = Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Configurator.exe");
             if (!File.Exists(configurator))
                 throw new InvalidDataException("Configurator is missing beside Client. Repair the Remote installation.");
-            try { coordinator = new ClientCoordinator(configPath); }
-            catch (IOException ex) when ((ex.HResult & 0xffff) is 32 or 33)
-            {
-                TrayWindow.ShowError("Agent Signaler Client is already running for this data directory. " +
-                    "Its icon may be in another Windows sign-in session. Use that icon or Configurator to control it.");
-                return 0;
-            }
-            var runtime = coordinator;
-            window = new TrayWindow(() =>
+
+            bool TryOpenConfigurator(out string? error)
             {
                 try
                 {
@@ -47,13 +40,31 @@ internal static class Program
                     start.ArgumentList.Add(configPath);
                     using var process = Process.Start(start)
                         ?? throw new InvalidOperationException("Windows did not start Configurator.");
+                    error = null;
+                    return true;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
                     System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or
                     System.Security.SecurityException)
                 {
-                    TrayWindow.ShowError("Configurator could not be opened. Repair the Remote installation.");
+                    error = "Configurator could not be opened. Repair the Remote installation.";
+                    return false;
                 }
+            }
+
+            try { coordinator = new ClientCoordinator(configPath); }
+            catch (IOException ex) when ((ex.HResult & 0xffff) is 32 or 33)
+            {
+                var response = ClientIpc.ActivateAsync(configPath).GetAwaiter().GetResult();
+                if (!response.Accepted)
+                    TrayWindow.ShowError("Agent Signaler Client is already running for this data directory. " +
+                        "Its icon may be in another Windows sign-in session. Use that icon or Configurator to control it.");
+                return 0;
+            }
+            var runtime = coordinator;
+            window = new TrayWindow(() =>
+            {
+                if (!TryOpenConfigurator(out var error)) TrayWindow.ShowError(error!);
             }, runtime.Status, runtime.RequestSnapshot);
             var tray = window;
             var exitStarted = 0;
@@ -66,7 +77,15 @@ internal static class Program
                     tray.Close(quiet ? null : response.Error);
                 });
             };
-            server = new ClientIpcServer(configPath, runtime.HandleAsync);
+            server = new ClientIpcServer(configPath, (request, cancellationToken) =>
+            {
+                if (request.Command != "activate") return runtime.HandleAsync(request, cancellationToken);
+                if (request.Event is not null || request.Hook is not null || request.ExpectedRevision is not null || request.ProbeId is not null)
+                    return Task.FromResult(new ClientIpcResponse(false, "invalid"));
+                return Task.FromResult(TryOpenConfigurator(out var error)
+                    ? runtime.Status()
+                    : new ClientIpcResponse(false, runtime.Status().State, Error: error));
+            });
             server.StopAcknowledged += () => tray.Close(null);
             runtime.Start();
             availabilityChanged = (_, change) =>

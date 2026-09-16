@@ -99,12 +99,12 @@ internal sealed partial class MainWindow
         }
     }
 
-    private void BuildTunnelSettings(StackPanel panel)
+    private void BuildTunnelSettings(StackPanel panel, StackPanel help)
     {
         panel.Children.Add(Text("Internet sharing", 18));
-        panel.Children.Add(Text(ConnectionPresentation.InternetWarning));
-        panel.Children.Add(Text("For the Dev Tunnels CLI path, installation/account checks, and setup guidance, use Settings > Prerequisite."));
-        panel.Children.Add(Text("Internet sharing starts automatically using your existing CLI sign-in. No additional consent is required. " +
+        help.Children.Add(Text(ConnectionPresentation.InternetWarning));
+        help.Children.Add(Text("For the Dev Tunnels CLI path, installation/account checks, and setup guidance, use Settings > Prerequisite."));
+        help.Children.Add(Text("Internet sharing starts automatically using your existing CLI sign-in. No additional consent is required. " +
             "The application never opens sign-in automatically. This preview service is intended for development/testing and has no SLA."));
         _tunnelDetails = Text("");
         panel.Children.Add(_tunnelDetails);

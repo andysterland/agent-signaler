@@ -430,7 +430,7 @@ point, `AgentSignaler.Dashboard.Setup.exe`. Build and inspect local installer
 artifacts without installation or redirected-drive copying with:
 
 ```powershell
-.\scripts\Build-Installers.ps1 -Version 1.0.13
+.\scripts\Build-Installers.ps1 -Version 1.0.14
 ```
 
 ## Use
@@ -462,10 +462,13 @@ depend on the configurator remaining open. The remote Client's tray menu offers
 **Open Configurator** and **Exit**. Approved setup registers its exact quoted
 command under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: startup is
 at **this user's sign-in**, not pre-login, and requires no service or elevation.
-One reporting owner is enforced per user/data directory across Windows sessions;
-another launch may report that its active icon lives in another session. Junction
-or symbolic-link config aliases are rejected. Persisted run-generation state must
-not be deleted or reset to work around errors: corrupt/nonpositive state fails visibly.
+One reporting owner is enforced per user/data directory across Windows sessions.
+Launching Client again asks the existing owner to open Configurator, providing a
+foreground control window in that owner's Windows sign-in session. If it cannot
+respond, another launch may report that its active icon lives in another session.
+Junction or symbolic-link config aliases are rejected. Persisted run-generation
+state must not be deleted or reset to work around errors: corrupt/nonpositive state
+fails visibly.
 
 Client **Exit** rejects new work, stops timers/retries, and attempts a terminal
 offline report within a bounded shutdown budget (at most five seconds for normal

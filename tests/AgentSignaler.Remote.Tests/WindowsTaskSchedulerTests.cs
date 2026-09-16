@@ -22,4 +22,13 @@ public sealed class WindowsTaskSchedulerTests
         var scheduler = new WindowsTaskScheduler();
         scheduler.Delete($"AgentSignaler-Test-{Guid.NewGuid():N}");
     }
+
+    [Fact]
+    public void LocalFailureDescriptionRetainsUnderlyingMessage()
+    {
+        var description = RemoteFailure.DescribeLocalFailure(new UnauthorizedAccessException("Registry access denied."));
+
+        Assert.Contains("Registry access denied.", description);
+        Assert.Contains("startup registration", description);
+    }
 }

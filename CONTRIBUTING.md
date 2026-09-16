@@ -32,7 +32,7 @@ dotnet test tests\AgentSignaler.Tunneling.Tests\AgentSignaler.Tunneling.Tests.cs
 Build and inspect installers without installing or publishing them:
 
 ```powershell
-.\scripts\Build-Installers.ps1 -Version 1.0.13
+.\scripts\Build-Installers.ps1 -Version 1.0.14
 ```
 
 Run the smallest test selection that covers a change, then run the full affected

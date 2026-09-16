@@ -54,6 +54,21 @@ public sealed class ClientIpcTests : IDisposable
         Assert.Equal(PresenceKind.Offline, transport.Reports.Last().Kind);
     }
 
+    [Fact]
+    public async Task ActivateRequestIsSentToTheExistingClient()
+    {
+        Save();
+        var activations = 0;
+        await using var server = new ClientIpcServer(ConfigPath, (request, _) =>
+        {
+            if (request.Command == "activate") Interlocked.Increment(ref activations);
+            return Task.FromResult(new ClientIpcResponse(request.Command == "activate", "connected"));
+        });
+
+        Assert.True((await ClientIpc.ActivateAsync(ConfigPath)).Accepted);
+        Assert.Equal(1, Volatile.Read(ref activations));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

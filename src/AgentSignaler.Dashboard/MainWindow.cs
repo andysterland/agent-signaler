@@ -924,38 +924,63 @@ internal sealed partial class MainWindow : Window
                 IsAddTabButtonVisible = false, CanDragTabs = false, CanReorderTabs = false,
                 TabWidthMode = TabViewWidthMode.SizeToContent
             };
-            TabViewItem AddSection(string title, StackPanel section)
+            TabViewItem AddSection(string title, StackPanel section, StackPanel help)
             {
-                var tab = new TabViewItem
+                var layout = new Grid { Padding = new Thickness(0, 12, 12, 0), ColumnSpacing = 12 };
+                layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                layout.Children.Add(new ScrollViewer
                 {
-                    Header = title, IsClosable = false,
+                    Content = section,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                });
+                var helpButton = new Button
+                {
+                    Content = new SymbolIcon(Symbol.Help), Width = 32, Height = 32, Padding = new Thickness(0),
+                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top
+                };
+                AutomationProperties.SetName(helpButton, $"{title} help");
+                ToolTipService.SetToolTip(helpButton, new ToolTip
+                {
+                    Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left,
+                    MaxWidth = 440,
                     Content = new ScrollViewer
                     {
-                        Content = section, Padding = new Thickness(0, 12, 12, 0),
+                        Content = help, MaxWidth = 400, MaxHeight = 360,
                         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                         HorizontalContentAlignment = HorizontalAlignment.Stretch
                     }
+                });
+                Grid.SetColumn(helpButton, 1);
+                layout.Children.Add(helpButton);
+                var tab = new TabViewItem
+                {
+                    Header = title, IsClosable = false, Content = layout
                 };
                 tabs.TabItems.Add(tab);
                 return tab;
             }
             var general = new StackPanel { Spacing = 14 };
+            var generalHelp = new StackPanel { Spacing = 10 };
             general.Children.Add(theme);
             general.Children.Add(compact);
             general.Children.Add(minimizedCompact);
             general.Children.Add(startup);
-            general.Children.Add(Text("When enabled, minimizing shows an always-on-top vertical list of 64 x 64 computer tiles. " +
+            generalHelp.Children.Add(Text("When enabled, minimizing shows an always-on-top vertical list of 64 x 64 computer tiles. " +
                 "Select a tile to open its configured Dev Box in Windows App. Use the notification-area icon to restore the dashboard. Closing hides it in the notification area. " +
                 "The receiver stays running. Use Exit to stop it."));
-            var generalTab = AddSection("General", general);
+            var generalTab = AddSection("General", general, generalHelp);
             var network = new StackPanel { Spacing = 14 };
+            var networkHelp = new StackPanel { Spacing = 10 };
             network.Children.Add(mode);
             network.Children.Add(port);
-            network.Children.Add(Text($"Effective mode: {_runningMode}. Running local port: {(_running ? _runningPort.ToString() : "not running")}. " +
-                "After changing connection settings, Save, Exit and reopen. Internet mode binds loopback only and starts sharing automatically unless disabled."));
+            network.Children.Add(Text($"Effective mode: {_runningMode}. Running local port: {(_running ? _runningPort.ToString() : "not running")}."));
+            networkHelp.Children.Add(Text("After changing connection settings, Save, Exit and reopen. Internet mode binds loopback only and starts sharing automatically unless disabled."));
             network.Children.Add(Text("Windows Firewall", 18));
-            network.Children.Add(Text("LAN mode: explicit administrator approval is required for a Private-network rule. " +
+            networkHelp.Children.Add(Text("LAN mode: explicit administrator approval is required for a Private-network rule. " +
                 "Internet mode needs outbound access only; no inbound firewall rule, router forwarding, or local certificate is needed."));
             var allow = new Button { Content = "Add Private firewall rule…", IsEnabled = _running && _runningMode == DashboardConnectionMode.Lan };
             var remove = new Button { Content = "Remove firewall rule…" };
@@ -978,16 +1003,19 @@ internal sealed partial class MainWindow : Window
             remove.Click += async (_, _) => await ChangeFirewall(false);
             network.Children.Add(allow);
             network.Children.Add(remove);
-            var networkTab = AddSection("Network", network);
+            var networkTab = AddSection("Network", network, networkHelp);
             var sharing = new StackPanel { Spacing = 14 };
-            BuildTunnelSettings(sharing);
-            AddSection("Internet sharing", sharing);
+            var sharingHelp = new StackPanel { Spacing = 10 };
+            BuildTunnelSettings(sharing, sharingHelp);
+            AddSection("Internet sharing", sharing, sharingHelp);
             var azure = new StackPanel { Spacing = 14 };
-            var readDevBoxSettings = BuildDevBoxSettings(azure);
-            var azureTab = AddSection("Dev Box", azure);
+            var azureHelp = new StackPanel { Spacing = 10 };
+            var readDevBoxSettings = BuildDevBoxSettings(azure, azureHelp);
+            var azureTab = AddSection("Dev Box", azure, azureHelp);
             var prerequisites = new StackPanel { Spacing = 14 };
-            var (cliPath, azureCliPath) = BuildPrerequisiteSettings(prerequisites);
-            var prerequisiteTab = AddSection("Prerequisite", prerequisites);
+            var prerequisiteHelp = new StackPanel { Spacing = 10 };
+            var (cliPath, azureCliPath) = BuildPrerequisiteSettings(prerequisites, prerequisiteHelp);
+            var prerequisiteTab = AddSection("Prerequisite", prerequisites, prerequisiteHelp);
             tabs.SelectedItem = generalTab;
             var content = new Grid { MinWidth = 280, Height = 480, RowSpacing = 12 };
             content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });

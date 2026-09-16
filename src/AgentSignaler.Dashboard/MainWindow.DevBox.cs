@@ -8,13 +8,13 @@ internal sealed partial class MainWindow
     private DevBoxCatalogController? _catalog;
     private Action? _updateDevBoxSettingsControls;
 
-    private Func<DashboardSettings> BuildDevBoxSettings(StackPanel panel)
+    private Func<DashboardSettings> BuildDevBoxSettings(StackPanel panel, StackPanel help)
     {
         panel.Children.Add(Text("Dev Center discovery", 18));
-        panel.Children.Add(Text("Azure CLI searches enabled subscriptions available to the signed-in user in the current tenant, " +
+        help.Children.Add(Text("Azure CLI searches enabled subscriptions available to the signed-in user in the current tenant, " +
             "then lists assigned Dev Boxes in the discovered Dev Centers. Azure Resource Manager read access to Dev Centers is required; " +
             "Dev Box User access alone may not allow discovery. No Dev Center endpoints need to be entered or saved."));
-        panel.Children.Add(Text("Refresh uses the running Azure CLI path. After changing the path, Save, Exit and reopen before refreshing. " +
+        help.Children.Add(Text("Refresh uses the running Azure CLI path. After changing the path, Save, Exit and reopen before refreshing. " +
             "Discovery does not switch the Azure CLI account, subscription, or tenant."));
         var subscriptionInput = new TextBox
         {
@@ -32,12 +32,12 @@ internal sealed partial class MainWindow
         panel.Children.Add(subscriptionInput);
         panel.Children.Add(devCenterInput);
         panel.Children.Add(targetValidation);
-        panel.Children.Add(Text("Supply a subscription GUID to search it directly using the signed-in account. " +
+        help.Children.Add(Text("Supply a subscription GUID to search it directly using the signed-in account. " +
             "Or supply a Dev Center name to list your Dev Boxes with az devcenter dev dev-box list --user-id me. " +
             "Leave both blank for automatic discovery. Neither option changes the selected Azure CLI subscription."));
-        panel.Children.Add(Text("Refresh Dev Boxes and Save remember these search fields across restarts. " +
+        help.Children.Add(Text("Refresh Dev Boxes and Save remember these search fields across restarts. " +
             "Clear both fields and refresh or save to restore automatic discovery. Results remain session-only."));
-        panel.Children.Add(Text("For Azure CLI paths, readiness checks, and devcenter extension setup, use Settings > Prerequisite."));
+        help.Children.Add(Text("For Azure CLI paths, readiness checks, and devcenter extension setup, use Settings > Prerequisite."));
         panel.Children.Add(Text("Azure CLI account", 18));
         var identity = Text("");
         identity.IsTextSelectionEnabled = true;
@@ -46,7 +46,7 @@ internal sealed partial class MainWindow
         panel.Children.Add(identity);
         panel.Children.Add(discovery);
         panel.Children.Add(failures);
-        panel.Children.Add(Text("Account details reflect the latest refresh attempt, not a live sign-in check. " +
+        help.Children.Add(Text("Account details reflect the latest refresh attempt, not a live sign-in check. " +
             "After signing in or changing accounts in Azure CLI, refresh to update them."));
         panel.Children.Add(Text("Available Dev Boxes", 18));
         var refresh = new Button { Content = "Refresh Dev Boxes" };
@@ -70,7 +70,7 @@ internal sealed partial class MainWindow
         panel.Children.Add(Text("Discovered Dev Centers", 16));
         panel.Children.Add(centers);
         panel.Children.Add(list);
-        panel.Children.Add(Text("This list is informational. Open a machine's details to explicitly select and save its Dev Box mapping."));
+        help.Children.Add(Text("This list is informational. Open a machine's details to explicitly select and save its Dev Box mapping."));
         _updateDevBoxSettingsControls = () =>
         {
             var state = _catalog?.State;

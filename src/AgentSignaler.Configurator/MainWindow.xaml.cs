@@ -507,7 +507,7 @@ public sealed partial class MainWindow : Window
             ex is HttpRequestException http ? DashboardConnection.DescribeFailure(http) :
             ex is OperationCanceledException ? "Operation cancelled or timed out. Check connectivity and retry when ready." :
             ex is InvalidDataException or InvalidOperationException ? ex.Message :
-            "Operation failed. Check file access, the endpoint, startup registration, and legacy Task Scheduler access.",
+            RemoteFailure.DescribeLocalFailure(ex),
             InfoBarSeverity.Error, title);
     }
 

@@ -25,6 +25,8 @@ public static class ClientIpc
 
     public static Task<ClientIpcResponse> StatusAsync(string configPath, CancellationToken cancellationToken = default) =>
         SendAsync(configPath, new(Version, "status"), cancellationToken);
+    public static Task<ClientIpcResponse> ActivateAsync(string configPath, CancellationToken cancellationToken = default) =>
+        SendAsync(configPath, new(Version, "activate"), cancellationToken);
     public static Task<ClientIpcResponse> ReloadAsync(string configPath, string expectedRevision, CancellationToken cancellationToken = default) =>
         SendAsync(configPath, new(Version, "reload", ExpectedRevision: expectedRevision), cancellationToken);
     public static Task<ClientIpcResponse> StopAsync(string configPath, CancellationToken cancellationToken = default) =>
