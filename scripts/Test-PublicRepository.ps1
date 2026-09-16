@@ -54,7 +54,7 @@ $failures = [Collections.Generic.List[string]]::new()
 function Test-AllowedSyntheticSecret([string] $Relative, [string] $Line) {
     $normalized = $Relative.Replace('/', '\')
     if (-not $normalized.StartsWith('tests\', [StringComparison]::OrdinalIgnoreCase) -or
-        -not $Line.Contains('[InlineData(', [StringComparison]::Ordinal)) {
+        $Line.IndexOf('[InlineData(', [StringComparison]::Ordinal) -lt 0) {
         return $false
     }
     return $Line -match '(?i)(?:example\.test|desktop-pc|\.devtunnels\.ms)'
