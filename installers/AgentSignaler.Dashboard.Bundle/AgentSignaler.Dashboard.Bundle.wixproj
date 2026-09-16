@@ -1,0 +1,15 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <Import Project="Prerequisites.props" />
+  <PropertyGroup>
+    <TargetFramework>native</TargetFramework>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputType>Bundle</OutputType>
+    <OutputName>AgentSignaler.Dashboard.Setup</OutputName>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.13</ProductVersion>
+    <ArtifactRoot>$(MSBuildThisFileDirectory)..\..\artifacts</ArtifactRoot>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);ArtifactRoot=$(ArtifactRoot);AzureCliVersion=$(AzureCliVersion)</DefineConstants>
+  </PropertyGroup>
+  <Target Name="BuildNativeBootstrapper" BeforeTargets="BeforeBuild">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\Build-DashboardBootstrapper.ps1&quot; -Version $(ProductVersion)" />
+  </Target>
+</Project>

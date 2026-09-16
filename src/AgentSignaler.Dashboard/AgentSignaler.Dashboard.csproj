@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22621.0</TargetPlatformMinVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\AgentSignaler.Configurator\AgentSignaler.ico</ApplicationIcon>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <StartupObject>AgentSignaler.Dashboard.Program</StartupObject>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="..\AgentSignaler.Configurator\AgentSignaler.ico" Link="AgentSignaler.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Page Remove="BrandResources.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+    <ProjectReference Include="..\AgentSignaler.Service\AgentSignaler.Service.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
+  </ItemGroup>
+  <Target Name="PublishDashboardXamlResources" AfterTargets="ComputeFilesToPublish">
+    <!-- Unpackaged publishing must retain the generated application XAML and resource index. -->
+    <Error Condition="!Exists('$(TargetDir)App.xbf') Or !Exists('$(TargetDir)$(AssemblyName).pri')" Text="Build the dashboard XAML resources before publishing." />
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(TargetDir)App.xbf">
+        <RelativePath>App.xbf</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(TargetDir)$(AssemblyName).pri">
+        <RelativePath>$(AssemblyName).pri</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+</Project>

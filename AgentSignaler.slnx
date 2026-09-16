@@ -1,0 +1,51 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/installers/">
+    <Project Path="installers/AgentSignaler.Dashboard/AgentSignaler.Dashboard.wixproj"><Build Project="false" /></Project>
+    <Project Path="installers/AgentSignaler.Remote/AgentSignaler.Remote.wixproj"><Build Project="false" /></Project>
+    <Project Path="installers/AgentSignaler.DevTunnelsPrerequisite/AgentSignaler.DevTunnelsPrerequisite.wixproj"><Build Project="false" /></Project>
+    <Project Path="installers/AgentSignaler.Dashboard.Bundle/AgentSignaler.Dashboard.Bundle.wixproj"><Build Project="false" /></Project>
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AgentSignaler.Client/AgentSignaler.Client.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Configurator/AgentSignaler.Configurator.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Contracts/AgentSignaler.Contracts.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Dashboard/AgentSignaler.Dashboard.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Relay/AgentSignaler.Relay.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Remote/AgentSignaler.Remote.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Service/AgentSignaler.Service.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.Tunneling/AgentSignaler.Tunneling.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentSignaler.Integration.Tests/AgentSignaler.Integration.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/AgentSignaler.Remote.Tests/AgentSignaler.Remote.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/AgentSignaler.Service.Tests/AgentSignaler.Service.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/AgentSignaler.Tunneling.Tests/AgentSignaler.Tunneling.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

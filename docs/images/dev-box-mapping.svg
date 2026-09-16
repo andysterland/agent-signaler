@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic Dev Box mapping workflow</title>
+  <desc id="desc">A fictional machine mapped to a fictional Azure Dev Box with refresh and Windows App actions.</desc>
+  <rect width="720" height="520" fill="#eff6ff"/>
+  <rect x="62" y="42" width="596" height="436" rx="22" fill="#111827"/>
+  <text x="102" y="94" fill="#f8fafc" font-family="Segoe UI,Arial" font-size="25" font-weight="700">Build Agent</text>
+  <text x="102" y="122" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Machine details · synthetic preview</text>
+  <text x="102" y="170" fill="#cbd5e1" font-family="Segoe UI,Arial" font-size="14">Mapped Dev Box</text>
+  <rect x="102" y="184" width="516" height="54" rx="10" fill="#1e293b" stroke="#475569"/>
+  <text x="122" y="218" fill="#f8fafc" font-family="Segoe UI,Arial" font-size="17">devbox-build-01 · project-sample</text>
+  <rect x="102" y="265" width="245" height="92" rx="12" fill="#172554" stroke="#3b82f6"/>
+  <text x="122" y="295" fill="#bfdbfe" font-family="Segoe UI,Arial" font-size="14">Connection status</text>
+  <text x="122" y="329" fill="#f8fafc" font-family="Segoe UI,Arial" font-size="22" font-weight="700">Ready</text>
+  <rect x="373" y="265" width="245" height="92" rx="12" fill="#153e2e" stroke="#22c55e"/>
+  <text x="393" y="295" fill="#bbf7d0" font-family="Segoe UI,Arial" font-size="14">Windows App</text>
+  <text x="393" y="329" fill="#f0fdf4" font-family="Segoe UI,Arial" font-size="19" font-weight="700">Existing window found</text>
+  <rect x="102" y="390" width="212" height="48" rx="10" fill="#334155"/>
+  <text x="130" y="420" fill="#e2e8f0" font-family="Segoe UI,Arial" font-size="15">Refresh connection</text>
+  <rect x="330" y="390" width="288" height="48" rx="10" fill="#2563eb"/>
+  <text x="376" y="420" fill="white" font-family="Segoe UI,Arial" font-size="15" font-weight="700">Open in Windows App</text>
+</svg>

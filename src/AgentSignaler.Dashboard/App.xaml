@@ -1,0 +1,15 @@
+<Application
+    x:Class="AgentSignaler.Dashboard.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="AgentSignalerAccentBrush" Color="#2F6FED" />
+            <SolidColorBrush x:Key="AgentSignalerAccentDarkBrush" Color="#1D4ED8" />
+            <SolidColorBrush x:Key="AgentSignalerBrandTextBrush" Color="#17315F" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

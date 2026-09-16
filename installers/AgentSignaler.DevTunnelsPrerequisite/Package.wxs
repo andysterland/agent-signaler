@@ -1,0 +1,22 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Microsoft Dev Tunnels CLI (Agent Signaler prerequisite)" Manufacturer="Agent Signaler"
+           Version="$(var.DevTunnelsMsiVersion)" UpgradeCode="3F3F58A0-CB9D-441F-9F70-660E080E9315"
+           Scope="perUser" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer Dev Tunnels prerequisite is already installed." Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Microsoft Dev Tunnels CLI">
+          <Component Id="DevTunnelsCli" Guid="E859CFA2-C408-4D6D-9495-29A760043402" Bitness="always64">
+            <File Id="DevTunnelExe" Source="$(var.DevTunnelsPayload)" Name="devtunnel.exe" />
+            <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Prerequisites\DevTunnels"
+                           Name="Version" Type="string" Value="$(var.DevTunnelsMsiVersion)" KeyPath="yes" />
+            <RemoveFolder Id="RemoveEmptyCliFolder" On="uninstall" />
+            <RemoveFolder Id="RemoveEmptyProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main"><ComponentRef Id="DevTunnelsCli" /></Feature>
+  </Package>
+</Wix>

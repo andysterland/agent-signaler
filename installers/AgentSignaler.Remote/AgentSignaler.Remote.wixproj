@@ -1,0 +1,29 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <TargetFramework>native</TargetFramework>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>AgentSignaler.Remote</OutputName>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.13</ProductVersion>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\remote</PublishDir>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);InstallerProduct=Remote</DefineConstants>
+    <HarvestDirectoryAutogenerateGuids>true</HarvestDirectoryAutogenerateGuids>
+    <HarvestDirectorySuppressRootDirectory>true</HarvestDirectorySuppressRootDirectory>
+    <HarvestDirectorySuppressRegistry>true</HarvestDirectorySuppressRegistry>
+    <HarvestDirectorySuppressCom>true</HarvestDirectorySuppressCom>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Heat" Version="4.0.6" />
+    <HarvestDirectory Include="$(PublishDir)">
+      <DirectoryRefId>INSTALLFOLDER</DirectoryRefId>
+      <ComponentGroupName>RemoteFiles</ComponentGroupName>
+      <PreprocessorVariable>var.PublishDir</PreprocessorVariable>
+      <Transforms>$(MSBuildThisFileDirectory)..\PerUserHarvest.xslt</Transforms>
+    </HarvestDirectory>
+  </ItemGroup>
+  <Target Name="SetPerUserComponentGuids" AfterTargets="HarvestDirectory">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\Set-HarvestComponentGuids.ps1&quot; -Path &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath)_RemoteFiles_dir.wxs&quot; -ProductName Remote" />
+  </Target>
+  <Target Name="RequirePublishedApplication" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(PublishDir)\AgentSignaler.Configurator.exe') Or !Exists('$(PublishDir)\AgentSignaler.Relay.exe') Or !Exists('$(PublishDir)\AgentSignaler.Client.exe')" Text="Publish the self-contained Configurator, Relay, and Client first with scripts\Build-Installers.ps1." />
+  </Target>
+</Project>

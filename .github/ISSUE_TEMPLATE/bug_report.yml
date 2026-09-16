@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible non-security defect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use the private process in SECURITY.md.
+        Remove credentials, account IDs, connection URIs, private URLs, machine names, and unrelated source code.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: Commit SHA or local build version
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Dashboard
+        - Client / Relay
+        - Configurator
+        - Dev Tunnels
+        - Dev Box / Windows App
+        - Installer / updater
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic or disposable fixtures.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Sanitized environment
+      description: Windows version and relevant dependency versions only.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, private identifiers, connection URIs, private URLs, and unrelated source code.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

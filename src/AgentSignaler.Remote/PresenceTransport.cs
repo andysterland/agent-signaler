@@ -1,0 +1,43 @@
+using System.Net;
+using System.Text.Json;
+using AgentSignaler.Contracts;
+
+namespace AgentSignaler.Remote;
+
+public interface IPresenceTransport : IDisposable
+{
+    Task<bool> SendAsync(PresenceReport report, CancellationToken cancellationToken);
+}
+
+public sealed class PresenceTransport(RemoteConfiguration configuration, HttpClient? client = null) : IPresenceTransport
+{
+    private readonly HttpClient _client = client ?? RemoteHttpTransport.CreateClient(configuration);
+    private bool _capabilitiesConfirmed;
+
+    public async Task<bool> SendAsync(PresenceReport report, CancellationToken cancellationToken)
+    {
+        var version = configuration.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version;
+        if (report.ProtocolVersion != version || PresenceProtocol.Validate(report).Count != 0) return false;
+        if (!_capabilitiesConfirmed)
+        {
+            await DashboardConnection.TestAsync(configuration, _client, cancellationToken);
+            _capabilitiesConfirmed = true;
+        }
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(report, Protocol.Json);
+        if (bytes.Length > Protocol.MaxBodyBytes) return false;
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new("application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(configuration.BaseUri, $"/api/v{version}/reports"))
+        {
+            Content = content
+        };
+        request.Headers.Accept.Add(new("application/json"));
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        return response.StatusCode == HttpStatusCode.Accepted;
+    }
+
+    public void Dispose()
+    {
+        if (client is null) _client.Dispose();
+    }
+}

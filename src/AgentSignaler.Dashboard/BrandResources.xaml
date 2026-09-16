@@ -1,0 +1,8 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="AgentSignalerAccentBrush" Color="#2F6FED" />
+    <SolidColorBrush x:Key="AgentSignalerAccentDarkBrush" Color="#1D4ED8" />
+    <SolidColorBrush x:Key="AgentSignalerBrandTextBrush" Color="#17315F" />
+    <Geometry x:Key="AgentSignalerMark">M12,1 L21,8 L18,21 L6,21 L3,8 Z M11,5 L8,11 L12,11 L9,18 L16,9 L12,9 Z</Geometry>
+</ResourceDictionary>

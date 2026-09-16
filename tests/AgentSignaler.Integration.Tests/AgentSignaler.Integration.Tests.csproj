@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\AgentSignaler.Service\AgentSignaler.Service.csproj" />
+    <ProjectReference Include="..\..\src\AgentSignaler.Remote\AgentSignaler.Remote.csproj" />
+    <ProjectReference Include="..\..\src\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
+    <ProjectReference Include="..\..\src\AgentSignaler.Relay\AgentSignaler.Relay.csproj" ReferenceOutputAssembly="false" />
+    <Using Include="Xunit" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\ConnectionPresentation.cs" Link="ConnectionPresentation.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\SessionSourcePresentation.cs" Link="SessionSourcePresentation.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\DashboardSettings.cs" Link="DashboardSettings.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxCatalog.cs" Link="DevBoxCatalog.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\AzureCliResponse.cs" Link="AzureCliResponse.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxCatalogService.cs" Link="DevBoxCatalogService.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxCatalogController.cs" Link="DevBoxCatalogController.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\AzureCliProcess.cs" Link="AzureCliProcess.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\AzureCliDiagnostics.cs" Link="AzureCliDiagnostics.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\PrerequisiteCheck.cs" Link="PrerequisiteCheck.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppDiagnostics.cs" Link="WindowsAppDiagnostics.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxConnectionResolver.cs" Link="DevBoxConnectionResolver.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppLauncher.cs" Link="WindowsAppLauncher.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppConnectionController.cs" Link="WindowsAppConnectionController.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppPlatform.cs" Link="WindowsAppPlatform.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppWindowPlatform.cs" Link="WindowsAppWindowPlatform.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppConnectionValidator.cs" Link="WindowsAppConnectionValidator.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\NativeWindow.cs" Link="NativeWindow.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorSettings.cs" Link="ConfiguratorSettings.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorActionState.cs" Link="ConfiguratorActionState.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Configurator\HookTargetRow.cs" Link="HookTargetRow.cs" />
+  </ItemGroup>
+  <Target Name="RecordRelayLocation" AfterTargets="Build">
+    <MSBuild Projects="..\..\src\AgentSignaler.Relay\AgentSignaler.Relay.csproj" Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="RelayTarget" />
+    </MSBuild>
+    <WriteLinesToFile File="$(OutDir)relay-path.txt" Lines="@(RelayTarget->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>

@@ -1,0 +1,90 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Agent Signaler Remote"
+           Manufacturer="Agent Signaler"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="BFA03A34-37C9-4149-9789-9A68EC2A9C3A"
+           Scope="perUser"
+           InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Agent Signaler Remote is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="AgentSignalerFolder" Name="AgentSignaler">
+          <Directory Id="INSTALLFOLDER" Name="Remote" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Agent Signaler">
+        <Component Id="ConfiguratorShortcut" Guid="5D373A60-4A9A-4A32-BB3B-DB1AF6593470">
+          <Shortcut Id="ConfiguratorStartMenu" Name="Agent Signaler Configurator"
+                    Target="[INSTALLFOLDER]AgentSignaler.Configurator.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveConfiguratorStartMenuFolder" On="uninstall" />
+          <RemoveFolder Id="RemoveRemoteInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+          <RemoveFolder Id="RemoveRemoteVendorFolder" Directory="AgentSignalerFolder" On="uninstall" />
+          <RemoveFolder Id="RemoveRemoteProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Installer\Remote"
+                         Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+        <Component Id="ClientShortcut" Guid="B21485ED-95AD-4B98-8F45-1E2D9DAD036E">
+          <Shortcut Id="ClientStartMenu" Name="Agent Signaler Client"
+                    Target="[INSTALLFOLDER]AgentSignaler.Client.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Installer\Remote"
+                         Name="ClientShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Property Id="REMOTECLIENTEXISTS">
+      <DirectorySearch Id="FindInstalledRemoteClientDirectory"
+                       Path="[LocalAppDataFolder]Programs\AgentSignaler\Remote" Depth="0">
+        <FileSearch Id="FindInstalledRemoteClient" Name="AgentSignaler.Client.exe" />
+      </DirectorySearch>
+    </Property>
+    <!-- Run the installed helper now, while its matching IPC version and binaries still exist.
+         Deferred execution would queue shutdown until after RemoveExistingProducts. -->
+    <CustomAction Id="StopRemoteClientForUpdate" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AgentSignaler.Relay.exe&quot; --stop-client-for-update"
+                  Execute="immediate" Impersonate="yes" Return="check" />
+    <SetProperty Id="IntegrationTransaction" Value="[ProductCode]|[Date]|[Time]"
+                 Before="InstallInitialize" Sequence="execute"
+                 Condition="NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="RollbackLegacyHeartbeatMigration" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AgentSignaler.Relay.exe&quot; --rollback-legacy-heartbeat --transaction-id &quot;[IntegrationTransaction]&quot;"
+                  Execute="rollback" Impersonate="yes" Return="check" />
+    <CustomAction Id="MigrateLegacyHeartbeat" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AgentSignaler.Relay.exe&quot; --migrate-legacy-heartbeat --transaction-id &quot;[IntegrationTransaction]&quot;"
+                  Execute="deferred" Impersonate="yes" Return="check" />
+    <CustomAction Id="CommitLegacyHeartbeatMigration" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AgentSignaler.Relay.exe&quot; --commit-legacy-heartbeat --transaction-id &quot;[IntegrationTransaction]&quot;"
+                  Execute="commit" Impersonate="yes" Return="check" />
+    <!-- Schedule cleanup before file removal, so rollback restores files before restoring integration. -->
+    <CustomAction Id="RollbackRemoteIntegration" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AgentSignaler.Relay.exe&quot; --rollback-uninstall-integration --transaction-id &quot;[IntegrationTransaction]&quot;"
+                  Execute="rollback" Impersonate="yes" Return="check" />
+    <CustomAction Id="RemoveRemoteIntegration" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AgentSignaler.Relay.exe&quot; --uninstall-integration --transaction-id &quot;[IntegrationTransaction]&quot;"
+                  Execute="deferred" Impersonate="yes" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="StopRemoteClientForUpdate" Before="RemoveExistingProducts"
+              Condition="REMOTECLIENTEXISTS AND NOT REMOVE=&quot;ALL&quot;" />
+      <Custom Action="RollbackLegacyHeartbeatMigration" After="InstallFiles"
+              Condition="NOT REMOVE=&quot;ALL&quot;" />
+      <Custom Action="MigrateLegacyHeartbeat" After="RollbackLegacyHeartbeatMigration"
+              Condition="NOT REMOVE=&quot;ALL&quot;" />
+      <Custom Action="CommitLegacyHeartbeatMigration" After="MigrateLegacyHeartbeat"
+              Condition="NOT REMOVE=&quot;ALL&quot;" />
+      <Custom Action="RollbackRemoteIntegration" Before="RemoveRemoteIntegration"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveRemoteIntegration" Before="RemoveFiles"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+    <Feature Id="Main" Title="Agent Signaler Remote">
+      <ComponentGroupRef Id="RemoteFiles" />
+      <ComponentRef Id="ConfiguratorShortcut" />
+      <ComponentRef Id="ClientShortcut" />
+    </Feature>
+  </Package>
+</Wix>

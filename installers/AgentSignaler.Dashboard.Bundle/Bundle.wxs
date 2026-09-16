@@ -1,0 +1,20 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Bundle Name="Agent Signaler Dashboard" Manufacturer="Agent Signaler" Version="$(var.ProductVersion)"
+          UpgradeCode="F4C9E804-6393-4A8C-9873-4824F10F03DF" Compressed="yes">
+    <BootstrapperApplication>
+      <BootstrapperApplicationDll SourceFile="$(var.ArtifactRoot)\bootstrapper\AgentSignaler.Bootstrapper.dll" />
+      <Payload SourceFile="Prerequisites.props" />
+    </BootstrapperApplication>
+    <Variable Name="ACCEPT_PREREQUISITE_LICENSES" Type="numeric" Value="0" Hidden="yes" Persisted="no" />
+    <Variable Name="InstallAzureCli" Type="numeric" Value="0" Persisted="no" />
+    <Variable Name="InstallDevTunnels" Type="numeric" Value="0" Persisted="no" />
+    <Chain>
+      <MsiPackage Id="AzureCli" SourceFile="$(var.ArtifactRoot)\prerequisites\azure-cli-$(var.AzureCliVersion)-x64.msi"
+                  Compressed="yes" Permanent="yes" Vital="yes" InstallCondition="InstallAzureCli = 1" />
+      <MsiPackage Id="DevTunnels" SourceFile="$(var.ArtifactRoot)\msi\AgentSignaler.DevTunnelsPrerequisite.msi"
+                  Compressed="yes" Permanent="yes" Vital="yes" InstallCondition="InstallDevTunnels = 1" />
+      <MsiPackage Id="Dashboard" SourceFile="$(var.ArtifactRoot)\msi\AgentSignaler.Dashboard.msi"
+                  Compressed="yes" Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

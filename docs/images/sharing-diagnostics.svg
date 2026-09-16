@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic sharing and prerequisite diagnostics</title>
+  <desc id="desc">Fictional healthy service and Dev Tunnel status with prerequisite checks.</desc>
+  <rect width="720" height="520" fill="#f0fdf4"/>
+  <rect x="62" y="42" width="596" height="436" rx="22" fill="#111827"/>
+  <text x="102" y="94" fill="#f8fafc" font-family="Segoe UI,Arial" font-size="25" font-weight="700">Sharing and diagnostics</text>
+  <text x="102" y="122" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Synthetic preview · no real URL or account</text>
+  <rect x="102" y="154" width="516" height="78" rx="12" fill="#153e2e" stroke="#22c55e"/>
+  <circle cx="132" cy="183" r="9" fill="#22c55e"/>
+  <text x="154" y="188" fill="#dcfce7" font-family="Segoe UI,Arial" font-size="18" font-weight="700">Service ready</text>
+  <text x="132" y="214" fill="#86efac" font-family="Segoe UI,Arial" font-size="14">Loopback receiver · verified public HTTPS health</text>
+  <text x="102" y="274" fill="#e2e8f0" font-family="Segoe UI,Arial" font-size="18" font-weight="700">Prerequisites</text>
+  <g font-family="Segoe UI,Arial" font-size="16">
+    <rect x="102" y="294" width="516" height="44" rx="9" fill="#1e293b"/><text x="122" y="322" fill="#4ade80">✓</text><text x="152" y="322" fill="#e2e8f0">Dev Tunnels CLI</text><text x="540" y="322" fill="#86efac">Passed</text>
+    <rect x="102" y="346" width="516" height="44" rx="9" fill="#1e293b"/><text x="122" y="374" fill="#4ade80">✓</text><text x="152" y="374" fill="#e2e8f0">Azure CLI</text><text x="540" y="374" fill="#86efac">Passed</text>
+    <rect x="102" y="398" width="516" height="44" rx="9" fill="#1e293b"/><text x="122" y="426" fill="#fbbf24">!</text><text x="152" y="426" fill="#e2e8f0">Windows App</text><text x="510" y="426" fill="#fde68a">Check required</text>
+  </g>
+</svg>

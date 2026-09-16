@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <ApplicationIcon>AgentSignaler.ico</ApplicationIcon>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <RelayPlatformDirectory Condition="'$(Platform)' != '' and '$(Platform)' != 'AnyCPU'">$(Platform)\</RelayPlatformDirectory>
+    <RelayOutputDirectory>..\AgentSignaler.Relay\bin\$(RelayPlatformDirectory)$(Configuration)\net10.0\win-x64</RelayOutputDirectory>
+    <ClientOutputDirectory>..\AgentSignaler.Client\bin\$(RelayPlatformDirectory)$(Configuration)\net10.0-windows\win-x64</ClientOutputDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="AgentSignaler.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(RelayOutputDirectory)\AgentSignaler.Relay.exe"
+             Link="AgentSignaler.Relay.exe"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(RelayOutputDirectory)\AgentSignaler.Relay.dll"
+             Link="AgentSignaler.Relay.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(RelayOutputDirectory)\AgentSignaler.Relay.deps.json"
+             Link="AgentSignaler.Relay.deps.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(RelayOutputDirectory)\AgentSignaler.Relay.runtimeconfig.json"
+             Link="AgentSignaler.Relay.runtimeconfig.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(ClientOutputDirectory)\AgentSignaler.Client.exe"
+             Link="AgentSignaler.Client.exe"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(ClientOutputDirectory)\AgentSignaler.Client.dll"
+             Link="AgentSignaler.Client.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(ClientOutputDirectory)\AgentSignaler.Client.deps.json"
+             Link="AgentSignaler.Client.deps.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="$(ClientOutputDirectory)\AgentSignaler.Client.runtimeconfig.json"
+             Link="AgentSignaler.Client.runtimeconfig.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Page Remove="BrandResources.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.DataGrid" Version="7.1.2" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+    <ProjectReference Include="..\AgentSignaler.Remote\AgentSignaler.Remote.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Relay\AgentSignaler.Relay.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\AgentSignaler.Client\AgentSignaler.Client.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="PublishCompiledXamlResources" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(ProjectPriFullPath)" RelativePath="$(ProjectPriFileName)" CopyToPublishDirectory="PreserveNewest" />
+      <ResolvedFileToPublish Include="$(TargetDir)App.xbf" RelativePath="App.xbf" CopyToPublishDirectory="PreserveNewest" />
+      <ResolvedFileToPublish Include="$(TargetDir)MainWindow.xbf" RelativePath="MainWindow.xbf" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>

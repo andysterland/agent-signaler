@@ -1,0 +1,40 @@
+@baseUrl = http://localhost:51820
+
+### Presence capabilities (legacy /health remains protocol 1)
+GET {{baseUrl}}/api/v2/health
+
+### Start a managed run, initially Idle
+POST {{baseUrl}}/api/v2/reports
+Content-Type: application/json
+
+{
+  "protocolVersion": 2,
+  "kind": "started",
+  "eventId": "8e2e7fe5-7eee-4790-a548-e9ff6e033b96",
+  "machineId": "cb148458-81b1-401d-9c9e-6b342e09d602",
+  "machineName": "example-computer",
+  "client": "copilot-cli",
+  "clientVersion": "1.0",
+  "generation": 1,
+  "sequence": 1,
+  "reportedAtUtc": "2026-09-15T18:00:00Z",
+  "heartbeatIntervalSeconds": 300,
+  "sessions": []
+}
+
+### Invalid lifecycle: cannot start an unknown generation with offline (409)
+POST {{baseUrl}}/api/v2/reports
+Content-Type: application/json
+
+{
+  "protocolVersion": 2,
+  "kind": "offline",
+  "eventId": "2da5e6bc-f833-477c-8e7e-cb83ea66e19e",
+  "machineId": "cb148458-81b1-401d-9c9e-6b342e09d602",
+  "machineName": "example-computer",
+  "client": "copilot-cli",
+  "clientVersion": "1.0",
+  "generation": 2,
+  "sequence": 1,
+  "reportedAtUtc": "2026-09-15T18:01:00Z"
+}

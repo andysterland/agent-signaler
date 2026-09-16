@@ -1,0 +1,13 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <Import Project="..\AgentSignaler.Dashboard.Bundle\Prerequisites.props" />
+  <PropertyGroup>
+    <TargetFramework>native</TargetFramework>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>AgentSignaler.DevTunnelsPrerequisite</OutputName>
+    <DevTunnelsPayload>$(MSBuildThisFileDirectory)..\..\artifacts\prerequisites\devtunnel.exe</DevTunnelsPayload>
+    <DefineConstants>$(DefineConstants);DevTunnelsMsiVersion=$(DevTunnelsMsiVersion);DevTunnelsPayload=$(DevTunnelsPayload)</DefineConstants>
+  </PropertyGroup>
+  <Target Name="VerifyPinnedPayload" BeforeTargets="BeforeBuild">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;. '$(MSBuildThisFileDirectory)..\..\scripts\PrerequisiteSecurity.ps1'; Assert-PrerequisitePayload '$(DevTunnelsPayload)' DevTunnels (Get-PrerequisiteMetadata)&quot;" />
+  </Target>
+</Project>

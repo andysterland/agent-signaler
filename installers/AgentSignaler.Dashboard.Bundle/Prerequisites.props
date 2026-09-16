@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <AzureCliVersion>2.90.0</AzureCliVersion>
+    <AzureCliUrl>https://azcliprod.blob.core.windows.net/msi/azure-cli-2.90.0-x64.msi</AzureCliUrl>
+    <AzureCliSha256>D5C1918EAB32063219BEA575E0D545149969C24751CB5F90AD2388B5DF72222F</AzureCliSha256>
+    <AzureCliProductCode>{CB3186C1-BF23-488F-A4D4-8A1BFE220427}</AzureCliProductCode>
+    <AzureCliUpgradeCode>{90762FEC-9554-4729-A107-C6A8EA316698}</AzureCliUpgradeCode>
+    <AzureCliSigner>Microsoft Corporation</AzureCliSigner>
+    <AzureCliLicenseUrl>https://github.com/Azure/azure-cli/blob/azure-cli-2.90.0/LICENSE</AzureCliLicenseUrl>
+    <DevTunnelsVersion>1.0.2030+fc9273aa0f</DevTunnelsVersion>
+    <DevTunnelsFileVersion>1.0.2030.64658</DevTunnelsFileVersion>
+    <DevTunnelsMsiVersion>1.0.2030</DevTunnelsMsiVersion>
+    <DevTunnelsUrl>https://tunnelsassetsprod.blob.core.windows.net/cli/1.0.2030+fc9273aa0f/devtunnel.exe</DevTunnelsUrl>
+    <DevTunnelsSha256>78190AC81C664828858DE2390FD9C15EEEC0E4EDFE4E7B0D6A323DC49DF625DB</DevTunnelsSha256>
+    <DevTunnelsSigner>Microsoft Corporation</DevTunnelsSigner>
+    <DevTunnelsLicenseUrl>https://aka.ms/devtunnels/tos</DevTunnelsLicenseUrl>
+    <WindowsAppMinimumVersion>2.0.804.0</WindowsAppMinimumVersion>
+    <WindowsAppPackageFamily>MicrosoftCorporationII.Windows365_8wekyb3d8bbwe</WindowsAppPackageFamily>
+    <WindowsAppStoreUri>ms-windows-store://pdp/?ProductId=9N1F85V9T8BN</WindowsAppStoreUri>
+  </PropertyGroup>
+</Project>

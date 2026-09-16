@@ -1,0 +1,30 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <Import Project="..\AgentSignaler.Dashboard.Bundle\Prerequisites.props" />
+  <PropertyGroup>
+    <TargetFramework>native</TargetFramework>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>AgentSignaler.Dashboard</OutputName>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.13</ProductVersion>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\dashboard</PublishDir>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);InstallerProduct=Dashboard;AzureCliProductCode=$(AzureCliProductCode);AzureCliVersion=$(AzureCliVersion);DevTunnelsFileVersion=$(DevTunnelsFileVersion);WindowsAppMinimumVersion=$(WindowsAppMinimumVersion)</DefineConstants>
+    <HarvestDirectoryAutogenerateGuids>true</HarvestDirectoryAutogenerateGuids>
+    <HarvestDirectorySuppressRootDirectory>true</HarvestDirectorySuppressRootDirectory>
+    <HarvestDirectorySuppressRegistry>true</HarvestDirectorySuppressRegistry>
+    <HarvestDirectorySuppressCom>true</HarvestDirectorySuppressCom>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Heat" Version="4.0.6" />
+    <HarvestDirectory Include="$(PublishDir)">
+      <DirectoryRefId>INSTALLFOLDER</DirectoryRefId>
+      <ComponentGroupName>DashboardFiles</ComponentGroupName>
+      <PreprocessorVariable>var.PublishDir</PreprocessorVariable>
+      <Transforms>$(MSBuildThisFileDirectory)..\PerUserHarvest.xslt</Transforms>
+    </HarvestDirectory>
+  </ItemGroup>
+  <Target Name="SetPerUserComponentGuids" AfterTargets="HarvestDirectory">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\Set-HarvestComponentGuids.ps1&quot; -Path &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath)_DashboardFiles_dir.wxs&quot; -ProductName Dashboard" />
+  </Target>
+  <Target Name="RequirePublishedApplication" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(PublishDir)\AgentSignaler.Dashboard.exe')" Text="Publish the self-contained dashboard first with scripts\Build-Installers.ps1." />
+  </Target>
+</Project>
