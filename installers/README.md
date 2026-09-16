@@ -395,15 +395,20 @@ Run `scripts\Update-AgentSignaler.ps1` in a **non-elevated** PowerShell 5.1 or l
 as the Windows user who originally installed the apps:
 
 ```powershell
-.\scripts\Update-AgentSignaler.ps1 -SourcePath C:\Releases\AgentSignaler -WhatIf
-.\scripts\Update-AgentSignaler.ps1 -SourcePath C:\Releases\AgentSignaler
-# Update only the remote components from a trusted share:
-.\scripts\Update-AgentSignaler.ps1 -Apps Remote -SourcePath '\\server\releases\AgentSignaler'
+.\scripts\Update-AgentSignaler.ps1 -WhatIf
+.\scripts\Update-AgentSignaler.ps1
+.\scripts\Update-AgentSignaler.ps1 -Apps Remote
 ```
 
-`-SourcePath` is required so the updater never guesses or silently trusts a
-machine-specific release location. Use only a release folder whose contents and
-publisher you have verified.
+The updater selects the newest non-draft GitHub Release, including prereleases,
+downloads only the exact Dashboard or Remote MSI asset names through GitHub's
+API, verifies their sizes and published `SHA256SUMS.txt` hashes, and requires the
+release tag and MSI version to match. While the repository is private, it reuses
+the current user's Git Credential Manager sign-in. Alternatively, set
+`AGENT_SIGNALER_GITHUB_TOKEN` for the current process. Anonymous downloads work
+when the repository and release are public. The development MSIs remain unsigned;
+release hashes detect corruption or replacement but do not establish publisher
+authenticity.
 
 Only existing current-user MSI installations are updated. Missing apps, equal
 versions, and older releases are skipped; there is no fresh install, repair,

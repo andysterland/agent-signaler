@@ -1,28 +1,22 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Updates the current user's installed Agent Signaler apps from a trusted MSI folder.
+Updates the current user's installed Agent Signaler apps from the latest GitHub Release.
 .EXAMPLE
-.\Update-AgentSignaler.ps1 -SourcePath C:\Releases\AgentSignaler -WhatIf
+.\Update-AgentSignaler.ps1 -WhatIf
 .EXAMPLE
-.\Update-AgentSignaler.ps1 -SourcePath \\server\releases\AgentSignaler -Apps Remote
+.\Update-AgentSignaler.ps1 -Apps Remote
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [Parameter(Mandatory)]
-    [ValidateNotNullOrEmpty()]
-    [string] $SourcePath,
     [ValidateSet('Dashboard', 'Remote')]
     [string[]] $Apps = @('Dashboard', 'Remote')
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-
-if (-not [IO.Path]::IsPathFullyQualified($SourcePath) -or $SourcePath -match '[\x00-\x1F]') {
-    throw 'SourcePath must be an absolute local or UNC directory without control characters.'
-}
-$SourcePath = [IO.Path]::GetFullPath($SourcePath)
+$repository = 'andysterland/agent-signaler'
+$apiRoot = "https://api.github.com/repos/$repository"
 
 if (-not [Environment]::Is64BitOperatingSystem -or
     [Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
@@ -36,6 +30,138 @@ try {
     }
 }
 finally { $identity.Dispose() }
+
+Add-Type -AssemblyName System.Net.Http
+$httpHandler = New-Object Net.Http.HttpClientHandler
+$httpHandler.AllowAutoRedirect = $false
+$httpClient = New-Object Net.Http.HttpClient($httpHandler)
+$httpClient.Timeout = [TimeSpan]::FromMinutes(5)
+
+function Get-GitHubCredentialToken {
+    if (-not [string]::IsNullOrWhiteSpace($env:AGENT_SIGNALER_GITHUB_TOKEN)) {
+        return $env:AGENT_SIGNALER_GITHUB_TOKEN
+    }
+    if ($null -eq (Get-Command git.exe -ErrorAction SilentlyContinue)) { return $null }
+    $request = "protocol=https`nhost=github.com`nusername=andysterland`n`n"
+    $lines = @($request | git credential fill 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        $global:LASTEXITCODE = 0
+        return $null
+    }
+    foreach ($line in $lines) {
+        if ($line.StartsWith('password=', [StringComparison]::Ordinal)) {
+            return $line.Substring('password='.Length)
+        }
+    }
+    return $null
+}
+
+function Test-AllowedGitHubHost([uri] $Uri) {
+    if (-not $Uri.IsAbsoluteUri -or $Uri.Scheme -cne 'https' -or -not $Uri.IsDefaultPort -or
+        $Uri.UserInfo -ne '' -or $Uri.Fragment -ne '') {
+        return $false
+    }
+    return $Uri.IdnHost -in @('api.github.com', 'github.com') -or
+        $Uri.IdnHost.EndsWith('.githubusercontent.com', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Open-GitHubResponse([uri] $Uri, [string] $Token, [string] $Accept) {
+    for ($redirect = 0; $redirect -le 5; $redirect++) {
+        if (-not (Test-AllowedGitHubHost $Uri)) {
+            throw "GitHub download redirected to an untrusted address: $Uri"
+        }
+        $request = New-Object Net.Http.HttpRequestMessage([Net.Http.HttpMethod]::Get, $Uri)
+        try {
+            [void]$request.Headers.UserAgent.ParseAdd('AgentSignaler-Updater/1.0')
+            [void]$request.Headers.Accept.ParseAdd($Accept)
+            if ($Uri.IdnHost -eq 'api.github.com' -and -not [string]::IsNullOrWhiteSpace($Token)) {
+                $request.Headers.Authorization =
+                    New-Object Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
+            }
+            $response = $httpClient.SendAsync(
+                $request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        }
+        finally { $request.Dispose() }
+        if ([int]$response.StatusCode -in @(301, 302, 303, 307, 308)) {
+            try {
+                if ($null -eq $response.Headers.Location) { throw 'GitHub returned a redirect without a location.' }
+                $Uri = New-Object uri($Uri, $response.Headers.Location)
+            }
+            finally { $response.Dispose() }
+            continue
+        }
+        return $response
+    }
+    throw 'GitHub download exceeded the redirect limit.'
+}
+
+function Read-GitHubJsonResponse($Response) {
+    try {
+        if (-not $Response.IsSuccessStatusCode) {
+            throw "GitHub request failed with HTTP $([int]$Response.StatusCode) $($Response.ReasonPhrase)."
+        }
+        $json = $Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        return $json | ConvertFrom-Json
+    }
+    finally { $Response.Dispose() }
+}
+
+function Get-LatestGitHubRelease {
+    $uri = "$apiRoot/releases?per_page=20"
+    $token = $null
+    $response = Open-GitHubResponse $uri $token 'application/vnd.github+json'
+    if ([int]$response.StatusCode -in @(401, 403, 404)) {
+        $response.Dispose()
+        $token = Get-GitHubCredentialToken
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            throw 'The GitHub repository is not publicly accessible. Sign in with Git Credential Manager or set AGENT_SIGNALER_GITHUB_TOKEN for this process.'
+        }
+        $response = Open-GitHubResponse $uri $token 'application/vnd.github+json'
+    }
+    $releases = @(Read-GitHubJsonResponse $response)
+    $release = $releases | Where-Object { -not $_.draft } |
+        Sort-Object { [DateTimeOffset]$_.published_at } -Descending | Select-Object -First 1
+    if ($null -eq $release) { throw 'No published Agent Signaler GitHub Release is available.' }
+    if ($release.tag_name -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+        throw "The latest release tag is not a supported three-part version: $($release.tag_name)"
+    }
+    [pscustomobject]@{
+        Release = $release
+        Token = $token
+        Version = [version]$release.tag_name.Substring(1)
+    }
+}
+
+function Save-GitHubAsset($Asset, [string] $Token, [string] $Destination) {
+    $response = Open-GitHubResponse $Asset.url $Token 'application/octet-stream'
+    try {
+        if (-not $response.IsSuccessStatusCode) {
+            throw "Downloading $($Asset.name) failed with HTTP $([int]$response.StatusCode) $($response.ReasonPhrase)."
+        }
+        $source = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        try {
+            $file = New-Object IO.FileStream(
+                $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $source.CopyTo($file) }
+            finally { $file.Dispose() }
+        }
+        finally { $source.Dispose() }
+    }
+    finally { $response.Dispose() }
+    if ((Get-Item -LiteralPath $Destination).Length -ne [long]$Asset.size) {
+        throw "Downloaded size mismatch for $($Asset.name)."
+    }
+}
+
+function Get-Sha256([string] $Path) {
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+        finally { $sha.Dispose() }
+    }
+    finally { $stream.Dispose() }
+}
 
 function Read-Package {
     param($Installer, [string] $Path, [string] $UpgradeCode)
@@ -135,6 +261,31 @@ $installer = New-Object -ComObject WindowsInstaller.Installer
 $staging = $null
 $exitCode = 0
 try {
+    $releaseInfo = Get-LatestGitHubRelease
+    $release = $releaseInfo.Release
+    $assets = @($release.assets)
+    $checksumAssets = @($assets | Where-Object { $_.name -ceq 'SHA256SUMS.txt' })
+    if ($checksumAssets.Count -ne 1) {
+        throw 'The latest GitHub Release must contain exactly one SHA256SUMS.txt asset.'
+    }
+    $updateRoot = Join-Path $env:LOCALAPPDATA 'AgentSignaler\Updates'
+    $runId = [guid]::NewGuid().ToString('N')
+    $staging = Join-Path $updateRoot $runId
+    [void](New-Item -ItemType Directory -Path $staging -Force -WhatIf:$false)
+    $checksumPath = Join-Path $staging 'SHA256SUMS.txt'
+    Save-GitHubAsset $checksumAssets[0] $releaseInfo.Token $checksumPath
+    $checksums = @{}
+    foreach ($line in [IO.File]::ReadAllLines($checksumPath)) {
+        if ($line -match '^([A-Fa-f0-9]{64})  (AgentSignaler\.(Dashboard|Remote)\.msi)$') {
+            if ($checksums.ContainsKey($matches[2])) { throw "Duplicate checksum for $($matches[2])." }
+            $checksums[$matches[2]] = $matches[1].ToUpperInvariant()
+        }
+    }
+    foreach ($name in @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi')) {
+        if (-not $checksums.ContainsKey($name)) { throw "SHA256SUMS.txt is missing $name." }
+    }
+    Write-Host "Latest published release: $($release.tag_name) ($($release.html_url))"
+
     $plan = @(
         foreach ($app in ($Apps | Select-Object -Unique)) {
             $installed = Get-InstalledVersion $installer $upgradeCodes[$app]
@@ -142,12 +293,20 @@ try {
                 Write-Host "$app is not installed for the current user; skipping."
                 continue
             }
-            $source = Join-Path $SourcePath "AgentSignaler.$app.msi"
-            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-                throw "Installer not found or inaccessible: $source"
+            $name = "AgentSignaler.$app.msi"
+            $matchingAssets = @($assets | Where-Object { $_.name -ceq $name })
+            if ($matchingAssets.Count -ne 1) {
+                throw "The latest GitHub Release must contain exactly one $name asset."
             }
-            $source = (Get-Item -LiteralPath $source).FullName
+            $source = Join-Path $staging $name
+            Save-GitHubAsset $matchingAssets[0] $releaseInfo.Token $source
+            if ((Get-Sha256 $source) -cne $checksums[$name]) {
+                throw "GitHub Release checksum verification failed for $name."
+            }
             $package = Read-Package $installer $source $upgradeCodes[$app]
+            if ($package.Version -ne $releaseInfo.Version) {
+                throw "$name version $($package.Version) does not match release $($release.tag_name)."
+            }
             if ($package.Version -le $installed) {
                 Write-Host "$app installed: $installed; available: $($package.Version). No upgrade needed."
                 continue
@@ -164,7 +323,7 @@ try {
     $approved = @(
         foreach ($item in $plan) {
             if ($PSCmdlet.ShouldProcess("$($item.App) for $env:USERNAME",
-                    "Upgrade $($item.Installed) to $($item.Package.Version) from $($item.Source)")) {
+                    "Upgrade $($item.Installed) to $($item.Package.Version) from $($release.html_url)")) {
                 $item
             }
         }
@@ -182,26 +341,17 @@ try {
             throw "Exit the apps and pause active Copilot CLI work, then retry. Running: $($running.ProcessName -join ', '). Closing Dashboard to the tray is not Exit."
         }
 
-        $updateRoot = Join-Path $env:LOCALAPPDATA 'AgentSignaler\Updates'
-        $runId = [guid]::NewGuid().ToString('N')
-        $staging = Join-Path $updateRoot $runId
-        [void](New-Item -ItemType Directory -Path $staging -Force)
         $logRoot = Join-Path $updateRoot 'Logs'
         [void](New-Item -ItemType Directory -Path $logRoot -Force)
-        Write-Warning 'Use only a trusted release folder. Hash checking detects copy errors, not publisher authenticity.'
+        Write-Warning 'GitHub Release checksums were verified, but these development MSIs are unsigned and do not provide publisher authenticity.'
 
-        # Stage every approved package before changing either installation.
+        # Revalidate every downloaded package before changing either installation.
         foreach ($item in $approved) {
-            $item.Staged = Join-Path $staging "AgentSignaler.$($item.App).msi"
-            $hash = (Get-FileHash -LiteralPath $item.Source -Algorithm SHA256).Hash
-            Copy-Item -LiteralPath $item.Source -Destination $item.Staged
-            if ((Get-FileHash -LiteralPath $item.Staged -Algorithm SHA256).Hash -ne $hash) {
-                throw "Copy verification failed for $($item.App); no installations have been changed."
-            }
+            $item.Staged = $item.Source
             $stagedPackage = Read-Package $installer $item.Staged $upgradeCodes[$item.App]
             if ($stagedPackage.Version -ne $item.Package.Version -or
                 $stagedPackage.ProductCode -ne $item.Package.ProductCode) {
-                throw "The $($item.App) release changed during staging. Run the script again."
+                throw "The downloaded $($item.App) package changed during validation. Run the script again."
             }
         }
 
@@ -232,8 +382,10 @@ try {
 }
 finally {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer)
+    $httpClient.Dispose()
+    $httpHandler.Dispose()
     if ($null -ne $staging -and (Test-Path -LiteralPath $staging)) {
-        Remove-Item -LiteralPath $staging -Recurse -Force
+        Remove-Item -LiteralPath $staging -Recurse -Force -WhatIf:$false
     }
 }
 exit $exitCode
