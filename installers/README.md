@@ -125,6 +125,10 @@ Warning `WIX1105` means ICE validation did not complete; run full ICE validation
 in the release environment.
 
 The manual **Release MSIs** GitHub Actions workflow publishes only the two
-application MSIs and checksums, defaults to prereleases, and will not replace an
-existing release. Development packages are unsigned: hashes do not authenticate
-the publisher. Use trusted release sources and sign packages before distribution.
+application MSIs and checksums. It selects the highest published release tag
+matching `vMAJOR.MINOR.PATCH`, increments the patch component, and passes that
+version into the application and MSI builds, so a source version change is not
+required before release. Runs are serialized, default to prereleases, and will
+not replace an existing release. Development packages are unsigned: hashes do
+not authenticate the publisher. Use trusted release sources and sign packages
+before distribution.

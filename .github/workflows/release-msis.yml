@@ -3,10 +3,6 @@ name: Release MSIs
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Three-part MSI and release version, for example 1.2.3
-        required: true
-        type: string
       prerelease:
         description: Mark the GitHub Release as a prerelease
         required: true
@@ -22,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-msis-${{ inputs.version }}
+  group: release-msis-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +28,6 @@ jobs:
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
-      RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_PRERELEASE: ${{ inputs.prerelease }}
       RELEASE_UNSIGNED_CONFIRMED: ${{ inputs.confirm_unsigned }}
       GH_TOKEN: ${{ github.token }}
@@ -49,18 +44,77 @@ jobs:
           if ($env:RELEASE_UNSIGNED_CONFIRMED -ne 'true') {
             throw 'Publishing requires explicit confirmation that the MSIs are unsigned.'
           }
-          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw 'Version must be a three-part MSI version, for example 1.2.3.'
+
+          $releaseRecords = & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" `
+            --jq '.[] | [.tag_name, .draft] | @tsv'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not enumerate published releases (gh exit code $LASTEXITCODE)."
           }
-          $parts = $env:RELEASE_VERSION.Split('.')
-          if ([long]$parts[0] -gt 255 -or [long]$parts[1] -gt 255 -or [long]$parts[2] -gt 65535) {
-            throw 'MSI versions must be no greater than 255.255.65535.'
+
+          $highest = $null
+          $allReleaseTags = [Collections.Generic.HashSet[string]]::new(
+            [StringComparer]::Ordinal)
+          foreach ($record in $releaseRecords) {
+            $tag, $isDraft = $record -split "`t", 2
+            [void]$allReleaseTags.Add($tag)
+            if ($isDraft -eq 'true') {
+              continue
+            }
+            if ($tag -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+              continue
+            }
+
+            $parts = @($Matches[1], $Matches[2], $Matches[3])
+            $values = foreach ($part in $parts) {
+              $value = 0L
+              if (-not [long]::TryParse(
+                  $part,
+                  [Globalization.NumberStyles]::None,
+                  [Globalization.CultureInfo]::InvariantCulture,
+                  [ref]$value)) {
+                throw "Release tag $tag has a numeric component too large to process."
+              }
+              $value
+            }
+
+            $candidate = [pscustomobject]@{
+              Major = $values[0]
+              Minor = $values[1]
+              Patch = $values[2]
+            }
+            if ($null -eq $highest -or
+                $candidate.Major -gt $highest.Major -or
+                ($candidate.Major -eq $highest.Major -and $candidate.Minor -gt $highest.Minor) -or
+                ($candidate.Major -eq $highest.Major -and
+                 $candidate.Minor -eq $highest.Minor -and
+                 $candidate.Patch -gt $highest.Patch)) {
+              $highest = $candidate
+            }
           }
-          & gh release view "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "Release v$env:RELEASE_VERSION already exists; existing releases are never replaced."
+
+          if ($null -eq $highest) {
+            $next = [pscustomobject]@{ Major = 0L; Minor = 0L; Patch = 1L }
           }
-          $global:LASTEXITCODE = 0
+          else {
+            if ($highest.Major -gt 255 -or $highest.Minor -gt 255 -or $highest.Patch -gt 65535) {
+              throw "Highest release version v$($highest.Major).$($highest.Minor).$($highest.Patch) exceeds MSI limits."
+            }
+            if ($highest.Patch -eq 65535) {
+              throw "Cannot increment v$($highest.Major).$($highest.Minor).$($highest.Patch): the MSI patch limit is 65535."
+            }
+            $next = [pscustomobject]@{
+              Major = $highest.Major
+              Minor = $highest.Minor
+              Patch = $highest.Patch + 1
+            }
+          }
+
+          $releaseVersion = "$($next.Major).$($next.Minor).$($next.Patch)"
+          if ($allReleaseTags.Contains("v$releaseVersion")) {
+            throw "Release v$releaseVersion already exists; existing releases are never replaced."
+          }
+          "RELEASE_VERSION=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Next release version: $releaseVersion"
       - name: Audit repository contents
         shell: powershell
         run: .\scripts\Test-PublicRepository.ps1
