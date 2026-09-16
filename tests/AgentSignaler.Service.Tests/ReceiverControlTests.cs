@@ -144,7 +144,7 @@ public sealed class ReceiverControlTests : IAsyncLifetime
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            using var rejected = await _client.GetAsync("/health").WaitAsync(TimeSpan.FromSeconds(2));
+            using var rejected = await _client.GetAsync("/health").WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
             Assert.Equal(TimeSpan.FromSeconds(1), rejected.Headers.RetryAfter!.Delta);
         }

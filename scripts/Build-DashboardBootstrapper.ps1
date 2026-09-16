@@ -19,9 +19,8 @@ foreach ($entry in $pins.GetEnumerator()) {
     }
     if ((Get-FileHash -LiteralPath $path).Hash -cne $entry.Value) { throw 'WiX 4.0.6 native API header hash mismatch.' }
 }
+Get-VerifiedPrerequisitePayloads
 $metadata = Get-PrerequisiteMetadata
-Assert-PrerequisitePayload (Join-Path $root "artifacts\prerequisites\azure-cli-$($metadata.AzureCliVersion)-x64.msi") AzureCli $metadata
-Assert-PrerequisitePayload (Join-Path $root 'artifacts\prerequisites\devtunnel.exe') DevTunnels $metadata
 $metadata['DashboardVersion'] = $Version
 $header = "#pragma once`r`n"
 foreach ($entry in $metadata.GetEnumerator()) {
