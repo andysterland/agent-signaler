@@ -60,6 +60,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw "Release v$env:RELEASE_VERSION already exists; existing releases are never replaced."
           }
+          $global:LASTEXITCODE = 0
       - name: Audit repository contents
         shell: powershell
         run: .\scripts\Test-PublicRepository.ps1
