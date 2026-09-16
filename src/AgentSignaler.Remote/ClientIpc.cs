@@ -113,6 +113,7 @@ public sealed class ClientIpcServer : IAsyncDisposable
     {
         while (!_lifetime.IsCancellationRequested)
         {
+            var responseProduced = false;
             try
             {
                 using var pipe = initial ?? CreatePipe(name);
@@ -126,6 +127,7 @@ public sealed class ClientIpcServer : IAsyncDisposable
                 var response = request.Version == ClientIpc.Version
                     ? await handler(request, workBudget.Token)
                     : new ClientIpcResponse(false, "incompatible", Error: "Unsupported IPC version.");
+                responseProduced = true;
                 if (request.Version != ClientIpc.Version) WriteDiagnostic("ipc-version-rejected");
                 await ClientIpc.WriteAsync(pipe, response, workBudget.Token);
                 if (request.Command == "stop" && response.Accepted) StopAcknowledged?.Invoke();
@@ -133,12 +135,12 @@ public sealed class ClientIpcServer : IAsyncDisposable
             catch (Exception ex) when (ex is IOException or OperationCanceledException or JsonException or
                 InvalidDataException or UnauthorizedAccessException or ArgumentException)
             {
-                if (!_lifetime.IsCancellationRequested)
+                if (!_lifetime.IsCancellationRequested || responseProduced)
                 {
                     WriteDiagnostic(ex switch
                     {
                         UnauthorizedAccessException => "ipc-access-denied",
-                        OperationCanceledException => "ipc-request-timeout",
+                        OperationCanceledException when !responseProduced => "ipc-request-timeout",
                         JsonException or InvalidDataException or ArgumentException => "ipc-message-invalid",
                         _ => "ipc-connection-failed"
                     });

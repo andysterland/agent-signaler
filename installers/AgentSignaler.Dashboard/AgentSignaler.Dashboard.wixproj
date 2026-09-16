@@ -11,6 +11,8 @@
     <HarvestDirectorySuppressRootDirectory>true</HarvestDirectorySuppressRootDirectory>
     <HarvestDirectorySuppressRegistry>true</HarvestDirectorySuppressRegistry>
     <HarvestDirectorySuppressCom>true</HarvestDirectorySuppressCom>
+    <!-- ICE03 on Windows Server 2025 rejects valid modern MUI LCIDs such as gd-GB, mi-NZ, and ug-CN. -->
+    <SuppressIces>$(SuppressIces);ICE03</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.Heat" Version="4.0.6" />
