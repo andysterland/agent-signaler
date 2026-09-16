@@ -53,6 +53,7 @@ public sealed class WindowsHookCommandTests
                 }
             };
             process.StartInfo.Environment["AGENT_SIGNALER_DATA_DIR"] = root;
+            await WarmUp(relay, root);
             var elapsed = Stopwatch.StartNew();
             Assert.True(process.Start());
             var output = process.StandardOutput.ReadToEndAsync();
@@ -83,6 +84,37 @@ public sealed class WindowsHookCommandTests
             HookVerification.Cancel(probe);
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // The fixture copies the Relay to a new location for every case, so the first execution also pays
+    // one-time image load and scanning costs that a deployed hook never repeats. This invocation is
+    // rejected before any configuration, diagnostics or reporting work, so it warms only that cost.
+    private static async Task WarmUp(string relay, string root)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(relay)
+            {
+                Arguments = "--warm-up", UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+            }
+        };
+        process.StartInfo.Environment["AGENT_SIGNALER_DATA_DIR"] = root;
+        Assert.True(process.Start());
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
+        process.StandardInput.Close();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            throw;
+        }
+        Assert.Equal(2, process.ExitCode);
+        Assert.Empty(await output);
+        Assert.Empty(await errors);
     }
 
     private sealed class FixtureTransport : IPresenceTransport
