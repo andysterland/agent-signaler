@@ -337,9 +337,9 @@ public sealed class DevBoxCatalogControllerTests
         var main = File.ReadAllText(Path.Combine(directory, "MainWindow.cs"));
         var settings = File.ReadAllText(Path.Combine(directory, "MainWindow.DevBox.cs"));
         var cli = File.ReadAllText(Path.Combine(directory, "MainWindow.Prerequisites.cs"));
-        Assert.Contains("AddSection(\"Dev Box\", azure)", main);
+        Assert.Contains("AddSection(\"Dev Box\", azure, azureHelp)", main);
         Assert.DoesNotContain("AddSection(\"Azure CLI\"", main);
-        Assert.Contains("BuildPrerequisiteSettings(prerequisites)", main);
+        Assert.Contains("BuildPrerequisiteSettings(prerequisites, prerequisiteHelp)", main);
         Assert.DoesNotContain("BuildAzureCliSettings", settings);
         Assert.DoesNotContain("SeedFromMappings", settings);
         Assert.DoesNotContain("ReadEndpoints", settings);

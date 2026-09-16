@@ -26,18 +26,31 @@ internal sealed partial class MainWindow : Window
     private const string PollErrorMessage = "Machine status could not be refreshed. Retrying every second. Displayed cards may be stale. " +
         "Check that the local database is accessible; restart Agent Signaler if this persists.";
     private const string ConfiguratorTestMessage = "A test connection was received from AgentSignaler.Configurator.";
-    private readonly Grid _root = new() { Padding = new Thickness(18), RowSpacing = 12 };
-    private readonly Grid _cards = new() { ColumnSpacing = 12, RowSpacing = 12 };
-    private readonly TextBlock _empty = Text("Waiting for machines", 20);
-    private readonly TextBlock _host = Text("Starting receiver…");
-    private readonly TextBlock _serviceStatus = Text("Service: Preparing local storage", 12);
-    private readonly TextBlock _tunnelStatus = Text("Dev Tunnels: Waiting for the local service", 12);
-    private readonly ProgressRing _tunnelProgress = new()
+    private readonly Grid _root = new() { Padding = new Thickness(32, 16, 32, 32), RowSpacing = 16 };
+    private readonly Grid _cards = new()
     {
-        Width = 20, Height = 20, MinWidth = 0, MinHeight = 0,
-        IsActive = false, Visibility = Visibility.Collapsed
+        ColumnSpacing = MachineCardPresentation.CardSpacing, RowSpacing = MachineCardPresentation.CardSpacing
     };
-    private readonly Button _copyUrl = new() { Content = "Copy URL", IsEnabled = false };
+    private readonly Grid _machineBody = new() { Visibility = Visibility.Collapsed };
+    private readonly DashboardStartupController _startup = new();
+    private readonly TextBlock _machineCount = Text("No development machines", 18);
+    private readonly Button _settingsButton = new();
+    private readonly Button _compactButton = new()
+    {
+        IsEnabled = false, Padding = new Thickness(20, 10, 20, 10),
+        CornerRadius = new CornerRadius(10), VerticalAlignment = VerticalAlignment.Center
+    };
+    private readonly TextBlock _empty = Text("Waiting for machines", 20);
+    private readonly TextBlock _host = Text("");
+    private readonly ProgressBar _startupProgress = new() { IsIndeterminate = true };
+    private readonly TextBlock _startupStatus = Text("Starting Dashboard...");
+    private readonly StackPanel _startupPanel = new() { Spacing = 8 };
+    private readonly Button _copyUrl = new()
+    {
+        Content = new SymbolIcon(Symbol.Copy), IsEnabled = false, Visibility = Visibility.Collapsed,
+        Width = 32, Height = 32, Padding = new Thickness(0),
+        VerticalAlignment = VerticalAlignment.Center
+    };
     private readonly InfoBar _problem = new() { IsClosable = true, Severity = InfoBarSeverity.Error };
     private readonly InfoBar _connectionTest = new()
     {
@@ -47,37 +60,6 @@ internal sealed partial class MainWindow : Window
     private readonly Dictionary<Guid, MachineCard> _cardMap = [];
     private readonly DispatcherQueueTimer _timer;
     private readonly nint _handle;
-    private static Geometry CreateBrandGeometry() => new PathGeometry
-    {
-        Figures =
-        {
-            new PathFigure
-            {
-                StartPoint = new Windows.Foundation.Point(12, 1),
-                IsClosed = true,
-                Segments =
-                {
-                    new LineSegment { Point = new Windows.Foundation.Point(21, 8) },
-                    new LineSegment { Point = new Windows.Foundation.Point(18, 21) },
-                    new LineSegment { Point = new Windows.Foundation.Point(6, 21) },
-                    new LineSegment { Point = new Windows.Foundation.Point(3, 8) }
-                }
-            },
-            new PathFigure
-            {
-                StartPoint = new Windows.Foundation.Point(11, 5),
-                IsClosed = true,
-                Segments =
-                {
-                    new LineSegment { Point = new Windows.Foundation.Point(8, 11) },
-                    new LineSegment { Point = new Windows.Foundation.Point(12, 11) },
-                    new LineSegment { Point = new Windows.Foundation.Point(9, 18) },
-                    new LineSegment { Point = new Windows.Foundation.Point(16, 9) },
-                    new LineSegment { Point = new Windows.Foundation.Point(12, 9) }
-                }
-            }
-        }
-    };
     private DashboardSettings _settings = new();
     private MachineStore? _store;
     private DashboardServer? _server;
@@ -101,7 +83,6 @@ internal sealed partial class MainWindow : Window
     private bool _allowClose;
     private bool _dialogOpen;
     private bool _pollErrorShown;
-    private ReceiverStartupState _receiverStartupState = ReceiverStartupState.Preparing;
     private int _runningPort;
     private DashboardConnectionMode _runningMode;
     private string? _runningCliPath;
@@ -163,46 +144,69 @@ internal sealed partial class MainWindow : Window
 
     private void BuildLayout()
     {
-        for (var i = 0; i < 5; i++) _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < 4; i++) _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var heading = new Grid { ColumnSpacing = 8 };
+        var heading = new Grid { ColumnSpacing = 16, Margin = new Thickness(0, 0, 0, 12) };
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var brand = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
-        brand.Children.Add(new Border
-        {
-            Width = 38, Height = 38, CornerRadius = new CornerRadius(11),
-            Background = (Brush)Application.Current.Resources["AgentSignalerAccentBrush"],
-            Child = new Viewbox
-            {
-                Margin = new Thickness(8),
-                Child = new PathIcon
-                {
-                    Data = CreateBrandGeometry(),
-                    Foreground = new SolidColorBrush(Colors.White)
-                }
-            }
-        });
-        brand.Children.Add(Text("Agent Signaler", 24));
-        var version = Text($"v{AppVersion}", 13);
-        version.Opacity = 0.65;
-        version.VerticalAlignment = VerticalAlignment.Bottom;
-        version.Margin = new Thickness(0, 0, 0, 3);
-        brand.Children.Add(version);
+        heading.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        heading.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var brand = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var title = Text("Agent Signaler", 34);
+        title.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+        brand.Children.Add(title);
+        _machineCount.Visibility = Visibility.Collapsed;
+        brand.Children.Add(_machineCount);
         heading.Children.Add(brand);
-        var settings = new Button { Content = "Settings", VerticalAlignment = VerticalAlignment.Center };
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        _compactButton.Content = ActionContent(Symbol.View, "Compact View");
+        AutomationProperties.SetName(_compactButton, "Compact View");
+        _compactButton.Click += (_, _) =>
+        {
+            if (AppWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
+        };
+        ToolTipService.SetToolTip(_compactButton, "Show glyph-only status tiles. Enable 'Compact view when minimized' in Settings.");
+        actions.Children.Add(_compactButton);
+        var settings = _settingsButton;
+        settings.Content = ActionContent(Symbol.Setting, "Settings");
+        AutomationProperties.SetName(settings, "Settings");
+        settings.VerticalAlignment = VerticalAlignment.Center;
+        settings.Padding = new Thickness(20, 10, 20, 10);
+        settings.CornerRadius = new CornerRadius(10);
+        settings.Background = new SolidColorBrush(Color.FromArgb(255, 37, 99, 235));
+        settings.Foreground = new SolidColorBrush(Colors.White);
+        settings.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(Color.FromArgb(255, 29, 78, 216));
+        settings.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(Color.FromArgb(255, 30, 64, 175));
+        settings.Resources["ButtonForegroundPointerOver"] = settings.Foreground;
+        settings.Resources["ButtonForegroundPressed"] = settings.Foreground;
         settings.Click += async (_, _) => await ShowSettingsAsync();
-        Grid.SetColumn(settings, 1);
-        heading.Children.Add(settings);
+        actions.Children.Add(settings);
+        Grid.SetColumn(actions, 1);
+        heading.Children.Add(actions);
+        heading.SizeChanged += (_, args) =>
+        {
+            var narrow = args.NewSize.Width < 720;
+            Grid.SetColumnSpan(brand, narrow ? 2 : 1);
+            Grid.SetRow(actions, narrow ? 1 : 0);
+            Grid.SetColumn(actions, narrow ? 0 : 1);
+            Grid.SetColumnSpan(actions, narrow ? 2 : 1);
+            heading.RowSpacing = narrow ? 12 : 0;
+        };
         AddRow(heading, 0);
+        _root.ActualThemeChanged += (_, _) => UpdateCanvasAppearance();
+        UpdateCanvasAppearance();
 
-        var address = new Grid { ColumnSpacing = 8 };
+        // Shrink to the URL for adjacent copying, but constrain long URLs to the brand column.
+        var address = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Left };
         address.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         address.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _host.IsTextSelectionEnabled = true;
+        _host.TextWrapping = TextWrapping.NoWrap;
+        _host.TextTrimming = TextTrimming.CharacterEllipsis;
         _host.VerticalAlignment = VerticalAlignment.Center;
         address.Children.Add(_host);
         AutomationProperties.SetName(_copyUrl, "Copy effective dashboard connection URL");
+        ToolTipService.SetToolTip(_copyUrl, "Copy URL");
         _copyUrl.Click += (_, _) =>
         {
             var presentation = GetConnectionPresentation();
@@ -225,26 +229,15 @@ internal sealed partial class MainWindow : Window
         };
         Grid.SetColumn(_copyUrl, 1);
         address.Children.Add(_copyUrl);
-        AddRow(address, 1);
-        var startupStatus = new StackPanel { Spacing = 4 };
-        _serviceStatus.IsTextSelectionEnabled = true;
-        _tunnelStatus.IsTextSelectionEnabled = true;
-        startupStatus.Children.Add(_serviceStatus);
-        var tunnelStatus = new Grid { ColumnSpacing = 8 };
-        tunnelStatus.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        tunnelStatus.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        AutomationProperties.SetName(_tunnelProgress, "Public tunnel connection in progress");
-        AutomationProperties.SetLiveSetting(_tunnelStatus, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-        _tunnelStatus.VerticalAlignment = VerticalAlignment.Center;
-        tunnelStatus.Children.Add(_tunnelProgress);
-        Grid.SetColumn(_tunnelStatus, 1);
-        tunnelStatus.Children.Add(_tunnelStatus);
-        startupStatus.Children.Add(tunnelStatus);
-        AddRow(startupStatus, 2);
-        AddRow(_problem, 3);
-        AddRow(_connectionTest, 4);
+        brand.Children.Add(address);
+        AutomationProperties.SetName(_startupProgress, "Dashboard startup in progress");
+        _startupPanel.Children.Add(_startupProgress);
+        _startupPanel.Children.Add(_startupStatus);
+        AddRow(_startupPanel, 1);
+        AddRow(_problem, 2);
+        AddRow(_connectionTest, 3);
 
-        var body = new Grid();
+        var body = _machineBody;
         var scroll = new ScrollViewer
         {
             Content = _cards,
@@ -259,13 +252,35 @@ internal sealed partial class MainWindow : Window
         _empty.Text = "Waiting for machines\nConfigure a remote client with the URL above.";
         _empty.TextAlignment = TextAlignment.Center;
         body.Children.Add(_empty);
-        AddRow(body, 5);
+        AddRow(body, 4);
     }
 
-    public Task InitializeAsync(bool background) => _initializationTask ??= InitializeCoreAsync(background);
-
-    private async Task InitializeCoreAsync(bool background)
+    private static StackPanel ActionContent(Symbol symbol, string label)
     {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        content.Children.Add(new SymbolIcon(symbol) { VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(Text(label));
+        return content;
+    }
+
+    public Task InitializeAsync(bool background) => _initializationTask ??= InitializeWithProgressAsync(background);
+
+    private async Task InitializeWithProgressAsync(bool background)
+    {
+        try
+        {
+            await _startup.RunAsync(InitializeCoreAsync, _tunnelLifetime.Token);
+        }
+        finally
+        {
+            if (!_exiting) UpdateStartupPresentation();
+        }
+        if (!_exiting && background && _tray is { IsAvailable: true } && !_problem.IsOpen) AppWindow.Hide();
+    }
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        ReportStartupProgress("Setting up the notification-area icon...");
         try
         {
             _tray = new TrayIcon(_handle, ShowDashboard, async () => await ExitAsync());
@@ -277,11 +292,11 @@ internal sealed partial class MainWindow : Window
         }
         try
         {
+            ReportStartupProgress("Loading local data and Dev Box connections...");
             _runningPort = _settings.Port;
             _runningMode = _settings.ConnectionMode;
             _runningCliPath = _settings.DevTunnelCliPath;
             _runningAzureCliPath = _settings.AzureCliPath;
-            SetReceiverStartupState(ReceiverStartupState.Preparing);
             Directory.CreateDirectory(DashboardSettings.DataDirectory);
             _store = new MachineStore(DashboardSettings.DatabasePath);
             _effectiveAzureCliPath = AzureCliInstallation.ResolvePath(_runningAzureCliPath);
@@ -320,8 +335,14 @@ internal sealed partial class MainWindow : Window
                 else DispatcherQueue.TryEnqueue(UpdateConnectionAvailability);
             };
             _connectionActions = new WindowsAppConnectionActions(_connections, RefreshAsync, () => _exiting,
-                ShowDashboard, ShowProblem, ShowConnectionDetailsAsync);
-            SetReceiverStartupState(ReceiverStartupState.Starting);
+                ShowDashboard, ShowProblem, ShowConnectionDetailsAsync, id =>
+                {
+                    var progress = new WindowsAppProgressWindow(_connections, id,
+                        _cardMap.TryGetValue(id, out var card) ? card.Machine.Name : "Dev Box",
+                        _root.RequestedTheme, _compactWindow?.AppWindow.Id ?? AppWindow.Id);
+                    progress.Activate();
+                    return progress;
+                });
             _server = new DashboardServer(_store, _runningPort, () =>
             {
                 DispatcherQueue.TryEnqueue(() =>
@@ -333,44 +354,46 @@ internal sealed partial class MainWindow : Window
                 ListenerMode = _runningMode == DashboardConnectionMode.DevTunnel
                     ? DashboardListenerMode.Internet : DashboardListenerMode.Lan
             });
-            await _server.StartAsync();
+            ReportStartupProgress("Starting the local receiver...");
+            await _server.StartAsync(cancellationToken);
             _running = true;
-            SetReceiverStartupState(ReceiverStartupState.Running);
             if (_exiting) return;
-            await InitializeTunnelAsync();
+            ReportStartupProgress("Preparing connection settings...");
+            await InitializeTunnelAsync(cancellationToken);
             if (_exiting) return;
             UpdateConnectionPresentation();
+            ReportStartupProgress("Loading computer tiles...");
             _refreshTask = RefreshAsync();
             await _refreshTask;
-            _timer.Start();
-            await StartSharingOnStartupAsync();
             if (_exiting) return;
-            if (background && _tray is { IsAvailable: true } && !_problem.IsOpen) AppWindow.Hide();
+            _timer.Start();
+            // Keep all machine views gated until sharing finishes public HTTPS verification
+            // (or is skipped/failed). A running receiver or a populated cache is not readiness.
+            await StartSharingOnStartupAsync();
         }
         catch (Exception error) when (error is IOException or SocketException or SqliteException or UnauthorizedAccessException)
         {
-            SetReceiverStartupState(ReceiverStartupState.Failed);
-            _host.Text = "Receiver not running";
+            if (_exiting) return;
+            UpdateConnectionPresentation();
             ShowProblem("The receiver could not start. Check that the configured port is unused and that " +
                 "%LOCALAPPDATA%\\AgentSignaler is writable. Change the port in Settings, then Exit and restart. " +
                 "No firewall rule or URL ACL is required to start the local receiver.");
         }
     }
 
-    private void SetReceiverStartupState(ReceiverStartupState state)
+    private void UpdateStartupPresentation()
     {
-        _receiverStartupState = state;
-        UpdateStartupStatus();
+        _startupProgress.IsIndeterminate = _startup.IsLoading;
+        _startupPanel.Visibility = _startup.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+        _machineBody.Visibility = _startup.ShowMachines ? Visibility.Visible : Visibility.Collapsed;
+        _machineCount.Visibility = _machineBody.Visibility;
+        _compactButton.IsEnabled = _startup.ShowMachines && _cardMap.Count > 0 && _settings.ShowCompactViewWhenMinimized;
+        UpdateCompactView();
     }
 
-    private void UpdateStartupStatus()
+    private void ReportStartupProgress(string message)
     {
-        var status = StartupStatusPresentation.Create(_receiverStartupState, _runningMode, _runningPort,
-            _tunnel?.Status, _tunnelSetupError);
-        _serviceStatus.Text = status.Service;
-        _tunnelStatus.Text = status.Tunnel;
-        _tunnelProgress.IsActive = status.IsTunnelStarting;
-        _tunnelProgress.Visibility = status.IsTunnelStarting ? Visibility.Visible : Visibility.Collapsed;
+        if (!_exiting && _startup.IsLoading) _startupStatus.Text = message;
     }
 
     public void ShowDashboard()
@@ -394,7 +417,7 @@ internal sealed partial class MainWindow : Window
 
     private void UpdateCompactView()
     {
-        if (_exiting || !_minimized || !_settings.ShowCompactViewWhenMinimized || _cardMap.Count == 0)
+        if (_exiting || !_startup.ShowMachines || !_minimized || !_settings.ShowCompactViewWhenMinimized || _cardMap.Count == 0)
         {
             _compactWindow?.AppWindow.Hide();
             return;
@@ -469,6 +492,8 @@ internal sealed partial class MainWindow : Window
                 _connections?.Observe(machine.MachineId, machine.WindowsAppConnection);
             }
             _empty.Visibility = machines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            _machineCount.Text = $"{machines.Count} development machine{(machines.Count == 1 ? "" : "s")}";
+            _compactButton.IsEnabled = _startup.ShowMachines && machines.Count > 0 && _settings.ShowCompactViewWhenMinimized;
             if (layoutChanged) LayoutCards(Math.Max(1, _cards.ActualWidth));
             UpdateCompactView();
             if (_detailsId is { } detailsId) _updateDetails?.Invoke(machines.FirstOrDefault(m => m.MachineId == detailsId));
@@ -488,9 +513,7 @@ internal sealed partial class MainWindow : Window
     private void LayoutCards(double width)
     {
         if (width <= 1) return;
-        var desired = _settings.Compact ? 156 : 208;
-        var columns = Math.Max(1, (int)((width + 12) / (desired + 12)));
-        var side = Math.Max(1, (width - (columns - 1) * 12) / columns);
+        var (columns, cardWidth) = MachineCardPresentation.Layout(width, _settings.Compact);
         _cards.ColumnDefinitions.Clear();
         _cards.RowDefinitions.Clear();
         for (var i = 0; i < columns; i++) _cards.ColumnDefinitions.Add(new ColumnDefinition());
@@ -500,8 +523,8 @@ internal sealed partial class MainWindow : Window
         for (var i = 0; i < ordered.Length; i++)
         {
             var card = ordered[i].Button;
-            card.Width = side;
-            card.MinHeight = side;
+            card.Width = cardWidth;
+            card.MinHeight = MachineCardPresentation.MinimumHeight;
             card.Height = double.NaN;
             Grid.SetColumn(card, i % columns);
             Grid.SetRow(card, i / columns);
@@ -518,11 +541,25 @@ internal sealed partial class MainWindow : Window
             presenter.IsAlwaysOnTop = false;
         var scale = NativeWindow.GetDpiForWindow(_handle) / 96.0;
         if (scale <= 0) scale = 1;
-        AppWindow.Resize(_settings.Compact
-            ? new SizeInt32((int)(560 * scale), (int)(700 * scale))
-            : new SizeInt32((int)(920 * scale), (int)(800 * scale)));
+        var workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+        var size = _settings.Compact
+            ? new SizeInt32((int)(900 * scale), (int)(600 * scale))
+            : new SizeInt32((int)(1040 * scale), (int)(640 * scale));
+        AppWindow.Resize(new SizeInt32(Math.Min(size.Width, workArea.Width), Math.Min(size.Height, workArea.Height)));
+        _compactButton.IsEnabled = _startup.ShowMachines && _cardMap.Count > 0 && _settings.ShowCompactViewWhenMinimized;
         LayoutCards(_cards.ActualWidth);
         UpdateCompactView();
+    }
+
+    private void UpdateCanvasAppearance()
+    {
+        var dark = _root.ActualTheme == ElementTheme.Dark;
+        _root.Background = new SolidColorBrush(dark
+            ? Color.FromArgb(255, 17, 24, 39) : Color.FromArgb(255, 248, 250, 252));
+        _machineCount.Foreground = new SolidColorBrush(dark
+            ? Color.FromArgb(255, 148, 163, 184) : Color.FromArgb(255, 71, 85, 105));
+        _compactButton.Background = new SolidColorBrush(dark
+            ? Color.FromArgb(255, 30, 41, 59) : Color.FromArgb(255, 226, 232, 240));
     }
 
     private async Task ShowDetailsAsync(Guid id, string? connectionMessage = null)
@@ -1175,7 +1212,6 @@ internal sealed partial class MainWindow : Window
             { failed = true; }
             if (_server is not null)
             {
-                SetReceiverStartupState(ReceiverStartupState.Stopping);
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 try { await _server.StopAsync(timeout.Token); }
                 catch (OperationCanceledException) when (timeout.IsCancellationRequested) { failed = true; }
@@ -1183,7 +1219,6 @@ internal sealed partial class MainWindow : Window
                 try
                 {
                     await _server.DisposeAsync();
-                    SetReceiverStartupState(ReceiverStartupState.Stopped);
                 }
                 catch (Exception error) when (error is IOException or SocketException) { failed = true; }
             }
@@ -1225,13 +1260,19 @@ internal sealed class MachineCard
     private readonly SolidColorBrush _pressedBackground = new();
     private readonly FontIcon _connectionIcon = new()
     {
-        FontSize = 16, HorizontalAlignment = HorizontalAlignment.Left,
-        VerticalAlignment = VerticalAlignment.Top
+        Glyph = "\u25CF", FontFamily = new FontFamily("Segoe UI"),
+        FontSize = 24, VerticalAlignment = VerticalAlignment.Center
     };
-    private readonly FontIcon _icon = new() { FontSize = 36, HorizontalAlignment = HorizontalAlignment.Center };
-    private readonly TextBlock _name = MainWindow.Text("", 17);
-    private readonly TextBlock _status = MainWindow.Text("", 16);
-    private readonly TextBlock _mapping = MainWindow.Text("", 12);
+    private readonly FontIcon _icon = new()
+    {
+        FontFamily = new FontFamily("Segoe UI"), FontSize = 54,
+        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+    };
+    private readonly TextBlock _name = MainWindow.Text("", 22);
+    private readonly TextBlock _status = MainWindow.Text("", 26);
+    private readonly TextBlock _activity = MainWindow.Text("", 16);
+    private readonly TextBlock _mapping = MainWindow.Text("", 16);
+    private readonly TextBlock _footer = MainWindow.Text("", 14);
     public Button Button { get; }
     public MachineView Machine { get; private set; }
 
@@ -1241,27 +1282,17 @@ internal sealed class MachineCard
         _miniature = miniature;
         _name.MaxLines = 2;
         _name.TextTrimming = TextTrimming.CharacterEllipsis;
-        _name.TextAlignment = TextAlignment.Center;
-        _status.TextAlignment = TextAlignment.Center;
-        _mapping.TextAlignment = TextAlignment.Center;
+        _name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        _status.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+        _activity.MaxLines = 2;
+        _activity.TextTrimming = TextTrimming.CharacterEllipsis;
         _mapping.MaxLines = 2;
         _mapping.TextTrimming = TextTrimming.CharacterEllipsis;
-        var panel = new StackPanel
-        {
-            Spacing = miniature ? 2 : 10, HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        panel.Children.Add(_icon);
-        panel.Children.Add(_name);
-        panel.Children.Add(_status);
-        if (!miniature) panel.Children.Add(_mapping);
-        var content = new Grid();
-        content.Children.Add(panel);
-        content.Children.Add(_connectionIcon);
         Button = new Button
         {
-            Content = content, Padding = new Thickness(miniature ? 4 : 12),
-            CornerRadius = new CornerRadius(miniature ? 4 : 12),
+            Content = miniature ? _icon : CreateFullContent(),
+            Padding = new Thickness(miniature ? 4 : 24),
+            CornerRadius = new CornerRadius(miniature ? 4 : 18),
             Background = _background,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch
@@ -1272,44 +1303,63 @@ internal sealed class MachineCard
         {
             Button.Width = Button.Height = CompactWindow.TileSize;
             Button.MinWidth = Button.MinHeight = 0;
-            _icon.FontSize = 20;
-            _connectionIcon.FontSize = 10;
-            _name.FontSize = 10;
-            _status.Visibility = Visibility.Collapsed;
+            _icon.FontSize = 32;
         }
         Button.Click += (_, _) => activate();
         Update(machine);
+    }
+
+    private Grid CreateFullContent()
+    {
+        var content = new Grid { RowSpacing = 16 };
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var heading = new Grid { ColumnSpacing = 12 };
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        heading.Children.Add(_connectionIcon);
+        Grid.SetColumn(_name, 1);
+        heading.Children.Add(_name);
+        content.Children.Add(heading);
+
+        var state = new Grid { ColumnSpacing = 16, VerticalAlignment = VerticalAlignment.Center };
+        state.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
+        state.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        state.Children.Add(_icon);
+        var description = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        description.Children.Add(_status);
+        description.Children.Add(_activity);
+        Grid.SetColumn(description, 1);
+        state.Children.Add(description);
+        Grid.SetRow(state, 1);
+        content.Children.Add(state);
+
+        var footer = new StackPanel { Spacing = 4 };
+        footer.Children.Add(_mapping);
+        footer.Children.Add(_footer);
+        Grid.SetRow(footer, 2);
+        content.Children.Add(footer);
+        return content;
     }
 
     public void Update(MachineView machine)
     {
         Machine = machine;
         _name.Text = machine.Name;
-        _status.Text = StatusText(machine.State);
+        _status.Text = machine.State == AgentState.Waiting ? "Waiting" : StatusText(machine.State);
         _mapping.Text = DevBoxMappingPresentation.TileText(machine.WindowsAppConnection);
+        var now = DateTimeOffset.UtcNow;
+        _activity.Text = MachineCardPresentation.Activity(machine, now);
+        _footer.Text = MachineCardPresentation.Footer(machine, now);
         var online = machine.State != AgentState.Offline;
         var connectionStatus = online ? "Online" : "Offline";
-        _connectionIcon.Glyph = online ? "\uE73E" : "\uE711";
-        _connectionIcon.Foreground = new SolidColorBrush(online
-            ? Color.FromArgb(255, 16, 145, 62) : Color.FromArgb(255, 120, 120, 120));
+        ApplyStateAppearance(machine.State);
         AutomationProperties.SetName(_connectionIcon, connectionStatus);
         ToolTipService.SetToolTip(_connectionIcon, connectionStatus);
-        (_icon.Glyph, var color) = machine.State switch
-        {
-            AgentState.Executing => ("\uE768", Color.FromArgb(255, 0, 120, 212)),
-            AgentState.Waiting => ("\uE7BA", Color.FromArgb(255, 196, 126, 0)),
-            AgentState.Succeeded => ("\uE73E", Color.FromArgb(255, 16, 145, 62)),
-            AgentState.Failed => ("\uEA39", Color.FromArgb(255, 211, 50, 65)),
-            AgentState.Idle => ("\uE916", Color.FromArgb(255, 120, 120, 120)),
-            _ => ("\uE711", Color.FromArgb(255, 120, 120, 120))
-        };
-        _icon.Foreground = new SolidColorBrush(color);
-        _background.Color = Color.FromArgb(40, color.R, color.G, color.B);
-        _pointerOverBackground.Color = Color.FromArgb(60, color.R, color.G, color.B);
-        _pressedBackground.Color = Color.FromArgb(80, color.R, color.G, color.B);
-        var summary = online ? $"{connectionStatus}, {_status.Text}" : connectionStatus;
-        AutomationProperties.SetName(Button, _miniature ? WindowsAppConnectionController.LaunchLabel(machine.Name)
-            : $"{machine.Name}, {summary}. {_mapping.Text}. Open machine details.");
+        var summary = online ? $"{connectionStatus}, {StatusText(machine.State)}" : connectionStatus;
+        AutomationProperties.SetName(Button, _miniature ? $"{WindowsAppConnectionController.LaunchLabel(machine.Name)}, {summary}"
+            : $"{machine.Name}, {summary}. {_activity.Text}. {_mapping.Text}. {_footer.Text}. Open machine details.");
         var tooltip = _miniature
             ? $"{WindowsAppConnectionController.LaunchLabel(machine.Name)}\nStatus: {StatusText(machine.State)}\n{StatusDescription(machine.State)}\n{ActivityDescription(machine)}"
             : $"{machine.Name} — {summary}\n{_mapping.Text}";
@@ -1317,6 +1367,36 @@ internal sealed class MachineCard
         ToolTipService.SetToolTip(Button, tooltip);
         if (_miniature) ToolTipService.SetToolTip(_connectionIcon, tooltip);
     }
+
+    private void ApplyStateAppearance(AgentState state)
+    {
+        var appearance = MachineCardAppearance.For(state);
+        var background = OpaqueColor(appearance.Background);
+        var icon = OpaqueColor(appearance.Icon);
+        _icon.Glyph = appearance.Glyph;
+        _icon.Foreground = new SolidColorBrush(icon);
+        _name.Foreground = new SolidColorBrush(OpaqueColor(appearance.Text));
+        _status.Foreground = new SolidColorBrush(OpaqueColor(appearance.Status));
+        _activity.Foreground = new SolidColorBrush(OpaqueColor(appearance.Activity));
+        _mapping.Foreground = new SolidColorBrush(OpaqueColor(appearance.Mapping));
+        _footer.Foreground = new SolidColorBrush(OpaqueColor(appearance.Footer));
+        _connectionIcon.Foreground = new SolidColorBrush(OpaqueColor(appearance.Connection));
+        _background.Color = background;
+        _pointerOverBackground.Color = Blend(background, icon, 0.10);
+        _pressedBackground.Color = Blend(background, icon, 0.18);
+        Button.BorderThickness = new Thickness(1);
+        Button.BorderBrush = new SolidColorBrush(OpaqueColor(appearance.Border));
+        Button.Resources["ButtonBorderBrushPointerOver"] = _icon.Foreground;
+        Button.Resources["ButtonBorderBrushPressed"] = _name.Foreground;
+    }
+
+    private static Color OpaqueColor(uint rgb) =>
+        Color.FromArgb(255, (byte)((rgb >> 16) & 255), (byte)((rgb >> 8) & 255), (byte)(rgb & 255));
+
+    private static Color Blend(Color background, Color foreground, double amount) => Color.FromArgb(255,
+        (byte)Math.Round(background.R + (foreground.R - background.R) * amount),
+        (byte)Math.Round(background.G + (foreground.G - background.G) * amount),
+        (byte)Math.Round(background.B + (foreground.B - background.B) * amount));
 
     public static string StatusText(AgentState state) => state switch
     {

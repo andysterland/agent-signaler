@@ -10,6 +10,70 @@ namespace AgentSignaler.Integration.Tests;
 
 public sealed partial class WindowsAppLauncherTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ProgressReportsActualStagesBeforeWorkAndSkipsLaunchWhenWindowIsReused(bool cached, bool reuse)
+    {
+        var stages = new List<WindowsAppLaunchStage>();
+        var resolver = new FakeResolver
+        {
+            Resolve = (_, _) =>
+            {
+                Assert.Equal(WindowsAppLaunchStage.RefreshingConnection, stages.Last());
+                return Task.FromResult(ConnectionTestData.Resolved);
+            }
+        };
+        var platform = new FakePlatform
+        {
+            Probe = _ =>
+            {
+                Assert.Equal(WindowsAppLaunchStage.SearchingLocalWindows, Assert.Single(stages));
+                return reuse ? WindowsAppActivationDisposition.ExistingWindowActivated : WindowsAppActivationDisposition.NoExistingWindow;
+            },
+            OnLaunch = _ => Assert.Equal(WindowsAppLaunchStage.Launching, stages.Last())
+        };
+        var launcher = new WindowsAppLauncher(resolver, platform, (_, _, _) =>
+        {
+            Assert.Equal(WindowsAppLaunchStage.RefreshingConnection, stages.Last());
+            return Task.CompletedTask;
+        });
+        Task<WindowsAppConnection?> Read(CancellationToken _) => Task.FromResult<WindowsAppConnection?>(ConnectionTestData.CachedMapping);
+        if (cached)
+            await launcher.OpenCurrentLastKnownAsync(Guid.NewGuid(), Read, progress: stages.Add);
+        else
+            await launcher.OpenCurrentAsync(Guid.NewGuid(), Read, progress: stages.Add);
+
+        Assert.Equal(reuse
+            ? [WindowsAppLaunchStage.SearchingLocalWindows]
+            : cached
+                ? [WindowsAppLaunchStage.SearchingLocalWindows, WindowsAppLaunchStage.Launching]
+                : new[] { WindowsAppLaunchStage.SearchingLocalWindows, WindowsAppLaunchStage.RefreshingConnection, WindowsAppLaunchStage.Launching },
+            stages);
+        Assert.Equal(reuse || cached ? 0 : 1, resolver.Calls);
+        Assert.Equal(reuse ? 0 : 1, platform.Uris.Count);
+    }
+
+    [Theory]
+    [InlineData(WindowsAppLaunchStage.SearchingLocalWindows)]
+    [InlineData(WindowsAppLaunchStage.RefreshingConnection)]
+    [InlineData(WindowsAppLaunchStage.Launching)]
+    public async Task CancellationAtProgressBoundaryPreventsLaunch(object value)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var stageToCancel = (WindowsAppLaunchStage)value;
+        var platform = new FakePlatform();
+        var launcher = new WindowsAppLauncher(new FakeResolver(), platform, (_, _, _) => Task.CompletedTask);
+        var id = Guid.NewGuid();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => launcher.OpenCurrentAsync(id,
+            _ => Task.FromResult<WindowsAppConnection?>(ConnectionTestData.Mapping), cancellation.Token,
+            stage => { if (stage == stageToCancel) cancellation.Cancel(); }));
+        Assert.Empty(platform.Uris);
+        Assert.False(WindowsAppOperationGate.Shared.IsBusy(id));
+    }
+
     [Fact]
     public async Task EveryNormalLaunchResolvesAndAtomicallySavesBeforeActivation()
     {

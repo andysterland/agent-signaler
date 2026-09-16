@@ -17,7 +17,7 @@ internal static class SessionSourcePresentation
         return names.Length == 0 ? "None observed" : string.Join(", ", names);
     }
 
-    private static string Name(string kind) => kind switch
+    internal static string Name(string kind) => kind switch
     {
         "copilot-cli" => "Copilot CLI",
         "visual-studio" => "Visual Studio",

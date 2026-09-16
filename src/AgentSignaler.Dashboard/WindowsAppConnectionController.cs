@@ -23,11 +23,14 @@ internal sealed record WindowsAppActionResult(bool Succeeded, string Message, bo
 
 internal sealed class WindowsAppConnectionActions(
     WindowsAppConnectionController controller, Func<Task> refresh, Func<bool> exiting,
-    Action restoreDashboard, Action<string> showError, Func<Guid, string, Task> showDetails)
+    Action restoreDashboard, Action<string> showError, Func<Guid, string, Task> showDetails,
+    Func<Guid, IDisposable>? showProgress = null)
 {
     public async Task<WindowsAppActionResult> OpenWindowsAppAsync(Guid id, bool compact = false)
     {
-        var result = await controller.OpenWindowsAppAsync(id, compact);
+        WindowsAppActionResult result;
+        using (compact && !exiting() && !controller.IsBusy(id) ? showProgress?.Invoke(id) : null)
+            result = await controller.OpenWindowsAppAsync(id, compact);
         if (exiting()) return result;
         await refresh();
         if (result.RestoreDetails && !exiting())
@@ -134,13 +137,15 @@ internal sealed class WindowsAppConnectionController(
                 }
                 if (operation == WindowsAppOperation.Open)
                 {
-                    var result = await launcher.OpenCurrentAsync(id, ReadCurrent, token).ConfigureAwait(false);
+                    var result = await launcher.OpenCurrentAsync(id, ReadCurrent, token,
+                        stage => ReportLaunchProgress(id, stage)).ConfigureAwait(false);
                     disposition = result.Disposition;
                     return result.Mapping;
                 }
                 if (operation == WindowsAppOperation.OpenLastKnown)
                 {
-                    disposition = await launcher.OpenCurrentLastKnownAsync(id, ReadCurrent, token).ConfigureAwait(false);
+                    disposition = await launcher.OpenCurrentLastKnownAsync(id, ReadCurrent, token,
+                        stage => ReportLaunchProgress(id, stage)).ConfigureAwait(false);
                     return current;
                 }
                 using var lease = gate.Enter(id);
@@ -244,6 +249,19 @@ internal sealed class WindowsAppConnectionController(
         lock (sync) states[id] = state;
     }
 
+    private void ReportLaunchProgress(Guid id, WindowsAppLaunchStage stage)
+    {
+        var message = stage switch
+        {
+            WindowsAppLaunchStage.SearchingLocalWindows => "Searching local windows for an existing Windows App connection...",
+            WindowsAppLaunchStage.RefreshingConnection => "No matching local window found. Refreshing the Dev Box connection...",
+            WindowsAppLaunchStage.Launching => "Launching Windows App...",
+            _ => throw new ArgumentOutOfRangeException(nameof(stage))
+        };
+        SetState(id, State(id) with { Message = message });
+        Changed?.Invoke(id);
+    }
+
     private static WindowsAppConnection ValidateSelection(DevBoxMappingSelection? selection)
     {
         if (selection?.DevBox is not { } devBox)
@@ -285,8 +303,8 @@ internal sealed class WindowsAppConnectionController(
         WindowsAppOperation.Map => "Verifying and saving the selected Dev Box mapping…",
         WindowsAppOperation.SignIn => "Signing in with Azure CLI and verifying the account…",
         WindowsAppOperation.Refresh => "Refreshing and saving the Dev Box connection…",
-        WindowsAppOperation.Open => "Refreshing the connection and opening Windows App…",
-        WindowsAppOperation.OpenLastKnown => "Opening the last known connection in Windows App…",
+        WindowsAppOperation.Open => "Reading the saved Dev Box connection...",
+        WindowsAppOperation.OpenLastKnown => "Reading the last known Dev Box connection...",
         WindowsAppOperation.Clear => "Clearing the connection mapping…",
         _ => throw new ArgumentOutOfRangeException(nameof(operation))
     };

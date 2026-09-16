@@ -1,103 +1,11 @@
 using System.Text.Json;
 using AgentSignaler.Dashboard;
 using AgentSignaler.Remote;
-using AgentSignaler.Tunneling;
 
 namespace AgentSignaler.Integration.Tests;
 
 public sealed class DashboardConnectionTests
 {
-    [Theory]
-    [InlineData("Preparing", "Preparing local storage")]
-    [InlineData("Starting", "Starting HTTP listener on port 51839")]
-    [InlineData("Running", "Running - loopback HTTP listener on port 51839")]
-    [InlineData("Failed", "Failed to start")]
-    [InlineData("Stopping", "Stopping")]
-    [InlineData("Stopped", "Stopped")]
-    public void ServiceStatusDescribesItsActualPhase(string phase, string expected)
-    {
-        var view = StartupStatusPresentation.Create(Enum.Parse<ReceiverStartupState>(phase),
-            DashboardConnectionMode.DevTunnel, 51839, null);
-        Assert.StartsWith("Service: ", view.Service);
-        Assert.Contains(expected, view.Service);
-    }
-
-    [Theory]
-    [InlineData(TunnelState.Stopped, "Stopped", false)]
-    [InlineData(TunnelState.CheckingAccount, "Checking CLI and account", true)]
-    [InlineData(TunnelState.AccountRequired, "Sign-in required", false)]
-    [InlineData(TunnelState.Creating, "Creating", true)]
-    [InlineData(TunnelState.Starting, "Connecting", true)]
-    [InlineData(TunnelState.Verifying, "Verifying public HTTPS", true)]
-    [InlineData(TunnelState.Connected, "Connected", false)]
-    [InlineData(TunnelState.Stopping, "Stopping", false)]
-    [InlineData(TunnelState.Faulted, "Error", false)]
-    [InlineData(TunnelState.Unsupported, "CLI unavailable", false)]
-    [InlineData(TunnelState.Reconnecting, "Reconnecting", true)]
-    public void TunnelStatusShowsPhaseAndDetailsIndependentlyOfRunningService(TunnelState state, string phase, bool isStarting)
-    {
-        var view = StartupStatusPresentation.Create(ReceiverStartupState.Running,
-            DashboardConnectionMode.DevTunnel, 51839, new TunnelStatus(state, "Current operation details"));
-        Assert.Contains("Service: Running", view.Service);
-        Assert.Equal($"Dev Tunnels: {phase} - Current operation details", view.Tunnel);
-        Assert.Equal(isStarting, view.IsTunnelStarting);
-    }
-
-    [Fact]
-    public void TunnelProgressIsHiddenWithoutAnInternetReceiverOrAfterSetupFailure()
-    {
-        foreach (var state in Enum.GetValues<TunnelState>())
-        {
-            var tunnel = new TunnelStatus(state, "Current operation details");
-            foreach (var receiver in Enum.GetValues<ReceiverStartupState>())
-            {
-                Assert.False(StartupStatusPresentation.Create(receiver,
-                    DashboardConnectionMode.Lan, 51839, tunnel).IsTunnelStarting);
-                if (receiver != ReceiverStartupState.Running)
-                    Assert.False(StartupStatusPresentation.Create(receiver,
-                        DashboardConnectionMode.DevTunnel, 51839, tunnel).IsTunnelStarting);
-            }
-            Assert.False(StartupStatusPresentation.Create(ReceiverStartupState.Running,
-                DashboardConnectionMode.DevTunnel, 51839, tunnel, "Check saved tunnel identity").IsTunnelStarting);
-        }
-    }
-
-    [Fact]
-    public void TunnelStatusWaitsForServiceAndDoesNotClaimConnectedAfterServiceFailure()
-    {
-        var connected = new TunnelStatus(TunnelState.Connected, "Ready", new Uri("https://host.devtunnels.ms/"));
-        var starting = StartupStatusPresentation.Create(ReceiverStartupState.Starting,
-            DashboardConnectionMode.DevTunnel, 51839, connected);
-        Assert.Equal("Dev Tunnels: Waiting for the local service", starting.Tunnel);
-        var failed = StartupStatusPresentation.Create(ReceiverStartupState.Failed,
-            DashboardConnectionMode.DevTunnel, 51839, connected);
-        Assert.Equal("Dev Tunnels: Unavailable - local service is not running", failed.Tunnel);
-    }
-
-    [Fact]
-    public void LanStatusExplainsThatTunnelsAreNotUsed()
-    {
-        var view = StartupStatusPresentation.Create(ReceiverStartupState.Running,
-            DashboardConnectionMode.Lan, 51839, null);
-        Assert.Contains("LAN HTTP listener on port 51839", view.Service);
-        Assert.Equal("Dev Tunnels: Not used (LAN mode)", view.Tunnel);
-        Assert.False(view.IsTunnelStarting);
-    }
-
-    [Fact]
-    public void TunnelConfigurationProgressAndFailureRemainVisible()
-    {
-        var loading = StartupStatusPresentation.Create(ReceiverStartupState.Running,
-            DashboardConnectionMode.DevTunnel, 51839, null);
-        Assert.Equal("Dev Tunnels: Loading tunnel configuration", loading.Tunnel);
-        Assert.True(loading.IsTunnelStarting);
-        var failed = StartupStatusPresentation.Create(ReceiverStartupState.Running,
-            DashboardConnectionMode.DevTunnel, 51839, null, "Check saved tunnel identity");
-        Assert.Equal("Dev Tunnels: Setup failed - Check saved tunnel identity", failed.Tunnel);
-        Assert.Contains("Running", failed.Service);
-        Assert.False(failed.IsTunnelStarting);
-    }
-
     [Fact]
     public void SettingsWithoutModeUseTheInternetDefault()
     {

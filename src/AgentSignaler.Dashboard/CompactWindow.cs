@@ -32,6 +32,7 @@ internal sealed class CompactWindow : Window
         Content = new ScrollViewer
         {
             Content = _tiles,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 17, 24, 39)),
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
             HorizontalContentAlignment = HorizontalAlignment.Stretch

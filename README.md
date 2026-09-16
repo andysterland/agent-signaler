@@ -23,9 +23,11 @@
 - **Monitor multiple machines:** identify each computer by name, optional display
   name, note, source, and latest activity.
 - **Keep status visible:** switch to compact always-on-top tiles while working in
-  another application.
+  another application. Compact tiles show only the state glyph, using the same
+  colors and symbols as the full dashboard; hover for machine details.
 - **Open the mapped Dev Box:** refresh a validated Windows App connection or focus
-  an existing matching window.
+  an existing matching window. Launches from compact view show a cancellable progress
+  dialog while searching local windows, refreshing the connection, and launching Windows App.
 - **Choose the network boundary:** use a trusted private LAN/VPN or an explicitly
   configured anonymous Dev Tunnel backed by a loopback-only listener.
 - **Configure integrations deliberately:** preview and apply supported user-level

@@ -27,13 +27,14 @@ internal sealed partial class MainWindow
 
     private static string TunnelStatePath => Path.Combine(DashboardSettings.DataDirectory, "tunnel-state.json");
 
-    private async Task InitializeTunnelAsync()
+    private async Task InitializeTunnelAsync(CancellationToken cancellationToken)
     {
         if (_runningMode != DashboardConnectionMode.DevTunnel) return;
         try
         {
             var store = new TunnelIdentityStore(TunnelStatePath);
-            var identity = await store.LoadOrCreateAsync();
+            var identity = await store.LoadOrCreateAsync(cancellationToken);
+            if (_exiting) return;
             var cliPath = _runningCliPath ?? CliTunnelController.DefaultCliPath;
             _effectiveTunnelCliPath = cliPath;
             _tunnel = new CliTunnelController(new TunnelOptions(cliPath, _runningPort, identity),
@@ -41,14 +42,18 @@ internal sealed partial class MainWindow
             _tunnel.StatusChanged += (_, _) =>
                 DispatcherQueue.TryEnqueue(() =>
                 {
-                    if (!_exiting) UpdateConnectionPresentation();
+                    if (!_exiting)
+                    {
+                        UpdateConnectionPresentation();
+                        ReportStartupProgress(_tunnel.Status.Message);
+                    }
                 });
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or TunnelException)
         {
             _tunnelSetupError = "Tunnel settings could not be loaded. Check the CLI path and tunnel-state.json in the dashboard data directory. " +
                 "Do not remove the state file until any saved cloud resource has been cleaned up.";
-            ShowProblem(_tunnelSetupError);
+            if (!_exiting) ShowProblem(_tunnelSetupError);
         }
     }
 
@@ -60,9 +65,9 @@ internal sealed partial class MainWindow
     private void UpdateConnectionPresentation()
     {
         var view = GetConnectionPresentation();
-        _host.Text = view.Address;
+        _host.Text = view.CopyUrl ?? "";
         _copyUrl.IsEnabled = view.CopyUrl is not null;
-        UpdateStartupStatus();
+        _copyUrl.Visibility = view.CopyUrl is not null ? Visibility.Visible : Visibility.Collapsed;
         UpdateTunnelControls();
     }
 
@@ -70,6 +75,7 @@ internal sealed partial class MainWindow
     {
         if (_exiting || !_settings.ShouldStartSharing || _runningMode != DashboardConnectionMode.DevTunnel || _tunnel is null)
             return;
+        ReportStartupProgress("Starting the shared public endpoint...");
         await RunTunnelOperationAsync(token => _tunnel.StartAsync(token));
         if (!_exiting && _settings.ShouldStartSharing && !_tunnel.Status.CanCopy)
             ShowProblem("Automatic Internet sharing could not start. " + _tunnel.Status.Message +
@@ -190,7 +196,7 @@ internal sealed partial class MainWindow
             _tunnelOperationCancellation = null;
             cancellation.Dispose();
             _tunnelBusy = false;
-            UpdateConnectionPresentation();
+            if (!_exiting) UpdateConnectionPresentation();
         }
     }
 

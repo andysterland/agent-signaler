@@ -43,6 +43,38 @@ enforcement. Retain the two-computer checks in `ACCEPTANCE.md` for release sign-
 - Use only synthetic prompts, outputs, and error text. Do not attach credentials,
   actual prompts, source code, or user-profile data to test evidence.
 
+## Dashboard startup presentation (Not run)
+
+- With previously reported machines, start Dashboard in Internet mode in an
+  approved disposable live-tunnel environment. Confirm a progress bar appears and
+  no computer tiles, empty-state message, or compact tiles appear before public
+  HTTPS verification completes. Minimize/restore during loading and check again.
+- Confirm Settings and Compact View are disabled while loading. After startup, the
+  bar disappears, tiles appear, machine status is unchanged, and Copy URL copies
+  the verified displayed URL. No Service/Dev Tunnels status labels remain.
+- Repeat in LAN mode and with automatic sharing disabled: startup completes
+  without waiting for a public endpoint. With no machines, the waiting message
+  appears only after startup.
+- In a disposable profile, test an occupied receiver port, unavailable CLI, and
+  failed public health verification. The bar must stop and an actionable error
+  remain visible; Settings is available for recovery and copying is disabled
+  without a valid endpoint.
+- Exit from the notification area during loading. Startup cancels, shutdown
+  completes, and no late continuation shows dashboard or compact tiles. Closing
+  to an available tray icon still hides rather than cancels startup.
+- Check keyboard navigation, progress accessibility name, light/dark themes,
+  and increased display scaling.
+- Confirm the URL sits below the machine-count subtitle, with an icon-only Copy
+  URL button immediately to its right. Check its tooltip and accessible name,
+  and use both mouse and keyboard to copy the complete URL.
+- Check the smaller default window (1040 x 640 logical pixels, or 900 x 600 with
+  compact density). Resize narrower and test a long URL at 100%, 150%, and 200%
+  scaling: the URL ellipsizes without displacing Copy URL; header actions move
+  below the brand at narrow widths, and machine cards remain scrollable.
+- Confirm Compact View and Settings have glyphs and their exact text labels.
+  With machines loaded and compact-on-minimize enabled, Compact View still
+  minimizes to the compact tiles; Settings still opens the settings dialog.
+
 ## Multi-target IDE verification and configuration v4
 
 These are **Not run** live release gates, not automated implementation results.

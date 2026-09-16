@@ -49,12 +49,21 @@ check disables copying until verification succeeds again. Detection is not insta
 If changing the local port, explicitly delete the old tunnel before enabling
 sharing on the new port; port or ACL drift is not silently rewritten.
 
-The dashboard shows separate **Service** and **Dev Tunnels** status lines below
-the URL. Service progress covers local storage preparation, HTTP listener startup,
-and the effective running port/binding. Tunnel progress shows account checks,
-creation, connecting, public HTTPS verification, connected/reconnecting, and
-actionable failures. A running local service does not imply the public tunnel is
-ready. LAN mode explicitly shows that Dev Tunnels is not used.
+The dashboard shows a progress bar during startup. Computer tiles (including the
+minimized compact view) stay hidden until startup finishes, ending with public
+HTTPS verification when automatic sharing is enabled. LAN mode and disabled
+sharing do not wait for a public endpoint. Settings is disabled during startup;
+use the notification-area **Exit** command to cancel and close.
+If startup fails, the progress bar stops, an actionable error remains visible,
+and available machine data is shown so you can recover in Settings.
+The URL sits beneath the machine-count subtitle, with an icon-only **Copy URL**
+button immediately to its right (hover for its tooltip). Long URLs are shortened
+visually in narrow windows; copying still uses the complete URL. **Compact View**
+and **Settings** include glyphs and move below the header when space is limited.
+The dashboard retains the URL and **Copy URL**, without infrastructure status
+labels; sharing details remain in **Settings > Internet sharing**. Machine
+activity and connectivity indicators are unchanged. Prerequisite checks and Dev
+Box discovery are explicitly run from Settings, not automatically at startup.
 
 Dashboard settings are grouped into five tabs:
 **General** (appearance, compact views, and Windows startup),

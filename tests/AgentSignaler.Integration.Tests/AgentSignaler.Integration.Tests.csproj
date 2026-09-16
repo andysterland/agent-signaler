@@ -13,6 +13,9 @@
     <ProjectReference Include="..\..\src\AgentSignaler.Relay\AgentSignaler.Relay.csproj" ReferenceOutputAssembly="false" />
     <Using Include="Xunit" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\ConnectionPresentation.cs" Link="ConnectionPresentation.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\DashboardStartupController.cs" Link="DashboardStartupController.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardAppearance.cs" Link="MachineCardAppearance.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardPresentation.cs" Link="MachineCardPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\SessionSourcePresentation.cs" Link="SessionSourcePresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DashboardSettings.cs" Link="DashboardSettings.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxCatalog.cs" Link="DevBoxCatalog.cs" />

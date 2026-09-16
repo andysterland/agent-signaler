@@ -9,6 +9,96 @@ public sealed class WindowsAppConnectionControllerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task CompactPublishesLiveProgressWhileBusyAndSkipsUnneededStages(bool reuse)
+    {
+        var h = new Harness();
+        h.Platform.Reuse = reuse;
+        var messages = new ConcurrentQueue<string>();
+        h.Controller.Changed += id =>
+        {
+            Assert.Equal(h.Id, id);
+            var state = h.Controller.State(id);
+            if (!state.IsBusy) return;
+            Assert.True(h.Controller.IsBusy(id));
+            Assert.False(state.CompactLaunchEnabled);
+            AssertSafe(state.Message);
+            messages.Enqueue(state.Message);
+        };
+        Assert.True((await h.Actions.OpenWindowsAppAsync(h.Id, compact: true)).Succeeded);
+        var expected = new List<string>
+        {
+            "Reading the saved Dev Box connection...",
+            "Searching local windows for an existing Windows App connection..."
+        };
+        if (!reuse)
+        {
+            expected.Add("No matching local window found. Refreshing the Dev Box connection...");
+            expected.Add("Launching Windows App...");
+        }
+        Assert.Equal(expected, messages);
+        Assert.False(h.Controller.State(h.Id).IsBusy);
+    }
+
+    [Theory]
+    [InlineData("success")]
+    [InlineData("reuse")]
+    [InlineData("failure")]
+    [InlineData("cancel")]
+    [InlineData("exit")]
+    [InlineData("exception")]
+    public async Task CompactProgressClosesBeforeRefreshOrErrorNavigationOnEveryOutcome(string outcome)
+    {
+        var h = new Harness();
+        h.Platform.Reuse = outcome == "reuse";
+        if (outcome == "failure") h.Stored = null;
+        if (outcome is "cancel" or "exit" or "exception")
+            h.BeforeRead = token =>
+            {
+                if (outcome == "exception") throw new InvalidOperationException("Programming error");
+                h.Exiting = outcome == "exit";
+                h.Controller.Cancel(h.Id);
+                token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            };
+        var events = new List<string>();
+        var actions = new WindowsAppConnectionActions(h.Controller,
+            () => { events.Add("refresh"); return Task.CompletedTask; }, () => h.Exiting,
+            () => events.Add("restore"), _ => events.Add("error"),
+            (_, _) => { events.Add("details"); return Task.CompletedTask; },
+            id =>
+            {
+                Assert.Equal(h.Id, id);
+                Assert.False(h.Controller.IsBusy(id));
+                events.Add("show");
+                return new ProgressScope(() => events.Add("close"));
+            });
+        if (outcome == "exception")
+            await Assert.ThrowsAsync<InvalidOperationException>(() => actions.OpenWindowsAppAsync(h.Id, compact: true));
+        else
+            await actions.OpenWindowsAppAsync(h.Id, compact: true);
+
+        Assert.Equal(outcome switch
+        {
+            "exception" or "exit" => ["show", "close"],
+            "failure" or "cancel" => ["show", "close", "refresh", "restore", "error", "details"],
+            _ => new[] { "show", "close", "refresh" }
+        }, events);
+        Assert.False(h.Controller.IsBusy(h.Id));
+    }
+
+    [Fact]
+    public async Task DetailsLaunchDoesNotShowCompactProgress()
+    {
+        var h = new Harness();
+        var actions = new WindowsAppConnectionActions(h.Controller, () => Task.CompletedTask,
+            () => false, () => { }, _ => { }, (_, _) => Task.CompletedTask,
+            _ => throw new InvalidOperationException("Details should use its existing progress UI"));
+        Assert.True((await actions.OpenWindowsAppAsync(h.Id)).Succeeded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task DetailsAndCompactReuseStoredDevBoxWithoutRefreshingOrRestoringDashboard(bool compact)
     {
         var h = new Harness { Stored = ConnectionTestData.CachedMapping with { DevBoxName = "mapped-not-machine-name" } };
@@ -789,7 +879,7 @@ public sealed class WindowsAppConnectionControllerTests
         Assert.Contains("() => _catalog?.State.IsBusy == true", main);
         Assert.Contains("DevBoxMappingPresentation.CreatePicker(snapshot, mapping)", main);
         Assert.Contains("DevBoxMappingPresentation.TileText(machine.WindowsAppConnection)", main);
-        Assert.Contains("card.MinHeight = side", main);
+        Assert.Contains("card.MinHeight = MachineCardPresentation.MinimumHeight", main);
         Assert.Contains("card.Height = double.NaN", main);
         Assert.Contains("picker.StartBringIntoView()", main);
         Assert.Contains("picker.Focus(FocusState.Programmatic)", main);
@@ -818,6 +908,11 @@ public sealed class WindowsAppConnectionControllerTests
         Assert.Matches(@"new CompactWindow\(ShowDashboard,[\s\S]*?compact: true\)[\s\S]*?ExitAsync\);", main);
         Assert.Contains("_compactWindow?.CloseForExit()", main);
         Assert.Contains("Application.Current.Exit()", main);
+    }
+
+    private sealed class ProgressScope(Action close) : IDisposable
+    {
+        public void Dispose() => close();
     }
 
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);

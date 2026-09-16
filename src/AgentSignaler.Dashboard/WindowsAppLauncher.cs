@@ -32,6 +32,8 @@ internal sealed record WindowsAppLaunchResult(
     public override string ToString() => Disposition.ToString();
 }
 
+internal enum WindowsAppLaunchStage { SearchingLocalWindows, RefreshingConnection, Launching }
+
 internal sealed class WindowsAppLauncher(
     IDevBoxConnectionResolver resolver,
     IWindowsAppPlatform platform,
@@ -49,15 +51,19 @@ internal sealed class WindowsAppLauncher(
 
     public async Task<WindowsAppLaunchResult> OpenCurrentAsync(
         Guid machineId, Func<CancellationToken, Task<WindowsAppConnection?>> read,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Action<WindowsAppLaunchStage>? progress = null)
     {
         using var operation = gate.Enter(machineId);
         cancellationToken.ThrowIfCancellationRequested();
         var mapping = await read(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         WindowsAppConnectionValidator.ValidateMapping(mapping);
+        progress?.Invoke(WindowsAppLaunchStage.SearchingLocalWindows);
+        cancellationToken.ThrowIfCancellationRequested();
         if (platform.TryActivateExisting(mapping!.DevBoxName) == WindowsAppActivationDisposition.ExistingWindowActivated)
             return new(mapping, WindowsAppActivationDisposition.ExistingWindowActivated);
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Invoke(WindowsAppLaunchStage.RefreshingConnection);
         cancellationToken.ThrowIfCancellationRequested();
         RequireProtocol();
         ResolvedDevBoxConnection resolved;
@@ -84,6 +90,8 @@ internal sealed class WindowsAppLauncher(
             throw new WindowsAppConnectionException(WindowsAppFailure.PersistenceFailed);
         }
         cancellationToken.ThrowIfCancellationRequested();
+        progress?.Invoke(WindowsAppLaunchStage.Launching);
+        cancellationToken.ThrowIfCancellationRequested();
         return new(refreshed, platform.Activate(uri, mapping.DevBoxName));
     }
 
@@ -93,7 +101,7 @@ internal sealed class WindowsAppLauncher(
 
     public async Task<WindowsAppActivationDisposition> OpenCurrentLastKnownAsync(
         Guid machineId, Func<CancellationToken, Task<WindowsAppConnection?>> read,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Action<WindowsAppLaunchStage>? progress = null)
     {
         using var operation = gate.Enter(machineId);
         cancellationToken.ThrowIfCancellationRequested();
@@ -103,10 +111,13 @@ internal sealed class WindowsAppLauncher(
         if (mapping!.LastKnownConnectionUri is null)
             throw new WindowsAppConnectionException(WindowsAppFailure.InvalidMapping);
         var uri = WindowsAppConnectionValidator.Validate(mapping.LastKnownConnectionUri, mapping.AzureAccountUpn);
+        progress?.Invoke(WindowsAppLaunchStage.SearchingLocalWindows);
+        cancellationToken.ThrowIfCancellationRequested();
         if (platform.TryActivateExisting(mapping.DevBoxName) == WindowsAppActivationDisposition.ExistingWindowActivated)
             return WindowsAppActivationDisposition.ExistingWindowActivated;
         cancellationToken.ThrowIfCancellationRequested();
         RequireProtocol();
+        progress?.Invoke(WindowsAppLaunchStage.Launching);
         cancellationToken.ThrowIfCancellationRequested();
         return platform.Activate(uri, mapping.DevBoxName);
     }

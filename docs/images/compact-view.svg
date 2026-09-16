@@ -1,17 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
   <title id="title">Synthetic Agent Signaler compact view</title>
-  <desc id="desc">Four compact always-on-top status tiles for fictional development machines.</desc>
+  <desc id="desc">Six glyph-only always-on-top status tiles using the same colors and symbols as the full dashboard.</desc>
   <rect width="720" height="520" fill="#eef2ff"/>
   <rect x="72" y="48" width="576" height="424" rx="24" fill="#111827"/>
-  <text x="112" y="102" fill="#f8fafc" font-family="Segoe UI,Arial" font-size="26" font-weight="700">Compact monitoring</text>
-  <text x="112" y="132" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Always-on-top synthetic preview</text>
-  <g font-family="Segoe UI,Arial" font-weight="700" text-anchor="middle">
-    <g transform="translate(112 172)"><rect width="92" height="92" rx="18" fill="#075985" stroke="#38bdf8"/><circle cx="72" cy="20" r="8" fill="#22c55e"/><text x="46" y="51" fill="white" font-size="28">▶</text><text x="46" y="76" fill="#bae6fd" font-size="11">BUILD</text></g>
-    <g transform="translate(236 172)"><rect width="92" height="92" rx="18" fill="#78350f" stroke="#f59e0b"/><circle cx="72" cy="20" r="8" fill="#22c55e"/><text x="46" y="51" fill="white" font-size="28">●</text><text x="46" y="76" fill="#fde68a" font-size="11">DOCS</text></g>
-    <g transform="translate(360 172)"><rect width="92" height="92" rx="18" fill="#166534" stroke="#22c55e"/><circle cx="72" cy="20" r="8" fill="#22c55e"/><text x="46" y="51" fill="white" font-size="28">✓</text><text x="46" y="76" fill="#bbf7d0" font-size="11">TEST</text></g>
-    <g transform="translate(484 172)"><rect width="92" height="92" rx="18" fill="#7f1d1d" stroke="#ef4444"/><circle cx="72" cy="20" r="8" fill="#22c55e"/><text x="46" y="51" fill="white" font-size="28">×</text><text x="46" y="76" fill="#fecaca" font-size="11">API</text></g>
+  <text x="224" y="112" fill="#f8fafc" font-family="Segoe UI,Arial" font-size="26" font-weight="700">Compact monitoring</text>
+  <text x="224" y="146" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Always-on-top synthetic preview</text>
+  <g font-family="Segoe UI,Arial" font-size="32" text-anchor="middle" dominant-baseline="central">
+    <g id="executing" transform="translate(112 68)"><rect width="64" height="64" rx="4" fill="#123b68" stroke="#38bdf8"/><text x="32" y="32" fill="#7dd3fc">▶</text></g>
+    <g id="waiting" transform="translate(112 132)"><rect width="64" height="64" rx="4" fill="#5a3c0b" stroke="#f59e0b"/><text x="32" y="32" fill="#fbbf24">●</text></g>
+    <g id="succeeded" transform="translate(112 196)"><rect width="64" height="64" rx="4" fill="#12452b" stroke="#22c55e"/><text x="32" y="32" fill="#4ade80">✓</text></g>
+    <g id="failed" transform="translate(112 260)"><rect width="64" height="64" rx="4" fill="#5a1c22" stroke="#ef4444"/><text x="32" y="32" fill="#f87171">×</text></g>
+    <g id="idle" transform="translate(112 324)"><rect width="64" height="64" rx="4" fill="#293548" stroke="#64748b"/><text x="32" y="32" fill="#94a3b8">—</text></g>
+    <g id="offline" transform="translate(112 388)"><rect width="64" height="64" rx="4" fill="#242b37" stroke="#475569"/><text x="32" y="32" fill="#64748b">○</text></g>
   </g>
-  <rect x="112" y="306" width="464" height="100" rx="16" fill="#1e293b"/>
-  <text x="140" y="342" fill="#e2e8f0" font-family="Segoe UI,Arial" font-size="18" font-weight="700">Keep status visible while you work</text>
-  <text x="140" y="372" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Tiles retain machine identity, connectivity, and agent state.</text>
+  <text x="224" y="238" fill="#e2e8f0" font-family="Segoe UI,Arial" font-size="18" font-weight="700">State only. Details on hover.</text>
+  <text x="224" y="272" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Same palette and glyphs as the dashboard.</text>
+  <text x="224" y="302" fill="#94a3b8" font-family="Segoe UI,Arial" font-size="15">Click a tile to open its mapped Dev Box.</text>
 </svg>
