@@ -129,13 +129,13 @@ public sealed class ReceiverControlTests : IAsyncLifetime
     public async Task ConcurrencyLimitRejectsImmediatelyWithoutQueueAndReleasesPermit()
     {
         using var release = new ManualResetEventSlim();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var entered = new ManualResetEventSlim();
         await ConfigureAsync(new DashboardServerOptions
         {
             ListenerMode = DashboardListenerMode.Internet, ConcurrentRequestLimit = 1
         }, () =>
         {
-            entered.TrySetResult();
+            entered.Set();
             release.Wait(TimeSpan.FromSeconds(10));
         });
         using var heldRequest = new HttpRequestMessage(HttpMethod.Get, "/health");
@@ -143,7 +143,7 @@ public sealed class ReceiverControlTests : IAsyncLifetime
         var held = _client.SendAsync(heldRequest);
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "Held request did not enter the endpoint.");
             using var rejected = await _client.GetAsync("/health").WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
             Assert.Equal(TimeSpan.FromSeconds(1), rejected.Headers.RetryAfter!.Delta);
