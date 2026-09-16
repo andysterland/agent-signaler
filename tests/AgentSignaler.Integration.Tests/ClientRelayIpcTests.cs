@@ -76,14 +76,17 @@ public sealed class ClientRelayIpcTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ConcurrentRealRelaysFeedOneOrderedCoordinator()
+    public async Task ConcurrentIpcHooksFeedOneOrderedCoordinator()
     {
         await using var runtime = new ClientCoordinator(ConfigPath);
         await using var ipc = new ClientIpcServer(ConfigPath, runtime.HandleAsync);
         runtime.Start();
         await WaitForMachine(AgentState.Idle);
-        await Task.WhenAll(Hook("sessionStart", "one"), Hook("sessionStart", "two"), Hook("sessionStart", "three"));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var responses = await Task.WhenAll(new[] { "one", "two", "three" }.Select(session =>
+            ClientIpc.HookAsync(ConfigPath, AgentEvent.SessionStart,
+                new(session, DateTimeOffset.UtcNow, false))));
+        Assert.All(responses, response => Assert.True(response.Accepted));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (Assert.Single(await _store.GetMachinesAsync()).Sessions.Count != 3)
             await Task.Delay(20, timeout.Token);
         var machine = Assert.Single(await _store.GetMachinesAsync());
