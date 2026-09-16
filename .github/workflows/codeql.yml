@@ -36,3 +36,5 @@ jobs:
         shell: powershell
         run: .\scripts\Build-DashboardBootstrapper.ps1 -Version 1.0.13
       - uses: github/codeql-action/analyze@v3
+        with:
+          upload: ${{ github.event.repository.private == false }}
