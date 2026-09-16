@@ -28,6 +28,7 @@ internal sealed class WindowsAppPlatform(
     private readonly Func<bool> registrationProbe = registrationProbe ?? ProbeRegistration;
     private readonly Func<ProcessStartInfo, IDisposable?> activate = activate ?? (start => Process.Start(start));
     private readonly ITopLevelWindowPlatform windows = windows ?? new WindowsAppWindowPlatform();
+    private readonly Dictionary<string, nint> cachedWindows = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsProtocolAvailable()
     {
@@ -66,6 +67,23 @@ internal sealed class WindowsAppPlatform(
 
     private WindowsAppActivationDisposition ActivateExisting(string devBoxName)
     {
+        if (cachedWindows.TryGetValue(devBoxName, out var cachedWindow))
+        {
+            try
+            {
+                if (IsMatchingWindow(cachedWindow, devBoxName) && TryActivateWindow(cachedWindow))
+                {
+                    return WindowsAppActivationDisposition.ExistingWindowActivated;
+                }
+            }
+            catch (Exception error) when (IsExpectedWindowFailure(error))
+            {
+                if (!IsGone(cachedWindow))
+                    throw new WindowsAppConnectionException(WindowsAppFailure.ActivationFailed);
+            }
+            cachedWindows.Remove(devBoxName);
+        }
+
         IReadOnlyList<nint> candidates;
         try { candidates = windows.Enumerate(); }
         catch (Exception error) when (IsExpectedWindowFailure(error))
@@ -76,8 +94,7 @@ internal sealed class WindowsAppPlatform(
         {
             try
             {
-                if (!windows.IsWindow(window) ||
-                    !WindowsAppWindowTitleMatcher.IsMatch(windows.GetTitle(window), devBoxName)) continue;
+                if (!IsMatchingWindow(window, devBoxName)) continue;
             }
             catch (Exception error) when (IsExpectedWindowFailure(error))
             {
@@ -86,18 +103,8 @@ internal sealed class WindowsAppPlatform(
 
             try
             {
-                if (!windows.IsWindow(window)) continue;
-                if (windows.IsMinimized(window) && !windows.Restore(window))
-                {
-                    if (!windows.IsWindow(window)) continue;
-                    throw new WindowsAppConnectionException(WindowsAppFailure.ActivationFailed);
-                }
-                if (!windows.BringToForeground(window))
-                {
-                    if (!windows.IsWindow(window)) continue;
-                    throw new WindowsAppConnectionException(WindowsAppFailure.ActivationFailed);
-                }
-                if (!windows.IsWindow(window)) continue;
+                if (!TryActivateWindow(window)) continue;
+                cachedWindows[devBoxName] = window;
                 return WindowsAppActivationDisposition.ExistingWindowActivated;
             }
             catch (Exception error) when (IsExpectedWindowFailure(error))
@@ -110,7 +117,27 @@ internal sealed class WindowsAppPlatform(
         return WindowsAppActivationDisposition.NoExistingWindow;
     }
 
-    private bool IsGone(nint window)
+    private bool IsMatchingWindow(nint window, string devBoxName) =>
+        windows.IsWindow(window) &&
+        WindowsAppWindowTitleMatcher.IsMatch(windows.GetTitle(window), devBoxName);
+
+    private bool TryActivateWindow(nint window)
+    {
+        if (!windows.IsWindow(window)) return false;
+        if (windows.IsMinimized(window) && !windows.Restore(window))
+        {
+            if (!windows.IsWindow(window)) return false;
+            throw new WindowsAppConnectionException(WindowsAppFailure.ActivationFailed);
+        }
+        if (!windows.BringToForeground(window))
+        {
+            if (!windows.IsWindow(window)) return false;
+            throw new WindowsAppConnectionException(WindowsAppFailure.ActivationFailed);
+        }
+        return windows.IsWindow(window);
+    }
+
+    private bool IsGone
     {
         try { return !windows.IsWindow(window); }
         catch (Exception error) when (IsExpectedWindowFailure(error))

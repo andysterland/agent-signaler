@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -49,13 +50,20 @@ internal interface ITopLevelWindowPlatform
 
 internal sealed class WindowsAppWindowPlatform : ITopLevelWindowPlatform
 {
+    private const string RemoteDesktopClientProcessName = "msrdc";
+
     public IReadOnlyList<nint> Enumerate()
     {
+        var processIds = GetRemoteDesktopClientProcessIds();
         var windows = new List<nint>();
         ExceptionDispatchInfo? callbackFailure = null;
         EnumWindowsCallback callback = (window, _) =>
         {
-            try { windows.Add(window); return true; }
+            try
+            {
+                if (BelongsToRemoteDesktopClient(window, processIds)) windows.Add(window);
+                return true;
+            }
             catch (Exception error)
             {
                 // Never unwind through User32; preserve programming errors on the managed side.
@@ -86,11 +94,27 @@ internal sealed class WindowsAppWindowPlatform : ITopLevelWindowPlatform
     public bool Restore(nint window) => ShowWindowAsync(window, 9);
     public bool BringToForeground(nint window) => SetForegroundWindow(window);
 
+    private static HashSet<uint> GetRemoteDesktopClientProcessIds()
+    {
+        var processIds = new HashSet<uint>();
+        foreach (var process in Process.GetProcessesByName(RemoteDesktopClientProcessName))
+        {
+            using (process) processIds.Add((uint)process.Id);
+        }
+        return processIds;
+    }
+
+    private static bool BelongsToRemoteDesktopClient(nint window, HashSet<uint> processIds) =>
+        GetWindowThreadProcessId(window, out var processId) != 0 && processIds.Contains(processId);
+
     private delegate bool EnumWindowsCallback(nint window, nint parameter);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool EnumWindows(EnumWindowsCallback callback, nint parameter);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId", ExactSpelling = true)]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowTextLengthW", ExactSpelling = true)]
     private static extern int GetWindowTextLength(nint window);

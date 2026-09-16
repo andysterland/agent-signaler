@@ -143,7 +143,8 @@ internal interface ITopLevelWindowPlatform
 
 The production implementation should use bounded User32 calls:
 
-- `EnumWindows`;
+- `EnumWindows`, filtering each top-level window by its owning process via
+  `GetWindowThreadProcessId` and accepting only `msrdc.exe`;
 - `GetWindowTextLengthW` and `GetWindowTextW`, with a fixed maximum accepted title
   length and no unbounded allocation;
 - `IsIconic`;
