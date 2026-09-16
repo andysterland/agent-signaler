@@ -137,7 +137,7 @@ internal sealed class WindowsAppPlatform(
         return windows.IsWindow(window);
     }
 
-    private bool IsGone
+    private bool IsGone(nint window)
     {
         try { return !windows.IsWindow(window); }
         catch (Exception error) when (IsExpectedWindowFailure(error))
