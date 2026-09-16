@@ -66,7 +66,7 @@ jobs:
         run: .\scripts\Test-PublicRepository.ps1
       - name: Build and validate installers
         shell: powershell
-        run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION
+        run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -ApplicationMsisOnly
       - name: Prepare release assets and notes
         shell: pwsh
         run: |

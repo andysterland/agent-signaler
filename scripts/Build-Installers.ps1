@@ -4,6 +4,7 @@ param(
     [string] $Configuration = 'Release',
     [string] $Version = '1.0.13',
     [switch] $SkipPublish,
+    [switch] $ApplicationMsisOnly,
     [string] $DestinationPath
 )
 
@@ -90,6 +91,14 @@ foreach ($name in @('Dashboard', 'Remote')) {
         '-p:Platform=x64', "-p:ProductVersion=$Version", "-p:OutputPath=$msiOutput")
 }
 & (Join-Path $PSScriptRoot 'Test-Installers.ps1') -Version $Version
+
+if ($ApplicationMsisOnly) {
+    if (-not [string]::IsNullOrWhiteSpace($DestinationPath)) {
+        throw 'DestinationPath cannot be used with ApplicationMsisOnly.'
+    }
+    Write-Host 'Built and inspected the Dashboard and Remote x64 MSIs locally. Bundle and prerequisite packaging were skipped.'
+    return
+}
 
 . (Join-Path $PSScriptRoot 'PrerequisiteSecurity.ps1')
 Get-VerifiedPrerequisitePayloads

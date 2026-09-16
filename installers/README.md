@@ -39,12 +39,23 @@ trusted release folder, pass an absolute local or UNC path:
 Installer tests never execute a bundle/MSI.
 
 The manually triggered **Release MSIs** GitHub Actions workflow builds and
-validates the complete installer set, then publishes only
+validates the two application MSIs, then publishes
 `AgentSignaler.Dashboard.msi`, `AgentSignaler.Remote.msi`, and their SHA-256
 checksums to a versioned GitHub Release. The workflow requires explicit
 confirmation that the packages are unsigned, marks releases as prereleases by
 default, and refuses to replace an existing release. Its release notes warn that
 Windows may display SmartScreen, publisher, or reputation prompts.
+
+For the same application-MSI-only build locally, use:
+
+```powershell
+.\scripts\Build-Installers.ps1 -Version 1.0.13 -ApplicationMsisOnly
+```
+
+This mode still publishes both applications and performs the complete read-only
+Dashboard and Remote MSI validation. It skips the prerequisite MSI and Burn
+bundle, which are neither uploaded nor required by the **Release MSIs** workflow.
+The default command continues to build and validate every installer.
 
 `-SkipPublish` rebuilds packages from existing publish trees; use it only after a
 successful publish of the desired version. The script never installs either MSI,
