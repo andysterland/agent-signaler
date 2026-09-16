@@ -1,0 +1,125 @@
+name: Release MSIs
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Three-part MSI and release version, for example 1.2.3
+        required: true
+        type: string
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: true
+        default: true
+        type: boolean
+      confirm_unsigned:
+        description: I understand these MSIs are unsigned
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-msis-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+      RELEASE_UNSIGNED_CONFIRMED: ${{ inputs.confirm_unsigned }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Validate release request
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_UNSIGNED_CONFIRMED -ne 'true') {
+            throw 'Publishing requires explicit confirmation that the MSIs are unsigned.'
+          }
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'Version must be a three-part MSI version, for example 1.2.3.'
+          }
+          $parts = $env:RELEASE_VERSION.Split('.')
+          if ([long]$parts[0] -gt 255 -or [long]$parts[1] -gt 255 -or [long]$parts[2] -gt 65535) {
+            throw 'MSI versions must be no greater than 255.255.65535.'
+          }
+          & gh release view "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release v$env:RELEASE_VERSION already exists; existing releases are never replaced."
+          }
+      - name: Audit repository contents
+        shell: powershell
+        run: .\scripts\Test-PublicRepository.ps1
+      - name: Build and validate installers
+        shell: powershell
+        run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION
+      - name: Prepare release assets and notes
+        shell: pwsh
+        run: |
+          $release = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
+          New-Item -ItemType Directory -Path $release -Force | Out-Null
+          $assets = @(
+            'AgentSignaler.Dashboard.msi',
+            'AgentSignaler.Remote.msi'
+          )
+          foreach ($asset in $assets) {
+            Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "artifacts\msi\$asset") `
+              -Destination (Join-Path $release $asset)
+          }
+          $assets | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath (Join-Path $release $_) -Algorithm SHA256).Hash
+            "$hash  $_"
+          } | Set-Content -LiteralPath (Join-Path $release 'SHA256SUMS.txt') -Encoding ascii
+          @"
+          > [!WARNING]
+          > These MSI packages are **unsigned development releases**. Windows may display
+          > SmartScreen, publisher, or reputation warnings. Verify the SHA-256 checksums
+          > before use and do not treat these packages as signed production artifacts.
+
+          Agent Signaler $env:RELEASE_VERSION was built and validated by GitHub Actions
+          from commit ``$env:GITHUB_SHA``.
+
+          Assets:
+
+          - ``AgentSignaler.Dashboard.msi`` - dashboard installation
+          - ``AgentSignaler.Remote.msi`` - remote Dev Box installation
+          - ``SHA256SUMS.txt`` - SHA-256 checksums for both unsigned MSIs
+
+          Review the [acceptance record](https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/docs/ACCEPTANCE.md)
+          and [installer guide](https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/installers/README.md)
+          before installation.
+          "@ | Set-Content -LiteralPath (Join-Path $release 'release-notes.md') -Encoding utf8
+      - name: Publish GitHub Release
+        shell: pwsh
+        run: |
+          $release = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
+          $arguments = @(
+            'release', 'create', "v$env:RELEASE_VERSION",
+            (Join-Path $release 'AgentSignaler.Dashboard.msi'),
+            (Join-Path $release 'AgentSignaler.Remote.msi'),
+            (Join-Path $release 'SHA256SUMS.txt'),
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--target', $env:GITHUB_SHA,
+            '--title', "Agent Signaler $env:RELEASE_VERSION",
+            '--notes-file', (Join-Path $release 'release-notes.md')
+          )
+          if ($env:RELEASE_PRERELEASE -eq 'true') {
+            $arguments += '--prerelease'
+          }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release creation failed with exit code $LASTEXITCODE."
+          }

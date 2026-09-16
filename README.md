@@ -124,7 +124,8 @@ privately rather than opening a public issue.
   development path.
 - Installer, upgrade, rollback, Windows App, Azure, Dev Tunnel, and IDE workflows
   still have documented manual release gates.
-- No signed GitHub release is currently promised by this repository.
+- GitHub Releases may contain explicitly labeled unsigned development MSIs with
+  published SHA-256 checksums. No signed release is currently promised.
 - Source code is available under the [MIT License](LICENSE).
 
 Detailed status is tracked in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) and
