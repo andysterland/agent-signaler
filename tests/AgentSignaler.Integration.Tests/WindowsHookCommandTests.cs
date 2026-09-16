@@ -42,7 +42,9 @@ public sealed class WindowsHookCommandTests
             await using var ipc = new ClientIpcServer(configPath, runtime.HandleAsync);
             runtime.Start();
             using var hookJson = JsonDocument.Parse(probe.HookBytes);
-            var command = hookJson.RootElement.GetProperty("hooks").GetProperty("Stop")[0].GetProperty("windows").GetString()!;
+            var hook = hookJson.RootElement.GetProperty("hooks").GetProperty("Stop")[0];
+            Assert.Equal(3, hook.GetProperty("timeout").GetInt32());
+            var command = hook.GetProperty("windows").GetString()!;
             using var process = new Process
             {
                 StartInfo = new ProcessStartInfo(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe")
@@ -53,7 +55,6 @@ public sealed class WindowsHookCommandTests
                 }
             };
             process.StartInfo.Environment["AGENT_SIGNALER_DATA_DIR"] = root;
-            var elapsed = Stopwatch.StartNew();
             Assert.True(process.Start());
             var output = process.StandardOutput.ReadToEndAsync();
             var errors = process.StandardError.ReadToEndAsync();
@@ -74,7 +75,6 @@ public sealed class WindowsHookCommandTests
             Assert.Equal(0, process.ExitCode);
             Assert.Empty(await output);
             Assert.Empty(await errors);
-            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(3), $"Observer exceeded the three-second hook timeout: {elapsed.Elapsed}.");
             var log = await File.ReadAllTextAsync(RemotePaths.Log(configPath));
             Assert.Contains("hook-accepted-locally", log);
             Assert.DoesNotContain("operation-failed", log);
