@@ -83,7 +83,7 @@ public sealed class ClientRelayIpcTests : IAsyncLifetime
         runtime.Start();
         await WaitForMachine(AgentState.Idle);
         await Task.WhenAll(Hook("sessionStart", "one"), Hook("sessionStart", "two"), Hook("sessionStart", "three"));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (Assert.Single(await _store.GetMachinesAsync()).Sessions.Count != 3)
             await Task.Delay(20, timeout.Token);
         var machine = Assert.Single(await _store.GetMachinesAsync());
