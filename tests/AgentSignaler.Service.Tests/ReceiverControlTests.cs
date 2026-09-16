@@ -171,6 +171,7 @@ public sealed class ReceiverControlTests : IAsyncLifetime
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/status") { Content = content };
         request.Headers.TransferEncodingChunked = chunked;
+        request.Headers.ExpectContinue = !chunked;
         using var oversized = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversized.StatusCode);
         using var invalidVersion = await _client.PostAsJsonAsync("/api/v1/status",
