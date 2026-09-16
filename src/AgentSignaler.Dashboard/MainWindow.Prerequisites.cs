@@ -17,7 +17,7 @@ internal sealed partial class MainWindow
     private bool AzurePrerequisiteBusy => _azureCliCheck?.IsBusy == true || _devCenterExtensionCheck?.IsBusy == true;
     private bool PrerequisiteBusy => _prerequisiteChecks.Any(check => check.IsBusy);
 
-    private (TextBox TunnelPath, TextBox AzurePath) BuildPrerequisiteSettings(StackPanel panel)
+    private (TextBox TunnelPath, TextBox AzurePath) BuildPrerequisiteSettings(StackPanel panel, StackPanel help)
     {
         _prerequisitesClosing = false;
         panel.Children.Add(Text("Prerequisite", 18));
@@ -30,9 +30,9 @@ internal sealed partial class MainWindow
         var summaries = new StackPanel { Spacing = 6 };
         panel.Children.Add(summaries);
         var captures = new Dictionary<PrerequisiteCheck, Func<Func<CancellationToken, Task<PrerequisiteDiagnosticResult>>>>();
-        panel.Children.Add(Text("Checks inspect only: they never install software, start sign-in, launch a connection, or change Internet sharing. " +
+        help.Children.Add(Text("Checks inspect only: they never install software, start sign-in, launch a connection, or change Internet sharing. " +
             "They are available in either connection mode, including while sharing is active."));
-        panel.Children.Add(Text("Checks execute the paths entered here, including unsaved edits. Results retain their tested path; " +
+        help.Children.Add(Text("Checks execute the paths entered here, including unsaved edits. Results retain their tested path; " +
             "editing a path does not retest it. Save, Exit and reopen to change the paths used by running operations."));
 
         panel.Children.Add(Text("Dev Tunnels CLI", 18));
@@ -44,7 +44,7 @@ internal sealed partial class MainWindow
         };
         panel.Children.Add(tunnelPath);
         panel.Children.Add(Text($"Effective sharing CLI path: {_effectiveTunnelCliPath ?? "not initialized (Internet mode and restart required)"}."));
-        panel.Children.Add(Text("Dev Tunnels CLI is separate from Azure CLI and its devcenter extension. " +
+        help.Children.Add(Text("Dev Tunnels CLI is separate from Azure CLI and its devcenter extension. " +
             "Install the Microsoft-signed CLI separately with \"winget install Microsoft.devtunnel\", then sign in explicitly with \"devtunnel user login\". " +
             "When using a custom path, run that executable for setup. The CLI credential cache may be shared with other CLI sessions."));
         var tunnelCheck = AddCheck("Dev Tunnels CLI", () =>
@@ -62,12 +62,12 @@ internal sealed partial class MainWindow
         };
         panel.Children.Add(azurePath);
         panel.Children.Add(Text($"Effective Dev Box CLI path: {_effectiveAzureCliPath ?? "not initialized"}."));
-        panel.Children.Add(Text("Install Azure CLI 2.90.0 or later separately using Microsoft's Azure CLI installer. " +
+        help.Children.Add(Text("Install Azure CLI 2.90.0 or later separately using Microsoft's Azure CLI installer. " +
             "Choose only an installation you trust: checks execute it with your Windows account. Leave blank for the default installation."));
-        panel.Children.Add(Text("az.cmd must be the official MSI wbin launcher with its adjacent Python runtime. " +
+        help.Children.Add(Text("az.cmd must be the official MSI wbin launcher with its adjacent Python runtime. " +
             "The entire installation, including CLI modules and dependencies, must be protected from untrusted changes. " +
             "Azure CLI signatures and executable architecture are not inspected."));
-        panel.Children.Add(Text("The account check validates the CLI's saved user, tenant, and enabled subscription, " +
+        help.Children.Add(Text("The account check validates the CLI's saved user, tenant, and enabled subscription, " +
             "not live token validity or Dev Box permissions. Sign in separately with az login if needed. " +
             "Machine mappings and explicit tenant-specific sign-in remain in machine details."));
         var azureCheck = _azureCliCheck = AddCheck("Azure CLI status", () =>
@@ -77,7 +77,7 @@ internal sealed partial class MainWindow
         }, () => !AzurePrerequisiteBusy && _catalog?.State.IsBusy != true);
 
         panel.Children.Add(Text("Azure CLI devcenter extension", 18));
-        panel.Children.Add(Text("Required only for discovery by Dev Center name, not automatic or subscription-ID discovery. " +
+        help.Children.Add(Text("The Azure CLI devcenter extension is required only for discovery by Dev Center name, not automatic or subscription-ID discovery. " +
             "Check uses the Azure CLI path above and lists locally installed extensions without installing any. " +
             "If missing, install separately in that CLI with \"az extension add --name devcenter\"."));
         var extensionCheck = _devCenterExtensionCheck = AddCheck("devcenter extension", () =>
@@ -87,7 +87,7 @@ internal sealed partial class MainWindow
         }, () => !AzurePrerequisiteBusy && _catalog?.State.IsBusy != true);
 
         panel.Children.Add(Text("Windows App", 18));
-        panel.Children.Add(Text("Install or update Windows App separately from Microsoft Store. Version 2.0.804.0 or later is required. " +
+        help.Children.Add(Text("Install or update Windows App separately from Microsoft Store. Version 2.0.804.0 or later is required. " +
             "Check inspects the current user's ms-cloudpc association only; it does not verify the app version or launch Windows App."));
         var windowsCheck = AddCheck("Windows App protocol", () => WindowsAppDiagnostics.CheckAsync, () => true);
 

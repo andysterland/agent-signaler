@@ -21,7 +21,7 @@ public sealed class PrerequisiteSettingsTests
         Assert.Contains("VerticalScrollBarVisibility = ScrollBarVisibility.Auto", main);
         Assert.Contains("network.Children.Add(allow)", main);
         Assert.Contains("network.Children.Add(remove)", main);
-        Assert.Contains("BuildTunnelSettings(sharing)", main);
+        Assert.Contains("BuildTunnelSettings(sharing, sharingHelp)", main);
         Assert.Contains("Refresh Dev Boxes", devBox);
         Assert.Contains("Stop sharing and sign out", sharing);
         Assert.Contains("Delete tunnel", sharing);
@@ -40,6 +40,45 @@ public sealed class PrerequisiteSettingsTests
         Assert.DoesNotContain("_runningMode ==", prerequisites);
         Assert.Contains("Effective sharing CLI path:", prerequisites);
         Assert.Contains("Effective Dev Box CLI path:", prerequisites);
+    }
+
+    [Fact]
+    public void SettingsTabsMoveDescriptionsIntoTopRightHelpTooltips()
+    {
+        var main = Source("MainWindow.cs");
+        Assert.Contains("new SymbolIcon(Symbol.Help)", main);
+        Assert.Contains("HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top", main);
+        Assert.Contains("AutomationProperties.SetName(helpButton, $\"{title} help\")", main);
+        Assert.Contains("ToolTipService.SetToolTip(helpButton, new ToolTip", main);
+        Assert.Contains("Content = help, MaxWidth = 400, MaxHeight = 360", main);
+        Assert.Contains("Grid.SetColumn(helpButton, 1)", main);
+        Assert.Contains("layout.Children.Add(helpButton)", main);
+        Assert.Contains("Content = layout", main);
+        Assert.Contains("AddSection(\"General\", general, generalHelp)", main);
+        Assert.Contains("AddSection(\"Network\", network, networkHelp)", main);
+        Assert.Contains("AddSection(\"Internet sharing\", sharing, sharingHelp)", main);
+        Assert.Contains("AddSection(\"Dev Box\", azure, azureHelp)", main);
+        Assert.Contains("AddSection(\"Prerequisite\", prerequisites, prerequisiteHelp)", main);
+        Assert.Contains("BuildDevBoxSettings(azure, azureHelp)", main);
+        Assert.Contains("BuildPrerequisiteSettings(prerequisites, prerequisiteHelp)", main);
+        Assert.Equal(1, Regex.Matches(main, @"generalHelp\.Children\.Add\(Text\(").Count);
+        Assert.Equal(2, Regex.Matches(main, @"networkHelp\.Children\.Add\(Text\(").Count);
+        Assert.DoesNotContain("general.Children.Add(Text(", main);
+        Assert.Contains("network.Children.Add(Text($\"Effective mode:", main);
+
+        foreach (var (file, paragraphs) in new[]
+        {
+            ("MainWindow.Tunneling.cs", 3),
+            ("MainWindow.DevBox.cs", 7),
+            ("MainWindow.Prerequisites.cs", 8)
+        })
+        {
+            var source = Source(file);
+            Assert.Equal(paragraphs, Regex.Matches(source, @"help\.Children\.Add\(Text\(").Count);
+            // Only section headings and interpolated runtime status remain inline.
+            Assert.All(Regex.Matches(source, "panel\\.Children\\.Add\\(Text\\(\"[^\"]*\"([^\\r\\n]*)")
+                .Cast<Match>(), match => Assert.Matches(@", (16|18)\)\);", match.Groups[1].Value));
+        }
     }
 
     [Fact]

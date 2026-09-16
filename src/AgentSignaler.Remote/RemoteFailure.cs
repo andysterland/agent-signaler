@@ -18,4 +18,12 @@ public static class RemoteFailure
             FormatException or KeyNotFoundException => true,
         _ => false
     };
+
+    public static string DescribeLocalFailure(Exception exception)
+    {
+        var message = exception.GetBaseException().Message;
+        return string.IsNullOrWhiteSpace(message)
+            ? "Operation failed. Check file access, the endpoint, startup registration, and legacy Task Scheduler access."
+            : $"Operation failed: {message} Check file access, the endpoint, startup registration, and legacy Task Scheduler access.";
+    }
 }

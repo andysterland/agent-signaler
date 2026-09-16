@@ -3,7 +3,7 @@
     <TargetFramework>native</TargetFramework>
     <InstallerPlatform>x64</InstallerPlatform>
     <OutputName>AgentSignaler.Remote</OutputName>
-    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.13</ProductVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.14</ProductVersion>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\remote</PublishDir>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);InstallerProduct=Remote</DefineConstants>
     <HarvestDirectoryAutogenerateGuids>true</HarvestDirectoryAutogenerateGuids>

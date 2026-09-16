@@ -100,7 +100,7 @@ environment and explicit anonymous-exposure authorization.
 Build and inspect installers locally without installing or publishing them:
 
 ```powershell
-.\scripts\Build-Installers.ps1 -Version 1.0.13
+.\scripts\Build-Installers.ps1 -Version 1.0.14
 ```
 
 See the [user guide](docs/user-guide.md) for setup and operation,
