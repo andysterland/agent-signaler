@@ -65,7 +65,7 @@ internal static class Program
             window = new TrayWindow(() =>
             {
                 if (!TryOpenConfigurator(out var error)) TrayWindow.ShowError(error!);
-            }, runtime.Status, runtime.RequestSnapshot);
+            }, runtime.Status, runtime.RequestSnapshot, () => runtime.TranscriptStatusText);
             var tray = window;
             var exitStarted = 0;
             window.ExitRequested += quiet =>
@@ -80,12 +80,14 @@ internal static class Program
             server = new ClientIpcServer(configPath, (request, cancellationToken) =>
             {
                 if (request.Command != "activate") return runtime.HandleAsync(request, cancellationToken);
-                if (request.Event is not null || request.Hook is not null || request.ExpectedRevision is not null || request.ProbeId is not null)
+                if (request.Event is not null || request.Hook is not null || request.ExpectedRevision is not null ||
+                    request.ProbeId is not null || request.Transcript is not null ||
+                    request.TranscriptSource is not null || request.TranscriptRead is not null)
                     return Task.FromResult(new ClientIpcResponse(false, "invalid"));
                 return Task.FromResult(TryOpenConfigurator(out var error)
                     ? runtime.Status()
                     : new ClientIpcResponse(false, runtime.Status().State, Error: error));
-            });
+            }, runtime.TranscriptScratch);
             server.StopAcknowledged += () => tray.Close(null);
             runtime.Start();
             availabilityChanged = (_, change) =>

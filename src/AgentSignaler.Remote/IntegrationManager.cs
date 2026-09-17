@@ -103,8 +103,14 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
             throw new InvalidDataException("A multi-target ownership manifest requires a multi-target preview.");
         ValidateStartupManifest(prior, plan.ConfigPath);
         if (prior is not null && prior.MachineId != plan.Config.MachineId) throw new InvalidDataException("Identity conflict.");
-        if (File.Exists(plan.ConfigPath) && RemoteConfiguration.Load(plan.ConfigPath).MachineId != plan.Config.MachineId)
-            throw new InvalidDataException("Configuration identity conflict.");
+        if (File.Exists(plan.ConfigPath))
+        {
+            var saved = RemoteConfiguration.Load(plan.ConfigPath);
+            if (saved.MachineId != plan.Config.MachineId)
+                throw new InvalidDataException("Configuration identity conflict.");
+            if (saved.Version >= 4)
+                throw new InvalidDataException("Source-aware settings require a multi-target preview; legacy repair cannot downgrade them.");
+        }
         if (runtime is not null && !File.Exists(plan.ClientPath))
             throw new InvalidDataException($"Client executable is missing: '{plan.ClientPath}'. Repair the installation.");
         if (File.Exists(plan.HookPath) &&

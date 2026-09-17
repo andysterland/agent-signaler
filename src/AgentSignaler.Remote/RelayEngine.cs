@@ -258,10 +258,35 @@ public sealed class RelayEngine(HttpClient? client = null)
                 if (bytes.Length + count > 65536) throw new InvalidDataException();
                 bytes.Write(buffer, 0, count);
             }
-            var hook = HookPayloadAdapters.Parse(adapter, eventName, bytes.ToArray(), DateTimeOffset.UtcNow, source);
+            var payload = bytes.ToArray();
+            var hook = HookPayloadAdapters.Parse(adapter, eventName, payload, DateTimeOffset.UtcNow, source);
             var response = await ClientIpc.SendAsync(configPath,
-                new(ClientIpc.Version, probeId is null ? "hook" : "probe", kind, hook, ProbeId: probeId), budget.Token);
+                new(ClientIpc.LegacyVersion, probeId is null ? "hook" : "probe", kind, hook, ProbeId: probeId), budget.Token);
             log.Write(response.Accepted ? "hook-accepted-locally" : "client-not-accepting");
+            if (probeId is null && response.Accepted && config.Version >= 5 && config.DetailedReportingEnabled &&
+                config.BaseUri.Scheme == Uri.UriSchemeHttps && !budget.IsCancellationRequested)
+            {
+                using var detailBudget = CancellationTokenSource.CreateLinkedTokenSource(budget.Token);
+                detailBudget.CancelAfter(TimeSpan.FromMilliseconds(200));
+                var negotiation = await ClientIpc.SendAsync(configPath,
+                    new(ClientIpc.Version, "transcript-negotiate", TranscriptSource: hook.Source ?? SourceDescriptor.LegacyCli),
+                    detailBudget.Token);
+                if (negotiation is { Accepted: true, Transcript: { Enabled: true } capability } &&
+                    !detailBudget.IsCancellationRequested)
+                {
+                    var observation = TranscriptHookProjection.Parse(adapter, eventName, payload, hook, capability.SettingsRevision);
+                    if (observation is not null)
+                    {
+                        var reference = TranscriptHookProjection.ReadReference(adapter, eventName, payload,
+                            observation, capability.AssistantFile);
+                        var request = reference is null
+                            ? new ClientIpcRequest(ClientIpc.Version, "transcript-hook", Transcript: observation)
+                            : new ClientIpcRequest(ClientIpc.Version, "transcript-read", TranscriptRead: reference);
+                        var detail = await ClientIpc.SendAsync(configPath, request, detailBudget.Token);
+                        if (!detail.Accepted) log.Write("transcript-not-accepted");
+                    }
+                }
+            }
             return 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or

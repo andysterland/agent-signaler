@@ -10,6 +10,18 @@ public sealed class DashboardSettingsEnvironmentCollection { }
 public sealed class DashboardSettingsTests
 {
     [Theory]
+    [InlineData("{}", true)]
+    [InlineData("""{"ReceiveDetailedConversations":true}""", true)]
+    [InlineData("""{"ReceiveDetailedConversations":false}""", false)]
+    public void ReceiverPreferenceDefaultsOnAndPreservesExplicitOptOut(string json, bool expected)
+    {
+        var settings = DashboardSettings.FromJson(json);
+        Assert.Equal(expected, settings.ReceiveDetailedConversations);
+        Assert.Equal(settings, DashboardSettings.FromJson(JsonSerializer.Serialize(settings)));
+        Assert.False(DashboardSettings.RecoveryDefaults.ReceiveDetailedConversations);
+    }
+
+    [Theory]
     [InlineData("{}")]
     [InlineData("""{"Port":51820,"Compact":false,"Theme":"Dark","AzureCliPath":null}""")]
     public void LegacySettingsRequireNoDevCenterConfiguration(string json)
@@ -35,7 +47,8 @@ public sealed class DashboardSettingsTests
             Compact = false,
             ShowCompactViewWhenMinimized = false,
             Theme = "Dark",
-            AutoStartSharing = false
+            AutoStartSharing = false,
+            ReceiveDetailedConversations = false
         };
         var restored = DashboardSettings.FromJson(JsonSerializer.Serialize(original));
         Assert.Equal(original, restored);
@@ -118,7 +131,7 @@ public sealed class DashboardSettingsTests
         {
             Environment.SetEnvironmentVariable("AGENT_SIGNALER_DATA_DIR", directory);
             Directory.CreateDirectory(directory);
-            const string json = """{"DevCenterEndpoints":["https://old.westus.devcenter.azure.com/"],"Theme":"Dark","AutoStartSharing":false}""";
+            const string json = """{"DevCenterEndpoints":["https://old.westus.devcenter.azure.com/"],"Theme":"Dark","AutoStartSharing":false,"ReceiveDetailedConversations":false}""";
             File.WriteAllText(DashboardSettings.FilePath, json);
             var settings = DashboardSettings.Load();
             Assert.Equal(json, File.ReadAllText(DashboardSettings.FilePath));
@@ -131,6 +144,7 @@ public sealed class DashboardSettingsTests
             Assert.Equal(center, restored.DevCenterName);
             Assert.Equal("Dark", restored.Theme);
             Assert.False(restored.AutoStartSharing);
+            Assert.False(restored.ReceiveDetailedConversations);
             restored.WithDiscoveryTarget("", "").Save();
             var cleared = DashboardSettings.Load();
             Assert.Null(cleared.DevBoxSubscriptionId);

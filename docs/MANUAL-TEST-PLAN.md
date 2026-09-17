@@ -43,6 +43,55 @@ enforcement. Retain the two-computer checks in `ACCEPTANCE.md` for release sign-
 - Use only synthetic prompts, outputs, and error text. Do not attach credentials,
   actual prompts, source code, or user-profile data to test evidence.
 
+## Detailed-conversation prototype acceptance — Not run
+
+This section specifies expected outcomes, not passed tests. Existing HTTP/LAN and
+v1–v4 fixture sections remain **status-only** compatibility checks. The historical
+automated counts in `ACCEPTANCE.md` do not validate these new gates.
+Do not execute live hooks, installers, tunnels, certificate/trust changes, or
+installed-UI acceptance as part of unattended implementation. Obtain separate
+authorization and an approved disposable environment first. Use only synthetic
+messages (including fictional PII) and independently marked prohibited fields;
+keep evidence category-only, without messages, local transcript paths, or raw
+payloads. No new certificate provisioning is part of the product.
+
+External informed permission for content, destination, and retention must exist
+before prototype distribution/use. The app does not verify it. Apply confirmation,
+installation, and notices are not consent evidence. New v5/default-on tests must
+use isolated configuration, never a real operator endpoint.
+
+**Production assistant readers are unavailable:** no Copilot CLI, VS Code, or
+Visual Studio transcript format/path/session/completion profile is independently
+verified. Do not promote a synthetic normalized/test-only adapter to production
+support. Published hook fields, installed binaries, and actual-host acceptance are
+distinct evidence; a stop path alone is insufficient. Test partial prompt/activity
+capture independently of assistant availability.
+
+| ID | Procedure after separate authorization | Expected result |
+| --- | --- | --- |
+| T01 | Preview a new v5 setup, omitted v5 flag, explicit true/false, and v1–v4 loads. Open new binaries without Apply. | V5 defaults Share detailed conversations on; explicit false remains false. Legacy stays status-only without rewrite. Notice states external consent and unredacted message PII; no consent/enrollment/token workflow. |
+| T02 | Upgrade Dashboard first and matching Relay/Client/Configurator together; explicitly migrate. Test old Relay/new Client and new Relay/old Client with readable legacy configuration. | Status routes and exact v2 IPC remain compatible; v3 negotiation gates content before extraction/send. Old Clients do not receive text and visibly reject unreadable v5, not reinterpret it. |
+| T03 | Repair/recover saved false; inject opt-out save failure or rollback toward older true. Preview an explicit coordinated v5-to-v4 downgrade. | False preserved or recovery conflict; failed save leaves this run suspended. Downgrade stops exact owned Client, clears detail, writes validated status-only v4 and uses compatible servicing. V4 retains no v5 flag; subsequent v5 upgrade previews default-on again. Stopped reporter is not restarted by rollback. |
+| T04 | Exercise HTTP/LAN, incompatible receiver, disabled receiver, TLS failure, redirect, stopped/changed tunnel, and endpoint/source changes with controlled fixtures. | Status remains independent. Details use only configured HTTPS with normal validation and owned-running-tunnel readiness on loopback Internet mode; no alternate endpoint, stale queue, or local file open while unavailable. |
+| T05 | Send synthetic allowed hook user text/fictional PII/tool names plus unique markers in arguments/results, errors, reasoning, attachments, and arbitrary fields. | Only permitted fields survive; PII within allowed text remains unredacted. Status/SQLite contain no messages; local stop reference never enters HTTP, state, logs, diagnostics, or viewer models. |
+| T06 | Use an explicitly test-only verified-format fixture and accepted exact stop reference through actual Relay/IPC/Client/HTTPS harness/store/view model. Also exercise each unavailable production profile. | Assistant-only completed top-level text; no file-sourced user prompts, tools, subagents, deltas, or hidden reasoning. One stop observation, partial fallback, provenance without a path. Fixture success proves no production schema. |
+| T07 | In test-owned files exercise first stop, repeated stops, partial trailing frame, delayed flush, replacement, deletion, truncation, format/encoding/session mismatch. | Baseline excludes history unless exact current-turn proof exists; possible first reply omission is visible. No duplicates, guessed boundaries, whole-file replay, watcher, or scan. Changes invalidate cursors and rebaseline with a gap. Input bytes are unchanged. |
+| T08 | Reject relative/UNC/device/ADS/reparse inputs and wrong root/session/user/file identity using isolated fixtures. | Profile-specific exact binding is rechecked on the opened read-only handle; unsupported binding stays unavailable. No path in error output; no file ownership transferred. |
+| T09 | Exercise reader limits with synthetic boundary fixtures and a controllable clock. | One active read, 16 queued sessions, two-second queue expiry, 32 contexts/eight per source, 30-minute inactivity expiry. Each stop shares 750 ms / 2 MiB / 128 records / 16 replies / 256 KiB output across at most 0/100/300 ms attempts; 64 MiB file, 16 KiB chunk, 64 KiB record/depth-16 limits. Capacity/budget gaps visible, IPC/status not blocked. |
+| T10 | Opt out or Exit during reads, retries, IPC negotiation, and slow sends; re-enable, restart, or remove/change endpoint/source. Make receiver unreachable during opt-out. | Admission stops immediately; operations cancel within existing four-second shutdown budget. Text/references/cursors dropped; no backfill/resurrection. Unreachable remote purge is best-effort, not acknowledged deletion; local TTL/clear/disable still applies. Hooks never start Client or issue HTTP/control responses. |
+| T11 | Toggle Receive detailed conversations under Settings > Internet sharing, cancel the dialog, and inject a preference-save failure. Clear one computer, remove it, stop listener/tunnel, and restart receiver while viewing. | Toggle applies/saves immediately, independent of dialog Save/Cancel. Disable purges before save and a failed save leaves this run disabled with an error, without disabling status. Clear permits only fresh future capture. Affected streams/views invalidate immediately, including late dispatcher completions. Restart has empty history/new epoch; managed status re-registration remains possible. |
+| T12 | Use Unicode/escaping-heavy content, slow senders/readers, concurrent sources, dropped acknowledgements, retry exhaustion, overflow, and TTL expiry. | 32 KiB serialized events; total Client 4 MiB and receiver 64 MiB including scratch/index/view copies, not extra caches. Bounded duplicate/order/gap metadata, quotas and throttling; no duplicate TTL extension, silent complete-history claim, or disk spool. Record measurements, not just configured constants. |
+| T13 | Open computer details through normal and connection-error paths; edit Settings then switch tabs during mapping/launch/cancel work. | Settings first, all former controls and drafts intact. No save/connection on switch; Save details/Remove only on Settings with handler guards, Close and cancellation reachable on both. Existing Settings copy-URI unaffected. |
+| T14 | Select same session names in distinct machines/sources/scopes/streams, retained ended sessions, and empty/partial/offline/error states. Delay completions while changing selection or closing. | No merged identities or stale cross-selection text; missing assistant reply is not success. Baseline, unverified/changed format, waiting for stop, budget, gaps, truncation, expiry and reset are explicit; arrival order is labelled where native correlation is absent. |
+| T15 | Page older content and receive new activity; repeatedly switch tabs/close/reopen. Expire or evict content while visible. | Session page 16 / maximum 32; event page 32 / 128 KiB; window 64 / 256 KiB plus one pending page. One viewer/read, one-second visible-only refresh, bounded cursor lifetime, append-safe older pages, scroll intent/new-activity indicator, deadline-based invalidation and text-reference release. |
+| T16 | Render synthetic HTML, Markdown, links and image syntax; inspect keyboard, screen reader, focus, high contrast, DPI and narrow layouts. | Inert wrapped plain text, no navigation/images/execution, composer, approval, transcript copy/export, or accessibility leakage of excluded fields. Virtualization preserved; no file read or sharing enabled by opening Transcript. |
+| T17 | Inspect test-owned configuration/state/SQLite/WAL/log/backup/recovery artifacts for distinct allowed and prohibited markers, and compare host-input bytes before/after lifecycle operations. | No application-persisted conversation text, paths/cursors or recovery fingerprints. Known synthetic host-input fixtures are excluded from output scans and remain unchanged. Memory-only is not a claim about host history, OS paging/hibernation or external crash capture. |
+| T18 | Build/inspect fresh x64 packages before separately authorized installer lifecycle tests. Test clean install, repair, upgrade, interrupted rollback and uninstall only in the approved VM. | Matching managed assemblies plus XBF/PRI preserved; no transcript database, host inputs, credentials/pairing or certificates shipped. No capture/tunnel/consent established by installation. Only exact app-owned artifacts changed; host transcripts always untouched. Source inspection alone does not pass installed lifecycle acceptance. |
+
+Keep all T01–T18 **Not run** until their own execution evidence is recorded.
+Automated fixture results may support individual boundaries, but do not close
+manual UI, actual-host, live-cloud, or installer-execution gates.
+
 ## Dashboard startup presentation (Not run)
 
 - With previously reported machines, start Dashboard in Internet mode in an
@@ -75,11 +124,12 @@ enforcement. Retain the two-computer checks in `ACCEPTANCE.md` for release sign-
   With machines loaded and compact-on-minimize enabled, Compact View still
   minimizes to the compact tiles; Settings still opens the settings dialog.
 
-## Multi-target IDE verification and configuration v4
+## Multi-target IDE verification and configuration v5
 
 These are **Not run** live release gates, not automated implementation results.
 The older v1/v3 fixture sections below remain compatibility tests; new Configurator
-previews use v4 and require an upgraded source-aware Dashboard.
+previews use v5 and require an upgraded source-aware Dashboard. Disable detailed
+reporting for these status-only cases; T01–T18 cover the separate detail stream.
 
 Inventory observed September 15, 2026 (not hook verification):
 
@@ -102,7 +152,7 @@ successful live test, without prompt/tool/transcript content.
 | M01a | Inspect the Enable column before/after clicking a checkbox and toggling with Space. Repeat on a custom row, in light/dark/high-contrast themes and at increased display scaling. | The unchecked outline and checked fill/checkmark are visibly distinct and fully inside the cell, not clipped. Keyboard focus remains visible. The checkmark and selection count agree; no settings are written until Apply is confirmed. |
 | M01b | Open each Configurator tab, hover its top-right help icon, then move away or switch tabs. Scroll the view and repeat at increased display scaling. | Descriptive help appears in a wrapped tooltip, not in inline paragraphs, and dismisses when leaving. Each view's icon stays at the top right outside scrolling content. Connection help includes privacy and startup guidance; Hooks help includes relay, Apply and custom-path guidance; Review help describes preview and maintenance. Labels, live status, pending counts and errors remain visible. Opening help changes no settings. |
 | M02 | Select Add custom location, enter custom CLI/Visual Studio hook directories and a VS Code profile directory, and tick Enable. Try relative and UNC paths. Add another row, refresh and reopen before/after Apply. | Type and path editors appear only on requested custom rows. Invalid paths fail visibly. Refresh retains draft paths/types/ticks; applied custom locations survive reopening. Unticked blank rows are ignored. |
-| M03 | With no saved configuration and Client stopped, enter connection settings, tick one location and select Apply settings without using Preview first. Cancel, then repeat and approve. | Apply shows the exact combined changes before consent. Cancellation writes nothing. Approved first setup saves v4 settings, installs hooks/startup and starts Client without a reporter-only Save or diagnostic workflow. |
+| M03 | With no saved configuration and Client stopped, enter connection settings, disable Share detailed conversations for this status-only case, tick one location and select Apply settings without using Preview first. Cancel, then repeat and approve. | Apply shows exact combined changes for confirmation, not external-consent verification. Cancellation writes nothing. Approved first setup saves v5 settings with explicit false, installs hooks/startup and starts Client without a reporter-only Save or diagnostic workflow. |
 | M03a | Apply against a compatible dashboard whose health response takes more than 3 but less than 10 seconds after connecting. Repeat with an unresponsive dashboard and an unresponsive local Client. | Apply uses the interactive 3-second connection timeout within a 10-second capability-check budget. A slow healthy response can succeed. Dashboard timeouts identify the URL and Test connection action without changing existing settings/hooks/startup. Local Client timeouts identify IPC rather than connectivity. If a later refresh fails after saving, the UI says settings were saved. |
 | M04 | Apply one VS instance, exclude other loaders and perform harmless actual IDE agent activity. Separately run its bundled CLI as a negative attribution check. | Configuration is labelled Configured, not Verified. Native host testing remains a release check, not a setup prerequisite. Bundled CLI execution is not proof of IDE support; no prompt/tool data is sent. |
 | M05 | Apply a disposable VS Code profile and inspect its settings and hook file. Exercise host policy/trust, workspace overrides and reload behavior. Load a legacy recorded policy-block fixture and try Apply. | Only owned hook location entries change; comments/unrelated settings and policy remain untouched. Known blocks are not silently overridden. Automatic configuration does not promise universal loader support. |

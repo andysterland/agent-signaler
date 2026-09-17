@@ -78,7 +78,7 @@
                                     <TextBlock Text="Configure a connection to your dashboard. The heartbeat interval must be a whole number of minutes from 1 to 60. The persistent machine UUID is retained when integration or the application is removed." TextWrapping="Wrap" />
                                     <TextBlock Text="Client runs in the tray at user sign-in. Exit stops reporting until you explicitly start Client or sign in again. Start client uses saved settings." TextWrapping="Wrap" />
                                     <TextBlock Text="Select integrations on Hooks, then Apply settings and confirm the preview. Hook files and required profile settings are configured automatically. Opening, editing and testing do not change hooks or start Client." TextWrapping="Wrap" />
-                                    <TextBlock Text="Reports status only. Prompts, code, tool arguments, output and error messages are never saved or sent. Hook failures never block Copilot." TextWrapping="Wrap" />
+                                    <TextBlock Text="Legacy settings report status only. Applying settings explicitly upgrades to v5; upgrade Client, Relay and Configurator together first. Detailed sharing sends allowed user and assistant messages plus tool names, never tool arguments/results, raw errors or reasoning. Hook failures never block Copilot." TextWrapping="Wrap" />
                                 </StackPanel>
                             </ToolTip>
                         </ToolTipService.ToolTip>
@@ -87,6 +87,13 @@
                         <StackPanel Spacing="14">
                             <TextBox x:Name="UrlBox" Header="Dashboard base URL" PlaceholderText="http://desktop-pc:51820 or https://your-service-returned-host" TextChanged="SettingsChanged" />
                             <NumberBox x:Name="HeartbeatBox" Header="Heartbeat interval (minutes)" Value="5" Minimum="1" Maximum="60" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="HeartbeatChanged" />
+                            <ToggleSwitch x:Name="ShareDetailsSwitch" Header="Share detailed conversations" IsOn="True"
+                                          Toggled="ShareDetailsChanged" />
+                            <TextBlock Text="Message text, including personal information, is sent to the configured Dashboard. Consent is handled outside the app. Requires HTTPS, a running upgraded Client, a compatible receiver and verified source capabilities. Apply settings to save; legacy settings stay status-only until this explicit v5 upgrade."
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="The anonymous prototype keeps details in bounded memory for up to 30 minutes at the receiver; this does not prevent OS paging or host history. Opt-out stops local capture immediately when applied. Remote purge is best effort, not an offline acknowledgement."
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="DetailedReportingText" TextWrapping="Wrap" />
                             <TextBlock x:Name="RuntimeText" Text="Client runtime status has not been queried." TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                             <TextBox x:Name="IdentityBox" Header="Machine UUID" IsReadOnly="True" />
                             <Button x:Name="TestButton" Content="Test connection" Click="Test_Click" />

@@ -5,7 +5,7 @@ using AgentSignaler.Contracts;
 namespace AgentSignaler.Remote;
 
 /// <summary>The single owner of local session mutation and ordered, bounded network delivery.</summary>
-public sealed class ClientCoordinator : IAsyncDisposable
+public sealed partial class ClientCoordinator : IAsyncDisposable
 {
     public const int MaximumPendingHooks = 64;
     private static readonly string ReporterVersion = typeof(ClientCoordinator).Assembly.GetName().Version?.ToString() ?? "unknown";
@@ -48,7 +48,9 @@ public sealed class ClientCoordinator : IAsyncDisposable
     private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ClientCoordinator(string configPath, TimeProvider? timeProvider = null,
-        Func<RemoteConfiguration, IPresenceTransport>? transportFactory = null)
+        Func<RemoteConfiguration, IPresenceTransport>? transportFactory = null,
+        ITranscriptTransport? transcriptTransport = null,
+        ITranscriptFileAdapterRegistry? transcriptFileAdapters = null)
     {
         _configPath = ClientIdentity.CanonicalPath(configPath);
         _owner = ClientIdentity.AcquireOwner(_configPath);
@@ -61,6 +63,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
             _acknowledgedInterval = _configuration.HeartbeatIntervalSeconds;
             _log = new DiagnosticLog(RemotePaths.Log(_configPath));
             _sessions = new SessionStore(RemotePaths.State(_configPath), _log);
+            InitializeTranscripts(transcriptTransport, transcriptFileAdapters);
         }
         catch { _owner.Dispose(); throw; }
     }
@@ -74,6 +77,8 @@ public sealed class ClientCoordinator : IAsyncDisposable
         {
             if (_worker is not null || _stopping) throw new InvalidOperationException("Client already started or stopped.");
             _generation = ClientIdentity.AllocateGeneration(_configPath);
+            ConfigureTranscripts(_configuration, _revision, _generation, false);
+            _transcriptMonitor = Task.Run(MonitorTranscriptConfigurationAsync);
             // Hooks lost during deliberate Exit cannot safely be inferred at the next start.
             AtomicFile.Write(RemotePaths.State(_configPath), JsonSerializer.SerializeToUtf8Bytes(
                 new StoredRemoteState(2, _clock.GetUtcNow().AddTicks(-1), []), Protocol.Json));
@@ -98,7 +103,12 @@ public sealed class ClientCoordinator : IAsyncDisposable
 
     public Task<ClientIpcResponse> HandleAsync(ClientIpcRequest request, CancellationToken cancellationToken = default)
     {
-        if (request.Version != ClientIpc.Version) return Task.FromResult(new ClientIpcResponse(false, "incompatible"));
+        if (request.Version is not (ClientIpc.Version or ClientIpc.LegacyVersion))
+            return Task.FromResult(new ClientIpcResponse(false, "incompatible"));
+        if (request.Command.StartsWith("transcript-", StringComparison.Ordinal))
+            return Task.FromResult(HandleTranscript(request));
+        if (request.Transcript is not null || request.TranscriptSource is not null || request.TranscriptRead is not null)
+            return Task.FromResult(new ClientIpcResponse(false, "invalid"));
         if (request.Command is not ("hook" or "probe") && (request.Event is not null || request.Hook is not null) ||
             request.Command != "reload" && request.ExpectedRevision is not null ||
             request.Command != "probe" && request.ProbeId is not null)
@@ -292,6 +302,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
                             if (report.Kind is PresenceKind.Started or PresenceKind.Heartbeat)
                             {
                                 _startedAcknowledged = true;
+                                TranscriptStartedAcknowledged();
                                 _effectiveRevision = _revision;
                                 if (_acknowledgedInterval != _configuration.HeartbeatIntervalSeconds)
                                 {
@@ -406,6 +417,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
 
     public async Task<ClientIpcResponse> ReloadAsync(string? expectedRevision, CancellationToken cancellationToken = default)
     {
+        SuspendTranscripts("settings-reloading");
         RemoteConfiguration config;
         string revision;
         try
@@ -420,7 +432,11 @@ public sealed class ClientCoordinator : IAsyncDisposable
             if (_stopping || _reloading || _worker is null) return Response(false);
             if (config.MachineId != _configuration.MachineId)
                 return Response(false, "Machine identity changes require a client restart.");
-            if (revision == _revision && _effectiveRevision == revision) return Response(true);
+            if (revision == _revision && _effectiveRevision == revision)
+            {
+                ConfigureTranscripts(config, revision, _generation, _startedAcknowledged);
+                return Response(true);
+            }
             _reloading = true;
             _interrupt.Cancel();
         }
@@ -462,6 +478,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
                 var retry = revision == _revision ? _pending : null;
                 _configuration = config;
                 _revision = revision;
+                ConfigureTranscripts(config, revision, _generation, _startedAcknowledged);
                 _hooks.Clear();
                 _snapshotPending = retry is not null;
                 _pending = null;
@@ -477,6 +494,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
                 {
                     _pending = null;
                     _startedAcknowledged = true;
+                    TranscriptStartedAcknowledged();
                     _effectiveRevision = revision;
                     _acknowledgedInterval = config.HeartbeatIntervalSeconds;
                     ChangeTimer(_acknowledgedInterval);
@@ -512,6 +530,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
         {
             if (_stop is not null) return _stop;
             _stopping = true;
+            SuspendTranscripts("stopped");
             _timer?.Dispose();
             _lifetime.Cancel();
             _interrupt.Cancel();
@@ -551,6 +570,8 @@ public sealed class ClientCoordinator : IAsyncDisposable
     {
         var delivered = false;
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        var detailsStopped = _transcripts.StopAsync(budget.Token);
+        var readerStopped = _transcriptReader.DisposeAsync().AsTask();
         try
         {
             await _delivery.WaitAsync(budget.Token);
@@ -578,6 +599,11 @@ public sealed class ClientCoordinator : IAsyncDisposable
             }
         }
         if (!delivered) _log.Write("offline-unconfirmed");
+        try { await Task.WhenAll(detailsStopped, readerStopped).WaitAsync(budget.Token); }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested)
+        {
+            _log.Write("transcript-shutdown-timeout");
+        }
         lock (_sync) return Response(true);
     }
 
@@ -586,7 +612,7 @@ public sealed class ClientCoordinator : IAsyncDisposable
         var bytes = AtomicFile.ReadBounded(path, 262144);
         var config = JsonSerializer.Deserialize<RemoteConfiguration>(bytes, Protocol.Json) ?? throw new InvalidDataException();
         config.Validate();
-        if (config.Version is not (3 or 4))
+        if (config.Version is not (3 or 4 or 5))
             throw new InvalidDataException("Apply managed configuration in Configurator before starting Client.");
         return (config, Convert.ToHexString(SHA256.HashData(bytes)));
     }
@@ -597,6 +623,9 @@ public sealed class ClientCoordinator : IAsyncDisposable
         {
             await StopAsync();
             if (_worker is not null) await _worker;
+            if (_transcriptMonitor is not null) await _transcriptMonitor;
+            _transcripts.Invalidated -= TranscriptInvalidated;
+            await _transcripts.DisposeAsync();
         }
         finally
         {

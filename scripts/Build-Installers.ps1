@@ -4,6 +4,7 @@ param(
     [string] $Configuration = 'Release',
     [string] $Version = '1.0.14',
     [switch] $SkipPublish,
+    [switch] $NoRestore,
     [switch] $ApplicationMsisOnly,
     [string] $DestinationPath
 )
@@ -37,8 +38,10 @@ function Invoke-DotNet {
 function Publish-Application {
     param([string] $ProjectName, [string] $Destination)
     $project = Join-Path $root "src\$ProjectName\$ProjectName.csproj"
-    Invoke-DotNet @('restore', $project, '--runtime', 'win-x64',
-        "-p:Configuration=$Configuration", '-p:Platform=x64')
+    if (-not $NoRestore) {
+        Invoke-DotNet @('restore', $project, '--runtime', 'win-x64',
+            "-p:Configuration=$Configuration", '-p:Platform=x64')
+    }
     Invoke-DotNet @('publish', $project, '--no-restore', '--configuration', $Configuration,
         '--runtime', 'win-x64', '--self-contained', 'true', '--output', $Destination,
         '-p:Platform=x64', "-p:Version=$Version", '-p:PublishTrimmed=false')
@@ -86,7 +89,7 @@ if (-not $SkipPublish) {
 New-Item -ItemType Directory -Path $msiOutput -Force | Out-Null
 foreach ($name in @('Dashboard', 'Remote')) {
     $project = Join-Path $root "installers\AgentSignaler.$name\AgentSignaler.$name.wixproj"
-    Invoke-DotNet @('restore', $project, '-p:Platform=x64')
+    if (-not $NoRestore) { Invoke-DotNet @('restore', $project, '-p:Platform=x64') }
     Invoke-DotNet @('build', $project, '--no-restore', '-t:Rebuild', '--configuration', $Configuration,
         '-p:Platform=x64', "-p:ProductVersion=$Version", "-p:OutputPath=$msiOutput")
 }
@@ -107,7 +110,7 @@ New-Item -ItemType Directory -Path $bundleOutput -Force | Out-Null
 foreach ($name in @('DevTunnelsPrerequisite', 'Dashboard.Bundle')) {
     $project = Join-Path $root "installers\AgentSignaler.$name\AgentSignaler.$name.wixproj"
     $output = if ($name -eq 'Dashboard.Bundle') { $bundleOutput } else { $msiOutput }
-    Invoke-DotNet @('restore', $project, '-p:Platform=x64')
+    if (-not $NoRestore) { Invoke-DotNet @('restore', $project, '-p:Platform=x64') }
     Invoke-DotNet @('build', $project, '--no-restore', '-t:Rebuild', '--configuration', $Configuration,
         '-p:Platform=x64', "-p:ProductVersion=$Version", "-p:OutputPath=$output")
 }

@@ -85,6 +85,16 @@ public sealed partial class MultiTargetIntegrationManager
                 if (Equal(current, change.Before)) continue;
                 if (!Equal(current, change.After))
                     throw new InvalidDataException($"Recovery will not overwrite concurrent edits: {change.Path}");
+                if (Same(change.Path, journal.ConfigPath) && current is not null)
+                {
+                    var saved = JsonSerializer.Deserialize<RemoteConfiguration>(current, Protocol.Json)!;
+                    var previous = change.Before is null ? null :
+                        JsonSerializer.Deserialize<RemoteConfiguration>(change.Before, Protocol.Json);
+                    if (saved.Version >= 5 && !saved.DetailedReportingEnabled &&
+                        (previous is null || previous.Version < 5 || previous.DetailedReportingEnabled))
+                        throw new InvalidDataException("Recovery conflict: the saved detailed conversation opt-out was preserved. " +
+                            "Resolve the retained transaction without replacing the explicit false preference.");
+                }
                 if (change.Before is null) File.Delete(change.Path);
                 else AtomicFile.Write(change.Path, change.Before);
             }
@@ -123,7 +133,13 @@ public sealed partial class MultiTargetIntegrationManager
         using var held = AtomicFile.Acquire(configPath + ".integration.lock", TimeSpan.FromSeconds(1));
         var path = RecoveryPath(configPath);
         if (!File.Exists(path)) return;
-        Restore(ReadJournal(path, configPath));
+        var journal = ReadJournal(path, configPath);
+        if (runtime is not null && journal.Changes.Where(c => Same(c.Path, configPath))
+            .SelectMany(c => new[] { c.Before, c.After }).Where(b => b is not null)
+            .Any(b => JsonSerializer.Deserialize<RemoteConfiguration>(b!, Protocol.Json)!.Version >= 5))
+            Bounded(async t => { await runtime.SuspendTranscriptAsync(configPath, t); return true; },
+                CancellationToken.None).GetAwaiter().GetResult();
+        Restore(journal);
         File.Delete(path);
     }
 

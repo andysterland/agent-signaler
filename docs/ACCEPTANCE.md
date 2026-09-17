@@ -10,7 +10,100 @@ For local testing without a second computer, follow
 [the single-machine manual test plan](MANUAL-TEST-PLAN.md). Record its results
 separately; loopback tests do not establish LAN/VPN or remote firewall behavior.
 
-## Automated implementation validation (September 15, 2026)
+## Detailed-conversation prototype release gates — pending
+
+This is the resolved externally consented prototype policy, **not a release
+validation result**. Historical automated/live evidence below predates this work
+and does not validate the transcript stream, file reader, viewer, or v5 servicing.
+Record fresh Release/x64 build, targeted/full affected synthetic test results,
+resource measurements and packaging inspection separately after integration.
+No new manual UI, actual-host, live tunnel, certificate/trust, or installer
+execution acceptance is claimed here; all remain **Not run** for this feature.
+
+- External informed permission for content, destination, and retention must be
+  obtained before distribution/use. The app does not collect/verify it;
+  installation and notices do not establish consent. No pairing, enrollment,
+  bearer-token or certificate-provisioning gate is added.
+- New v5 and explicit v5 migrations default detail on; explicit false survives
+  repair/recovery. Legacy v1–v4/HTTP/LAN stay status-only without silent rewrites.
+  Upgrade Dashboard first, matching Relay/Client/Configurator together. Verify
+  old/new IPC compatibility with readable configurations and visible v5 rejection
+  by old Clients. Downgrade is an explicit stop/purge/validated-v4 transaction with
+  compatible servicing; v4 cannot retain a v5 flag and later v5 migration previews
+  default-on again. Failed opt-out save suspends this run; rollback must not
+  replace a saved false with older true or start a previously stopped reporter.
+- Exercise actual Relay/current-user IPC/Client/isolated HTTPS test
+  transport/volatile store/in-process reader/view model with synthetic user text,
+  fictional PII, tool names and ordering. For assistant-file coverage use only
+  independently evidenced profiles, or an explicitly test-only adapter.
+  **No production Copilot CLI, VS Code, or Visual Studio file profile is currently
+  verified.** The [P0 evidence record](transcript-capability-evidence.md) records
+  the reviewed sources and deliberately empty production registry.
+  Hook fields/stop paths, bundled CLI and invented fixtures are not
+  format/path/session/completion evidence. Partial capture must remain explicit.
+- Verify hook-only user/tool provenance and completed user-facing assistant-only
+  file extraction. Exclude tools bodies/results, errors, reasoning, attachments,
+  subagents and arbitrary payloads. Local stop references never reach HTTP,
+  persistent state, diagnostics, or UI. No watcher/scanner, path guessing,
+  whole-history replay, viewer/network-triggered read, or host-file mutation.
+- Details require canonical configured HTTPS, ordinary TLS validation, compatible
+  receiver and its owned running tunnel on loopback Internet mode. Anonymous
+  callers can spoof IDs, inject/purge data and exhaust bounded capacity; loopback
+  does not authenticate tunnel provenance. Disable/incompatibility/TLS/redirect/
+  endpoint changes stop detail without suppressing status or rerouting text.
+- Measure 32 KiB events, Client 4 MiB and receiver 64 MiB total feature budgets
+  including scratch/index/reader/UI copies, fixed quotas and retry limits.
+  Exercise bounded stop reads (750 ms/2 MiB/128 records/16 replies), admission,
+  baseline/reset/no-backfill, coalescing and cancellation. Verify gaps, duplicate
+  ordering, restart epochs and 30-minute receipt-based TTL with no read extension.
+- Agent Signaler persistent config/state/SQLite/WAL/log/recovery artifacts must
+  contain no conversation output or local read references/cursors. Test-owned
+  host input files are distinguished from output and unchanged by every lifecycle
+  operation. Memory-only does not promise absence from host history, OS
+  paging/hibernation, or external crash capture.
+- Settings opens first and retains all editing/Dev Box actions/drafts. Transcript
+  uses bounded selection/paging/visible text and only in-process reads. Verify
+  partial/empty/loading/error/expiry/reset states, inert rendering, no
+  copy/export/actions, correct scroll intent and accessibility. Clear, disable,
+  expiry, eviction, removal, restart, close and Exit invalidate visible/cached
+  content and reject stale completions; tab switches never start reporting.
+- Verify opt-out/Exit immediately stop admission, cancel reads/sends, drop queues
+  and references within the existing shutdown budget, and do not restart Client
+  from hooks. Unreachable remote purge is best-effort; TTL/local clear/disable
+  bounds earlier retention. The single close/purge identifies one stream, so
+  other sources' retained text may remain even when reachable; test and disclose
+  this rather than claiming machine-wide remote deletion. Re-enable starts fresh,
+  not from host history.
+- Inspect fresh managed payloads, matching remote binary versions and WinUI
+  XBF/PRI packaging without executing packages. Ship no transcript database,
+  host transcript inputs, credentials/pairing or certificates. Preserve exact
+  app ownership and explicit opt-out during servicing. Source inspection is not
+  installed rollback/upgrade/uninstall evidence.
+
+Use T01–T18 in `MANUAL-TEST-PLAN.md` for separately authorized acceptance. Missing
+production profile evidence does not block the reader framework/partial viewer,
+but must never be reported as complete production assistant capture.
+
+### Synthetic implementation verification
+
+The transcript-only staged tree was validated separately from pre-existing local
+edits:
+
+- Release/x64 solution build passed; the existing `PrerequisiteSettingsTests`
+  collection-count analyzer warning remains.
+- Remote: 526 passed; Service: 441 passed; Integration: 1,294 passed and the
+  opt-in live-tunnel test skipped; Tunneling: 192 passed.
+- Coverage includes actual Relay/local IPC/isolated TLS/store/viewer-controller
+  integration, test-only file adapters, managed allocation bounds, and retry,
+  cancellation, configuration and invalidation regressions.
+- Fresh self-contained Dashboard and Remote MSI builds and read-only inspection
+  passed (672 and 532 payload files). WiX ICE validation remained blocked by
+  system policy (`WIX1105`); no elevation or suppression was attempted.
+- Production host formats, native WinUI allocation/DPI/accessibility behavior,
+  live networks and installed servicing remain unverified. No real hooks,
+  conversations, tunnels, trust changes or installer executions were used.
+
+## Historical automated implementation validation (September 15, 2026)
 
 - On-disk solution Debug/x64 build and Visual Studio build succeeded with no compiler warnings or errors.
 - Service: 398 tests passed. Remote: 330 tests passed, excluding the two tests that call the real Windows Task Scheduler.
@@ -25,7 +118,7 @@ authorized disposable machine before release.
 
 ## Multi-target IDE release gate — not verified by implementation
 
-New Configurator previews write configuration v4 and require source-aware Dashboard
+New Configurator previews write configuration v5 and require source-aware Dashboard
 `GET /api/v3/health` returning exactly `{"protocolVersion":3,"status":"ok"}` and
 `POST /api/v3/reports`. Retain the v1/v3 configuration tests below as compatibility checks; they do not certify
 native Visual Studio or VS Code hooks. Upgrade Dashboard first and deploy matching
@@ -118,8 +211,11 @@ is recorded; builds and fixture tests alone cannot close these gates.
   that the actual IDE uses this execution contract.
 - Verify the unrelated hook fixture has unchanged contents after install, repair,
   endpoint update and uninstall; verify timestamped backups exist.
-- Inspect network requests and local files using synthetic prompts only. Confirm
-  they contain no prompt, source, tool arguments/output, transcript path or error text.
+- Inspect status network requests and application-created local files using
+  synthetic prompts only: no message text, tool arguments/output, local transcript
+  reference or error text. Separately test v5 detail requests against the allowlist
+  above; permitted message text/fictional PII is expected there, not in status or
+  persistent storage. Do not confuse test-owned transcript inputs with app output.
 - Verify the endpoint rejects malformed bodies, unknown properties and oversized
   fixed-length and chunked bodies.
 

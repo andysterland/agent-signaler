@@ -90,6 +90,8 @@ internal sealed partial class MainWindow : Window
     private string? _effectiveAzureCliPath;
     private Guid? _detailsId;
     private Action<MachineView?>? _updateDetails;
+    private TranscriptDetailsView? _transcriptView;
+    private bool _transcriptConnectionChanged;
     private static string AppVersion =>
         typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
@@ -352,7 +354,8 @@ internal sealed partial class MainWindow : Window
             }, new DashboardServerOptions
             {
                 ListenerMode = _runningMode == DashboardConnectionMode.DevTunnel
-                    ? DashboardListenerMode.Internet : DashboardListenerMode.Lan
+                    ? DashboardListenerMode.Internet : DashboardListenerMode.Lan,
+                ReceiveDetailedConversations = _settings.ReceiveDetailedConversations
             });
             ReportStartupProgress("Starting the local receiver...");
             await _server.StartAsync(cancellationToken);
@@ -658,7 +661,6 @@ internal sealed partial class MainWindow : Window
         content.Children.Add(picker);
         content.Children.Add(mappingSummary);
         content.Children.Add(refreshCatalog);
-        content.Children.Add(cancelCatalog);
         content.Children.Add(catalogStatus);
         content.Children.Add(connectionStatus);
         content.Children.Add(refreshed);
@@ -672,19 +674,57 @@ internal sealed partial class MainWindow : Window
             content.Children.Add(action);
             if (action == cached) content.Children.Add(cachedTime);
         }
-        content.Children.Add(progress);
-        content.Children.Add(cancel);
-        content.Children.Add(Text("Closing the sign-in browser does not cancel sign-in. Use Cancel, close this dialog, or Exit Dashboard."));
+        var transcriptSettings = Text(TranscriptReceiverDescription());
+        content.Children.Add(Text("Detailed conversations", 18));
+        content.Children.Add(transcriptSettings);
+        content.Children.Add(Text("This anonymous prototype does not authenticate reporting identities. Permission is obtained outside the app. " +
+            "Text can contain personal information. Retention is memory-only for at most 30 minutes, not an archive or a guarantee against OS paging or host history."));
+        var clearTranscript = new Button { Content = "Clear transcript" };
+        content.Children.Add(clearTranscript);
+        var tabs = new TabView
+        {
+            IsAddTabButtonVisible = false, CanDragTabs = false, CanReorderTabs = false,
+            TabWidthMode = TabViewWidthMode.SizeToContent
+        };
+        var settingsTab = new TabViewItem
+        {
+            Header = "Settings", IsClosable = false,
+            Content = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }
+        };
+        var transcriptView = _server is null ? null : new TranscriptDetailsView(_server.Transcripts, DispatcherQueue, id,
+            card.Machine.State == AgentState.Offline);
+        _transcriptView = transcriptView;
+        var transcriptTab = new TabViewItem
+        {
+            Header = "Transcript", IsClosable = false,
+            Content = (object?)transcriptView?.Root ?? Text("The compatible receiver is unavailable. Restart Dashboard to retry.")
+        };
+        tabs.TabItems.Add(settingsTab);
+        tabs.TabItems.Add(transcriptTab);
+        tabs.SelectedItem = settingsTab;
+        var detailsLayout = new Grid { Height = Math.Clamp(_root.ActualHeight - 190, 320, 520), MinWidth = 280, RowSpacing = 8 };
+        detailsLayout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        detailsLayout.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        detailsLayout.Children.Add(tabs);
+        var sharedProgress = new StackPanel { Spacing = 6 };
+        sharedProgress.Children.Add(progress);
+        sharedProgress.Children.Add(cancel);
+        sharedProgress.Children.Add(cancelCatalog);
+        sharedProgress.Children.Add(Text("Closing the sign-in browser does not cancel sign-in. Use Cancel, close this dialog, or Exit Dashboard."));
+        var footer = new ScrollViewer { Content = sharedProgress, MaxHeight = 120 };
+        Grid.SetRow(footer, 1);
+        detailsLayout.Children.Add(footer);
         var dialog = new ContentDialog
         {
             XamlRoot = _root.XamlRoot, Title = "Machine details",
-            Content = new ScrollViewer { Content = content, MaxHeight = 470 },
+            Content = detailsLayout,
             PrimaryButtonText = "Save details", SecondaryButtonText = "Remove", CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Close
         };
         _activeDialog = dialog;
         _machineDetailsDialog = dialog;
         var machineExists = true;
+        bool SettingsSelected() => ReferenceEquals(tabs.SelectedItem, settingsTab);
         var catalogRefreshOwned = false;
         var updatingControls = false;
         ContentDialog? clearConfirmation = null;
@@ -728,11 +768,28 @@ internal sealed partial class MainWindow : Window
                 progress.Text = connectionMessage ?? state.Message;
                 cancel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
                 cancel.IsEnabled = busy;
-                name.IsEnabled = note.IsEnabled = dialog.IsPrimaryButtonEnabled = dialog.IsSecondaryButtonEnabled = machineExists && !busy;
+                name.IsEnabled = note.IsEnabled = machineExists && !busy;
+                dialog.IsPrimaryButtonEnabled = dialog.IsSecondaryButtonEnabled = SettingsSelected() && machineExists && !busy;
+                clearTranscript.IsEnabled = SettingsSelected() && machineExists && !busy;
+                transcriptSettings.Text = TranscriptReceiverDescription();
                 if (clearConfirmation is not null) clearConfirmation.IsSecondaryButtonEnabled = machineExists && !busy;
                 _compactWindow?.UpdateConnectionAvailability();
             }
             finally { updatingControls = false; }
+        };
+        tabs.SelectionChanged += async (_, _) =>
+        {
+            var settingsSelected = SettingsSelected();
+            dialog.PrimaryButtonText = settingsSelected ? "Save details" : "";
+            dialog.SecondaryButtonText = settingsSelected ? "Remove" : "";
+            _updateConnectionControls?.Invoke();
+            if (transcriptView is not null) await transcriptView.SetVisibleAsync(!settingsSelected && machineExists);
+        };
+        clearTranscript.Click += (_, _) =>
+        {
+            if (!SettingsSelected() || !machineExists || connections.IsBusy(id)) return;
+            _server?.Transcripts.ClearMachine(id);
+            validation.Text = "Transcript cleared locally. Future reception is unchanged; old queued content is not replayed.";
         };
         async Task RunConnectionAsync(WindowsAppOperation operation)
         {
@@ -794,10 +851,16 @@ internal sealed partial class MainWindow : Window
         cached.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.OpenLastKnown);
         cancel.Click += (_, _) => connections.Cancel(id);
         var clearRequested = false;
-        clear.Click += (_, _) => { clearRequested = true; dialog.Hide(); };
+        clear.Click += (_, _) =>
+        {
+            if (!SettingsSelected() || !machineExists || connections.IsBusy(id)) return;
+            clearRequested = true;
+            dialog.Hide();
+        };
         dialog.Closing += (_, _) =>
         {
             connections.Cancel(id);
+            if (transcriptView is not null) _ = transcriptView.SetVisibleAsync(false);
             if (catalogRefreshOwned) _catalog?.Cancel();
         };
         dialog.Opened += (_, _) =>
@@ -811,7 +874,9 @@ internal sealed partial class MainWindow : Window
         _detailsId = id;
         _updateDetails = machine =>
         {
+            if (machine is null && machineExists) _server?.Transcripts.ClearMachine(id, removed: true);
             machineExists = machine is not null;
+            transcriptView?.SetMachine(machine);
             _updateConnectionControls?.Invoke();
             if (machine is null)
             {
@@ -835,6 +900,11 @@ internal sealed partial class MainWindow : Window
         _updateDetails(card.Machine);
         dialog.PrimaryButtonClick += async (_, args) =>
         {
+            if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || _exiting)
+            {
+                args.Cancel = true;
+                return;
+            }
             var deferral = args.GetDeferral();
             try
             {
@@ -855,6 +925,10 @@ internal sealed partial class MainWindow : Window
                 args.Cancel = true;
             }
             finally { deferral.Complete(); }
+        };
+        dialog.SecondaryButtonClick += (_, args) =>
+        {
+            if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || _exiting) args.Cancel = true;
         };
         try
         {
@@ -888,7 +962,7 @@ internal sealed partial class MainWindow : Window
                 clearConfirmation = null;
                 if (_exiting || _closeDialogForNavigation) break;
             }
-            if (result == ContentDialogResult.Secondary && !_exiting && !_closeDialogForNavigation)
+            if (result == ContentDialogResult.Secondary && SettingsSelected() && !_exiting && !_closeDialogForNavigation)
             {
                 var confirm = new ContentDialog
                 {
@@ -900,6 +974,8 @@ internal sealed partial class MainWindow : Window
                 _activeDialog = confirm;
                 if (await confirm.ShowAsync() == ContentDialogResult.Primary && !_exiting && !_closeDialogForNavigation)
                 {
+                    _server?.Transcripts.ClearMachine(id, removed: true);
+                    transcriptView?.Dispose();
                     _mutationTask = _store.RemoveAsync(id);
                     await _mutationTask;
                     await RefreshAsync();
@@ -912,6 +988,8 @@ internal sealed partial class MainWindow : Window
         }
         finally
         {
+            transcriptView?.Dispose();
+            _transcriptView = null;
             await connections.CancelAndWaitAsync(id);
             if (catalogRefreshOwned && _catalog is not null) await _catalog.CancelAndWaitAsync();
             _detailsId = null;
@@ -1007,6 +1085,7 @@ internal sealed partial class MainWindow : Window
             general.Children.Add(minimizedCompact);
             general.Children.Add(startup);
             generalHelp.Children.Add(Text("When enabled, minimizing shows an always-on-top vertical list of 64 x 64 computer tiles. " +
+                "Hover over a tile to see its full machine card and note. " +
                 "Select a tile to open its configured Dev Box in Windows App. Use the notification-area icon to restore the dashboard. Closing hides it in the notification area. " +
                 "The receiver stays running. Use Exit to stop it."));
             var generalTab = AddSection("General", general, generalHelp);
@@ -1044,6 +1123,45 @@ internal sealed partial class MainWindow : Window
             var sharing = new StackPanel { Spacing = 14 };
             var sharingHelp = new StackPanel { Spacing = 10 };
             BuildTunnelSettings(sharing, sharingHelp);
+            var receive = new ToggleSwitch
+            {
+                Header = "Receive detailed conversations", IsOn = _settings.ReceiveDetailedConversations
+            };
+            var receiveOutcome = Text("Applies immediately, independently of Save/Cancel. Turning off purges retained text without stopping status.");
+            var updatingReceive = false;
+            receive.Toggled += (_, _) =>
+            {
+                if (updatingReceive) return;
+                var enabled = receive.IsOn;
+                var next = _settings with { ReceiveDetailedConversations = enabled };
+                if (!enabled)
+                {
+                    _settings = next;
+                    _server?.Transcripts.SetEnabled(false);
+                }
+                try
+                {
+                    next.Save();
+                    _settings = next;
+                    _server?.Transcripts.SetEnabled(enabled);
+                    receiveOutcome.Text = TranscriptReceiverDescription();
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException)
+                {
+                    receiveOutcome.Text = "The receiver preference could not be saved. Reception remains disabled for this run; restore settings write access and retry.";
+                    _settings = _settings with { ReceiveDetailedConversations = false };
+                    _server?.Transcripts.SetEnabled(false);
+                    updatingReceive = true;
+                    receive.IsOn = false;
+                    updatingReceive = false;
+                }
+            };
+            sharing.Children.Add(receive);
+            sharing.Children.Add(receiveOutcome);
+            sharingHelp.Children.Add(Text("Message text may contain personal information. Consent is obtained outside the app. " +
+                "Anonymous senders are not authenticated. Details require the running owned HTTPS Dev Tunnel; LAN is status-only. " +
+                "Allowed fields are user/available assistant messages, tool names and observed lifecycle, never tool bodies or reasoning. " +
+                "Assistant extraction depends on independently verified host formats; receiver support does not establish host coverage."));
             AddSection("Internet sharing", sharing, sharingHelp);
             var azure = new StackPanel { Spacing = 14 };
             var azureHelp = new StackPanel { Spacing = 10 };
@@ -1145,6 +1263,12 @@ internal sealed partial class MainWindow : Window
                     }
                     next.Save();
                     _settings = next;
+                    if (_settings.Port != _runningPort || _settings.ConnectionMode != _runningMode ||
+                        _settings.DevTunnelCliPath != _runningCliPath)
+                    {
+                        _transcriptConnectionChanged = true;
+                        _server?.SetTranscriptReadiness(false);
+                    }
                     ApplyAppearance();
                     if (_running && (_settings.Port != _runningPort || _settings.ConnectionMode != _runningMode ||
                         _settings.DevTunnelCliPath != _runningCliPath || _settings.AzureCliPath != _runningAzureCliPath))
@@ -1188,6 +1312,8 @@ internal sealed partial class MainWindow : Window
     private async Task ShutdownAsync()
     {
         _exiting = true;
+        _server?.SetTranscriptReadiness(false);
+        _transcriptView?.Dispose();
         var connectionShutdown = _connections?.StopAsync() ?? Task.CompletedTask;
         var catalogShutdown = _catalog?.StopAsync() ?? Task.CompletedTask;
         var prerequisiteShutdown = CancelPrerequisiteChecksAsync();

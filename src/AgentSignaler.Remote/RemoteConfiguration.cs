@@ -18,6 +18,10 @@ public sealed record RemoteConfiguration
     public string? RelayPath { get; init; }
     public int HeartbeatIntervalSeconds { get; init; } = PresenceProtocol.DefaultHeartbeatIntervalSeconds;
     public IReadOnlyList<IntegrationTarget> Integrations { get; init; } = [];
+    public bool DetailedReportingEnabled { get; init; } = true;
+
+    [JsonIgnore]
+    public bool IsDetailedReportingEnabled => Version >= 5 && DetailedReportingEnabled;
 
     [JsonIgnore]
     public Uri BaseUri
@@ -51,8 +55,9 @@ public sealed record RemoteConfiguration
     }
 
     public RemoteConfiguration ToVersion2() => WithDashboardUrl(BaseUri.AbsoluteUri);
-    public RemoteConfiguration ToVersion3() => WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = 3 };
-    public RemoteConfiguration ToVersion4() => WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = 4 };
+    public RemoteConfiguration ToVersion3() => WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = Math.Max(Version, 3) };
+    public RemoteConfiguration ToVersion4() => WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = Math.Max(Version, 4) };
+    public RemoteConfiguration ToVersion5() => WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = 5 };
 
     private static Uri ParseDashboardUrl(string url)
     {
@@ -72,7 +77,7 @@ public sealed record RemoteConfiguration
 
     public void Validate()
     {
-        if (Version is not (1 or 2 or 3 or 4) || MachineId == Guid.Empty)
+        if (Version is not (1 or 2 or 3 or 4 or 5) || MachineId == Guid.Empty)
             throw new InvalidDataException("Invalid configuration version or identity.");
         if (Version == 1 && (DashboardBaseUrl is not null || Port is < 1024 or > 65535 ||
             string.IsNullOrWhiteSpace(Host) || Host != Host.Trim() ||
@@ -83,7 +88,7 @@ public sealed record RemoteConfiguration
         if (Version >= 2)
         {
             if (Host != "" || Port != Protocol.DefaultPort || DashboardBaseUrl is null)
-                throw new InvalidDataException("Version 2/3/4 requires DashboardBaseUrl without legacy Host or Port fields.");
+                throw new InvalidDataException("Version 2/3/4/5 requires DashboardBaseUrl without legacy Host or Port fields.");
             if (ParseDashboardUrl(DashboardBaseUrl).AbsoluteUri != DashboardBaseUrl)
                 throw new InvalidDataException("DashboardBaseUrl must be a canonical absolute base URL.");
         }
@@ -134,18 +139,23 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
         foreach (var field in document.RootElement.EnumerateObject())
         {
             if (field.Name.ToLowerInvariant() is not ("version" or "host" or "port" or "dashboardbaseurl" or
-                "machineid" or "machinename" or "clientversion" or "relaypath" or "heartbeatintervalseconds" or "integrations"))
+                "machineid" or "machinename" or "clientversion" or "relaypath" or "heartbeatintervalseconds" or "integrations" or
+                "detailedreportingenabled"))
                 throw new InvalidDataException("Unknown configuration field.");
             if (!fields.TryAdd(field.Name, field.Value))
                 throw new InvalidDataException("Duplicate configuration fields are not allowed.");
         }
         var version = fields.TryGetValue("version", out var v) ? v.GetInt32() : 1;
-        if (version is not (1 or 2 or 3 or 4) ||
+        if (version is not (1 or 2 or 3 or 4 or 5) ||
             (version == 1 && fields.ContainsKey("dashboardBaseUrl")) ||
             (version >= 2 && (fields.ContainsKey("host") || fields.ContainsKey("port"))) ||
             (version < 3 && fields.ContainsKey("heartbeatIntervalSeconds")) ||
-            (version < 4 && fields.ContainsKey("integrations")))
+            (version < 4 && fields.ContainsKey("integrations")) ||
+            (version < 5 && fields.ContainsKey("detailedReportingEnabled")))
             throw new InvalidDataException("Unsupported or mixed configuration schema.");
+        if (fields.TryGetValue("detailedReportingEnabled", out var preference) &&
+            preference.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new InvalidDataException("DetailedReportingEnabled must be a boolean.");
         var config = new RemoteConfiguration
         {
             Version = version,
@@ -157,6 +167,7 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
             ClientVersion = fields.TryGetValue("clientVersion", out var client) ? client.GetString()! : "unknown",
             RelayPath = fields.TryGetValue("relayPath", out var relay) ? relay.GetString() : null,
             HeartbeatIntervalSeconds = fields.TryGetValue("heartbeatIntervalSeconds", out var interval) ? interval.GetInt32() : 300,
+            DetailedReportingEnabled = !fields.TryGetValue("detailedReportingEnabled", out var details) || details.GetBoolean(),
             Integrations = fields.TryGetValue("integrations", out var integrations)
                 ? integrations.Deserialize<IntegrationTarget[]>(options) ?? throw new InvalidDataException("Missing integrations.") : []
         };
@@ -185,6 +196,7 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
             writer.WritePropertyName("integrations");
             JsonSerializer.Serialize(writer, value.Integrations, options);
         }
+        if (value.Version >= 5) writer.WriteBoolean("detailedReportingEnabled", value.DetailedReportingEnabled);
         writer.WriteEndObject();
     }
 }

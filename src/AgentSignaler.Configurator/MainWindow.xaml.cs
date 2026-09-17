@@ -17,6 +17,8 @@ public sealed partial class MainWindow : Window
     private Guid machineId;
     private bool busy;
     private bool closed;
+    private bool detailsSuspended;
+    private readonly CancellationTokenSource windowLifetime = new();
     private CancellationTokenSource? connectionTest;
     private CancellationTokenSource? discoveryCancellation;
     private readonly IntegrationManager integration;
@@ -43,6 +45,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            windowLifetime.Cancel();
             connectionTest?.Cancel();
             discoveryCancellation?.Cancel();
         };
@@ -61,6 +64,7 @@ public sealed partial class MainWindow : Window
                 if (config.MachineId != machineId) throw new InvalidDataException("Configuration and persistent identity disagree.");
                 UrlBox.Text = config.Endpoint.GetLeftPart(UriPartial.Authority);
                 HeartbeatBox.Value = config.HeartbeatIntervalSeconds / 60;
+                ShareDetailsSwitch.IsOn = config.DetailedReportingEnabled;
                 RelayPathBox.Text = config.RelayPath ?? Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Relay.exe");
             }
             try
@@ -98,6 +102,7 @@ public sealed partial class MainWindow : Window
             UpdateActionStates();
         }
         var config = File.Exists(ConfigPath) ? RemoteConfiguration.Load(ConfigPath) : null;
+        if (!preserveSelection) ShareDetailsSwitch.IsOn = config?.DetailedReportingEnabled ?? true;
         var savedRelayPath = config?.RelayPath ?? Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Relay.exe");
         RelayPathText.Text = $"Relay: {savedRelayPath}";
         if (!preserveSelection) RelayPathBox.Text = savedRelayPath;
@@ -199,11 +204,18 @@ public sealed partial class MainWindow : Window
         if (!File.Exists(ConfigPath))
         {
             RuntimeText.Text = "No saved settings. Client is not configured.";
+            DetailedReportingText.Text = "Not configured. The v5 save preview defaults to sharing details.";
             return;
         }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         var state = await runtime.QueryAsync(ConfigPath, timeout.Token);
         var saved = RemoteConfiguration.Load(ConfigPath);
+        DetailedReportingText.Text = detailsSuspended ? "Detailed reporting suspended locally; apply successfully to reconcile the saved preference." :
+            saved.Version < 5 ? "Saved legacy configuration: status only. Apply settings explicitly to migrate to v5." :
+            !saved.DetailedReportingEnabled ? "Sharing disabled. Status reporting is unchanged; remote purge acknowledgement is not guaranteed." :
+            saved.BaseUri.Scheme != Uri.UriSchemeHttps ? "HTTPS required for details. Status reporting remains available." :
+            !state.Running ? "Sharing enabled in settings; Client is stopped. No details are being captured." :
+            "Sharing enabled in settings; capture requires a compatible receiver and verified host capability. Remote state has not been confirmed.";
         var revision = ClientConfigurationRevision.Read(ConfigPath);
         RuntimeText.Text = $"Saved heartbeat: {saved.HeartbeatIntervalSeconds / 60} minutes. " +
             (state.Running ? $"Client running; effective heartbeat: {(state.HeartbeatIntervalSeconds is { } seconds ? $"{seconds / 60} minutes" : "unknown")}; " +
@@ -266,11 +278,20 @@ public sealed partial class MainWindow : Window
         SetBusy(true);
         try
         {
+            if (!ShareDetailsSwitch.IsOn)
+            {
+                await runtime.SuspendTranscriptAsync(ConfigPath, windowLifetime.Token);
+                detailsSuspended = true;
+                DetailedReportingText.Text = "Detailed reporting suspended locally. The preference is not saved until Apply completes.";
+                ShowStatus("Detailed reporting is suspended for this Client run while applying. Cancelling or a failed save does not automatically resume sharing.",
+                    InfoBarSeverity.Warning, "Preference not yet saved");
+            }
             var approved = CreatePlan();
             ShowPreview(approved.Preview);
             if (!await ConfirmAsync("Apply settings and selected hook integrations?", approved.Preview, "Apply settings")) return;
-            var result = await multiIntegration.ApplyAsync(approved, CancellationToken.None);
+            var result = await multiIntegration.ApplyAsync(approved, windowLifetime.Token);
             settingsCommitted = result.SettingsCommitted;
+            if (result.RuntimeApplied) detailsSuspended = false;
             InvalidatePreview();
             if (RememberSuccessfulUrl(approved.Config, result.RuntimeApplied ? "Installation/update" : "Saving integration settings"))
                 ShowStatus(result.Message, result.RuntimeApplied ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
@@ -281,6 +302,11 @@ public sealed partial class MainWindow : Window
             InvalidatePreview();
             ShowError(ex, settingsCommitted ? "Settings saved; status refresh failed" : "Apply settings failed",
                 ReviewTab, PreviewButton);
+            if (detailsSuspended && !settingsCommitted)
+                ShowStatus(ex is AggregateException
+                    ? "Apply failed with a recovery conflict. Detailed reporting remains suspended; any saved opt-out is preserved. Resolve the retained journal without re-enabling sharing."
+                    : "The preference was not saved. Detailed reporting remains suspended for this Client run; it will not resume automatically. Resolve the error and apply again.",
+                    InfoBarSeverity.Error, "Detailed reporting suspended");
         }
         finally { SetBusy(false); }
     }
@@ -425,13 +451,15 @@ public sealed partial class MainWindow : Window
         if (config.MachineId != machineId)
             throw new InvalidDataException("Configuration and persistent identity disagree.");
         var relayPath = ValidateInput(() => ConfiguratorSettings.RelayLocation(RelayPathBox.Text), HooksTab, RelayPathBox);
-        config = ValidateInput(() => config.WithDashboardUrl(url).ToVersion4(), ConnectionTab, UrlBox);
+        config = ValidateInput(() => config.WithDashboardUrl(url).ToVersion5(), ConnectionTab, UrlBox);
         var heartbeatSeconds = ValidateInput(() => ConfiguratorSettings.HeartbeatSeconds(HeartbeatBox.Value), ConnectionTab, HeartbeatBox);
-        return config with { RelayPath = relayPath, HeartbeatIntervalSeconds = heartbeatSeconds };
+        return config with { RelayPath = relayPath, HeartbeatIntervalSeconds = heartbeatSeconds,
+            DetailedReportingEnabled = ShareDetailsSwitch.IsOn };
     }
 
     private void HeartbeatChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => InvalidatePreview();
     private void SettingsChanged(object sender, TextChangedEventArgs e) => InvalidatePreview();
+    private void ShareDetailsChanged(object sender, RoutedEventArgs e) => InvalidatePreview();
     private void InvalidatePreview()
     {
         if (PreviewBox is not null) PreviewBox.Text = "";
@@ -448,7 +476,8 @@ public sealed partial class MainWindow : Window
     {
         if (closed) return;
         var state = new ConfiguratorActionState(busy, discoveryCancellation is not null, connectionTest is not null);
-        UrlBox.IsEnabled = HeartbeatBox.IsEnabled = TestButton.IsEnabled = StartClientButton.IsEnabled = state.CanUseConnection;
+        UrlBox.IsEnabled = HeartbeatBox.IsEnabled = ShareDetailsSwitch.IsEnabled =
+            TestButton.IsEnabled = StartClientButton.IsEnabled = state.CanUseConnection;
         RelayPathBox.IsEnabled = RefreshButton.IsEnabled = AddLocationButton.IsEnabled = HooksGrid.IsEnabled = PreviewButton.IsEnabled =
             RecoverVerificationButton.IsEnabled = RecoverIntegrationButton.IsEnabled = UninstallButton.IsEnabled = state.CanChangeIntegration;
         ApplyButton.IsEnabled = state.CanApply;
@@ -472,7 +501,7 @@ public sealed partial class MainWindow : Window
             if (closed || navigationTarget != target || !ReferenceEquals(TaskTabs.SelectedItem, target.Tab)) return;
             RootPanel.UpdateLayout();
             target.Element.StartBringIntoView();
-            // Consent dialogs can temporarily disable the control awaiting focus.
+            // Confirmation dialogs can temporarily disable the control awaiting focus.
             if (busy) return;
             if (target.Element is Control control) control.Focus(FocusState.Programmatic);
             navigationTarget = null;

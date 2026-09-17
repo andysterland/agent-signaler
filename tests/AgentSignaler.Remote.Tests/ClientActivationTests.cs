@@ -51,6 +51,66 @@ public sealed class ClientActivationTests : IDisposable
     }
 
     [Fact]
+    public async Task TranscriptSuspendDoesNotReadConfigOrAwaitStatusAndUsesV3()
+    {
+        var platform = new FakePlatform { Owned = true, Response = new(true, "suspended") { Version = 3 } };
+        await new ClientIntegrationRuntime(platform).SuspendTranscriptAsync(ConfigPath, default);
+        var request = Assert.Single(platform.Commands);
+        Assert.Equal(3, request.Version);
+        Assert.Equal("transcript-reload", request.Command);
+        Assert.Equal("suspend", request.ExpectedRevision);
+        Assert.False(Directory.Exists(root));
+        Assert.Equal(0, platform.Launches);
+    }
+
+    [Fact]
+    public async Task TranscriptPauseIsDistinctFromExplicitSuspendAndDoesNotReadConfig()
+    {
+        var platform = new FakePlatform { Owned = true, Response = new(true, "paused") { Version = 3 } };
+        await new ClientIntegrationRuntime(platform).PauseTranscriptAsync(ConfigPath, default);
+        var request = Assert.Single(platform.Commands);
+        Assert.Equal(3, request.Version);
+        Assert.Equal("transcript-reload", request.Command);
+        Assert.Equal("pause", request.ExpectedRevision);
+        Assert.False(Directory.Exists(root));
+        Assert.Equal(0, platform.Launches);
+    }
+
+    [Fact]
+    public async Task TranscriptSuspendRejectsOldClientWithoutSendingContentOrLaunching()
+    {
+        var platform = new FakePlatform { Owned = true, Response = new(true, "connected") { Version = 2 } };
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new ClientIntegrationRuntime(platform).SuspendTranscriptAsync(ConfigPath, default));
+        Assert.Single(platform.Commands);
+        Assert.Equal(0, platform.Launches);
+    }
+
+    [Fact]
+    public async Task TranscriptReloadUsesCommittedRevisionWithoutStatusOrNetworkReload()
+    {
+        Save();
+        var platform = new FakePlatform { Owned = true, Response = new(true, "ready") { Version = 3 } };
+        await new ClientIntegrationRuntime(platform).ReloadTranscriptAsync(ConfigPath, default);
+        var request = Assert.Single(platform.Commands);
+        Assert.Equal("transcript-reload", request.Command);
+        Assert.Equal(ClientConfigurationRevision.Read(ConfigPath), request.ExpectedRevision);
+    }
+
+    [Fact]
+    public async Task StoppedTranscriptReloadAndSuspendNeverCreateFilesOrStartClient()
+    {
+        var platform = new FakePlatform();
+        var runtime = new ClientIntegrationRuntime(platform);
+        await runtime.SuspendTranscriptAsync(ConfigPath, default);
+        await runtime.PauseTranscriptAsync(ConfigPath, default);
+        await runtime.ReloadTranscriptAsync(ConfigPath, default);
+        Assert.Empty(platform.Commands);
+        Assert.Equal(0, platform.Launches);
+        Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
     public async Task ExplicitStartLaunchesOnceAndRequiresMatchingEffectiveRevision()
     {
         Save();

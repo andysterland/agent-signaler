@@ -18,6 +18,8 @@
     <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardPresentation.cs" Link="MachineCardPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\SessionSourcePresentation.cs" Link="SessionSourcePresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DashboardSettings.cs" Link="DashboardSettings.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\TranscriptReceiverPolicy.cs" Link="TranscriptReceiverPolicy.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\TranscriptViewController.cs" Link="TranscriptViewController.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxCatalog.cs" Link="DevBoxCatalog.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\AzureCliResponse.cs" Link="AzureCliResponse.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DevBoxCatalogService.cs" Link="DevBoxCatalogService.cs" />

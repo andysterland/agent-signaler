@@ -24,6 +24,8 @@ internal sealed partial class MainWindow
     private Button? _logoutTunnel;
     private string? _tunnelSetupError;
     private string? _effectiveTunnelCliPath;
+    private int _ownedTunnelPort;
+    private bool _transcriptTransportSuspended;
 
     private static string TunnelStatePath => Path.Combine(DashboardSettings.DataDirectory, "tunnel-state.json");
 
@@ -39,7 +41,10 @@ internal sealed partial class MainWindow
             _effectiveTunnelCliPath = cliPath;
             _tunnel = new CliTunnelController(new TunnelOptions(cliPath, _runningPort, identity),
                 store.SaveAsync);
-            _tunnel.StatusChanged += (_, _) =>
+            _ownedTunnelPort = _runningPort;
+            _tunnel.StatusChanged += (_, status) =>
+            {
+                UpdateTranscriptReadiness(status);
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     if (!_exiting)
@@ -48,6 +53,7 @@ internal sealed partial class MainWindow
                         ReportStartupProgress(_tunnel.Status.Message);
                     }
                 });
+            };
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or TunnelException)
         {
@@ -64,11 +70,34 @@ internal sealed partial class MainWindow
 
     private void UpdateConnectionPresentation()
     {
+        UpdateTranscriptReadiness(_tunnel?.Status);
         var view = GetConnectionPresentation();
         _host.Text = view.CopyUrl ?? "";
         _copyUrl.IsEnabled = view.CopyUrl is not null;
         _copyUrl.Visibility = view.CopyUrl is not null ? Visibility.Visible : Visibility.Collapsed;
         UpdateTunnelControls();
+    }
+
+    private void UpdateTranscriptReadiness(TunnelStatus? status) =>
+        _server?.SetTranscriptReadiness(TranscriptReceiverPolicy.IsReady(_runningMode, _running,
+            _runningPort, _ownedTunnelPort, status?.CanCopy == true, _exiting,
+            _transcriptConnectionChanged || _transcriptTransportSuspended));
+
+    private string TranscriptReceiverDescription()
+    {
+        var capabilities = _server?.Transcripts.GetCapabilities();
+        if (capabilities is null) return "Compatible transcript receiver unavailable.";
+        if (!capabilities.Enabled) return "Receive detailed conversations is disabled. Status reporting is unchanged.";
+        if (!capabilities.Ready) return "Details unavailable: HTTPS with this listener's owned running Dev Tunnel is required. LAN remains status-only.";
+        return "Receiving transient detailed observations over the owned HTTPS Dev Tunnel. Receiver fields: user and available assistant text, " +
+            "tool names/correlation and observed lifecycle. " + TranscriptViewController.ProductionCaptureNotice + " " +
+            "Client sharing is last-observed, not remotely acknowledged here.";
+    }
+
+    private void SuspendTranscriptTransport()
+    {
+        _transcriptTransportSuspended = true;
+        _server?.SetTranscriptReadiness(false);
     }
 
     private async Task StartSharingOnStartupAsync()
@@ -118,6 +147,7 @@ internal sealed partial class MainWindow
         _startSharing.Click += async (_, _) =>
         {
             if (!SaveAutomaticSharing(true)) return;
+            _transcriptTransportSuspended = false;
             await RunTunnelOperationAsync(token => _tunnel!.StartAsync(token));
         };
         panel.Children.Add(_startSharing);
@@ -131,6 +161,7 @@ internal sealed partial class MainWindow
         _deleteTunnel = new Button { Content = "Delete tunnel" };
         _deleteTunnel.Click += async (_, _) =>
         {
+            SuspendTranscriptTransport();
             SaveAutomaticSharing(false);
             await RunTunnelOperationAsync(token => _tunnel!.DeleteAsync(token));
         };
@@ -142,6 +173,7 @@ internal sealed partial class MainWindow
         _logoutTunnel = new Button { Content = "Stop sharing and sign out" };
         _logoutTunnel.Click += async (_, _) =>
         {
+            SuspendTranscriptTransport();
             SaveAutomaticSharing(false);
             await RunTunnelOperationAsync(token => _tunnel!.LogoutAsync(token));
         };
@@ -202,6 +234,7 @@ internal sealed partial class MainWindow
 
     private async Task StopSharingAsync()
     {
+        SuspendTranscriptTransport();
         SaveAutomaticSharing(false);
         _tunnelOperationCancellation?.Cancel();
         await _tunnelOperation;
@@ -216,7 +249,11 @@ internal sealed partial class MainWindow
         _startSharing = _stopSharing = _deleteTunnel = _logoutTunnel = null;
     }
 
-    private void CancelTunnelOperations() => _tunnelLifetime.Cancel();
+    private void CancelTunnelOperations()
+    {
+        SuspendTranscriptTransport();
+        _tunnelLifetime.Cancel();
+    }
 
     private async Task ShutdownTunnelAsync()
     {

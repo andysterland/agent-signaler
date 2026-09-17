@@ -23,6 +23,12 @@ public sealed class DashboardServer : IAsyncDisposable
         options ??= new DashboardServerOptions();
         options.Validate();
         ListenerMode = options.ListenerMode;
+        Transcripts = new TranscriptStore(async (machineId, generation, cancellationToken) =>
+            (await store.GetMachinesAsync(cancellationToken).ConfigureAwait(false)).Any(machine =>
+                machine.MachineId == machineId && machine.PresenceMode == PresenceMode.Managed &&
+                machine.Generation == generation && !machine.ExplicitOffline));
+        Transcripts.SetEnabled(options.ReceiveDetailedConversations);
+        Transcripts.SetReadiness(ListenerMode == DashboardListenerMode.Internet && options.TranscriptTunnelReady);
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
         // Request logging is intentionally disabled: no payload, endpoint names or peer data are retained.
         builder.Logging.ClearProviders();
@@ -64,6 +70,7 @@ public sealed class DashboardServer : IAsyncDisposable
         }
         _application = builder.Build();
         if (ListenerMode == DashboardListenerMode.Internet) _application.UseRateLimiter();
+        if (ListenerMode == DashboardListenerMode.Internet) _application.MapTranscripts(Transcripts, store);
         _application.MapGet("/health", (HttpContext context) =>
         {
             var connectionTest = context.Request.Headers[Protocol.ConnectionTestHeader];
@@ -170,11 +177,22 @@ public sealed class DashboardServer : IAsyncDisposable
     }
 
     public DashboardListenerMode ListenerMode { get; }
+    public TranscriptStore Transcripts { get; }
+    public void SetTranscriptReadiness(bool ready) =>
+        Transcripts.SetReadiness(ListenerMode == DashboardListenerMode.Internet && ready);
 
     private static IResult Error(int status, string message) =>
         Results.Json(new ValidationResponse([message]), Protocol.Json, statusCode: status);
 
     public Task StartAsync(CancellationToken cancellationToken = default) => _application.StartAsync(cancellationToken);
-    public Task StopAsync(CancellationToken cancellationToken = default) => _application.StopAsync(cancellationToken);
-    public ValueTask DisposeAsync() => _application.DisposeAsync();
+    public Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        Transcripts.SetReadiness(false);
+        return _application.StopAsync(cancellationToken);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        Transcripts.Dispose();
+        await _application.DisposeAsync().ConfigureAwait(false);
+    }
 }

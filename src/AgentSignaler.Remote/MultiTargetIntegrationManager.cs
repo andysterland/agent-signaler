@@ -26,6 +26,7 @@ public sealed class MultiTargetIntegrationPlan
     public string RelayPath => Config.RelayPath!;
     public IReadOnlyList<IntegrationTarget> Targets => Config.Integrations;
     public bool IsRemoval { get; }
+    public bool IsStatusOnlyDowngrade { get; }
     public string Preview { get; }
     internal IReadOnlyList<IntegrationFileChange> Changes { get; }
     internal IntegrationManifest? Prior { get; }
@@ -34,13 +35,14 @@ public sealed class MultiTargetIntegrationPlan
 
     internal MultiTargetIntegrationPlan(RemoteConfiguration config, string configPath,
         IReadOnlyList<IntegrationFileChange> changes, IntegrationManifest? prior, bool removal,
-        Func<string, bool>? loaderHookExists = null)
+        Func<string, bool>? loaderHookExists = null, bool statusOnlyDowngrade = false)
     {
         Config = config;
         ConfigPath = configPath;
         Changes = changes;
         Prior = prior;
         IsRemoval = removal;
+        IsStatusOnlyDowngrade = statusOnlyDowngrade;
         ConfigBytes = MultiTargetIntegrationManager.Serialize(config);
         LoaderHookExists = loaderHookExists ?? File.Exists;
         Preview = string.Join("\n\n", changes.Where(c => !MultiTargetIntegrationManager.Equal(c.Before, c.After))
@@ -57,11 +59,23 @@ public sealed class MultiTargetIntegrationPlan
             (removal ? "" : $"\nREGISTER HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{IntegrationStartup.Name(configPath)}" +
                 $"\n{IntegrationStartup.Command(Path.Combine(Path.GetDirectoryName(config.RelayPath!)!, "AgentSignaler.Client.exe"), configPath)}" +
                 $"\nREMOVE owned legacy task {ScheduledTaskDefinition.Name(config.MachineId)} if present; no scheduled task is installed.") +
-            "\nDashboard source-aware capability verification is required before any version 4 installation changes." +
+            "\nDashboard source-aware capability verification is required before installation changes." +
+            (config.Version >= 5
+                ? "\nConfiguration v5 requires Client, Relay and Configurator upgraded together. " +
+                  (config.DetailedReportingEnabled
+                      ? "Share detailed conversations: ON. Message text, including personal information, goes to the configured Dashboard. Consent is handled outside the app."
+                      : "Share detailed conversations: OFF. Status reporting remains available.") +
+                  "\nDetails require HTTPS, a compatible receiver and verified source capabilities. Reception is anonymous and best effort; offline receivers cannot acknowledge purge."
+                : "\nLegacy configuration remains status-only. Only an explicit upgrade to v5 enables the default-on detailed conversation preference.") +
             "\nConcurrent changes require a new preview. Ownership-checked rollback retains a recovery journal on conflicts." +
             (config.BaseUri.Scheme == Uri.UriSchemeHttps
                 ? "\nHTTPS is encrypted but anonymous: anyone reaching Dashboard can submit status."
                 : "\nHTTP is unencrypted and anonymous; use a trusted LAN or VPN.");
+        if (statusOnlyDowngrade)
+            Preview += "\nEXPLICIT STATUS-ONLY DOWNGRADE: stop the exact owned Client before saving validated v4 settings. " +
+                "The v5 detailed reporting preference is removed, not preserved in v4. Client stays stopped; " +
+                "install matching compatible binaries through coordinated servicing before starting it. " +
+                "A later explicit v5 upgrade previews default-on sharing again.";
     }
 }
 
@@ -112,11 +126,34 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
     {
         configPath = Canonical(configPath);
         var config = RemoteConfiguration.Load(configPath);
-        if (config.Version != 4 || targetIds.Count == 0 ||
+        if (config.Version < 4 || targetIds.Count == 0 ||
             targetIds.Any(id => !config.Integrations.Any(t => t.Id == id)))
-            throw new InvalidDataException("Select installed version 4 integrations to remove.");
+            throw new InvalidDataException("Select installed source-aware integrations to remove.");
         return Build(config with { Integrations = config.Integrations.Where(t => !targetIds.Contains(t.Id)).ToArray() },
             configPath, true);
+    }
+
+    public static MultiTargetIntegrationPlan PreviewStatusOnlyDowngrade(string configPath)
+    {
+        configPath = Canonical(configPath);
+        EnsureNoPending(configPath);
+        var configBytes = Read(configPath) ?? throw new InvalidDataException("A saved v5 configuration is required.");
+        var config = JsonSerializer.Deserialize<RemoteConfiguration>(configBytes, Protocol.Json)!;
+        if (config.Version != 5)
+            throw new InvalidDataException("Only a saved v5 configuration can be explicitly downgraded to status-only v4.");
+        var manifestPath = Canonical(ManifestPath(configPath));
+        var manifestBytes = Read(manifestPath) ?? throw new InvalidDataException("Owned configuration servicing is required.");
+        var manifest = ReadManifest(manifestPath, configPath)!;
+        if (manifest.Version != 2 || manifest.MachineId != config.MachineId ||
+            manifest.ConfigHash != Hash(configBytes) || config.RelayPath is null ||
+            !Same(manifest.RelayPath, config.RelayPath))
+            throw new InvalidDataException("The saved configuration does not match exact integration ownership.");
+        var downgraded = config with { Version = 4, DetailedReportingEnabled = true };
+        var after = Serialize(downgraded);
+        return new(downgraded, configPath,
+            [new(configPath, configBytes, after),
+             new(manifestPath, manifestBytes, Serialize(manifest with { ConfigHash = Hash(after) }))],
+            manifest, removal: true, statusOnlyDowngrade: true);
     }
 
     private static MultiTargetIntegrationPlan Build(RemoteConfiguration config, string configPath, bool removal,
@@ -132,8 +169,15 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         if (prior is not null && prior.MachineId != config.MachineId)
             throw new InvalidDataException("Ownership manifest identity conflict.");
         var existingConfig = Read(configPath);
-        if (existingConfig is not null && RemoteConfiguration.Load(configPath).MachineId != config.MachineId)
-            throw new InvalidDataException("Saved configuration identity conflict.");
+        if (existingConfig is not null)
+        {
+            var saved = RemoteConfiguration.Load(configPath);
+            if (saved.MachineId != config.MachineId)
+                throw new InvalidDataException("Saved configuration identity conflict.");
+            if (saved.Version >= 5 && config.Version < 5)
+                throw new InvalidDataException("A version 5 configuration cannot be downgraded by repair. " +
+                    "Stop the exact Client and use an explicit status-only downgrade transaction with compatible binaries.");
+        }
         var oldArtifacts = Artifacts(prior);
         var changes = new Dictionary<string, IntegrationFileChange>(StringComparer.OrdinalIgnoreCase);
         var artifacts = new List<IntegrationArtifact>();
@@ -355,11 +399,29 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
                 throw new InvalidDataException($"File changed since preview: {change.Path}. Create a new preview; no concurrent edits will be overwritten.");
     }
 
+    private static bool IsTranscriptPreferenceOnly(MultiTargetIntegrationPlan plan)
+    {
+        var before = plan.Changes.Single(c => Same(c.Path, plan.ConfigPath)).Before;
+        if (before is null || plan.Config.Version < 5) return false;
+        var saved = JsonSerializer.Deserialize<RemoteConfiguration>(before, Protocol.Json)!;
+        return saved.Version >= 5 &&
+            Equal(Serialize(saved with { DetailedReportingEnabled = plan.Config.DetailedReportingEnabled }), plan.ConfigBytes) &&
+            plan.Changes.Where(c => !Same(c.Path, plan.ConfigPath) && !Same(c.Path, ManifestPath(plan.ConfigPath)))
+                .All(c => Equal(c.Before, c.After));
+    }
+
     public async Task<IntegrationApplyResult> ApplyAsync(MultiTargetIntegrationPlan plan, CancellationToken token)
     {
         if (!Equal(Serialize(plan.Config), plan.ConfigBytes))
             throw new InvalidDataException("Preview was changed; create a fresh preview.");
         using var held = AtomicFile.Acquire(plan.ConfigPath + ".integration.lock", TimeSpan.FromSeconds(1));
+        if (plan.Config.Version >= 5 && runtime is not null)
+            await Bounded(async t =>
+            {
+                if (plan.Config.DetailedReportingEnabled) await runtime.PauseTranscriptAsync(plan.ConfigPath, t);
+                else await runtime.SuspendTranscriptAsync(plan.ConfigPath, t);
+                return true;
+            }, token);
         EnsureNoPending(plan.ConfigPath);
         CheckFiles(plan.Changes);
         if (!plan.IsRemoval)
@@ -373,6 +435,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             RemotePaths.ValidateRelayInstallation(Path.GetDirectoryName(plan.RelayPath)!, plan.RelayPath);
         }
         var clientPath = ClientPath(plan.RelayPath);
+        if (plan.IsStatusOnlyDowngrade && runtime is null)
+            throw new InvalidOperationException("An explicit downgrade requires exact Client shutdown servicing.");
         if (runtime is not null && !File.Exists(clientPath))
             throw new InvalidDataException("Client executable is missing; repair the installation.");
         var taskName = ScheduledTaskDefinition.Name(plan.Config.MachineId);
@@ -385,8 +449,12 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         var oldStartup = startup?.Read(startupName);
         if (oldStartup is not null && oldStartup != startupCommand && oldStartup != plan.Prior?.StartupCommand)
             throw new InvalidDataException("An unrelated startup command occupies the owned name.");
+        var preferenceOnly = IsTranscriptPreferenceOnly(plan) && task is null &&
+            (startup is null || oldStartup == startupCommand);
         var wasRunning = runtime is not null && (await Bounded(t => runtime.QueryAsync(plan.ConfigPath, t), token)).Running;
-        if (!plan.IsRemoval)
+        if (plan.IsStatusOnlyDowngrade)
+            await Bounded(async t => { await runtime!.StopAsync(plan.ConfigPath, t); return true; }, token);
+        if (!plan.IsRemoval && !preferenceOnly)
             await DashboardConnection.VerifyBeforeApplyAsync(plan.Config, verifyDelivery, token);
         CheckFiles(plan.Changes);
         if (scheduler.ReadXml(taskName) != task || startup?.Read(startupName) != oldStartup)
@@ -410,11 +478,20 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             StartupAfter = plan.IsRemoval || startup is null ? oldStartup : startupCommand
         };
         await ExecuteAsync(journal, RecoveryPath(plan.ConfigPath), token);
+        if (plan.IsStatusOnlyDowngrade)
+            return new(true, false, "Status-only v4 settings saved. Client remains stopped. " +
+                "Complete coordinated compatible-binary servicing before starting Client. The v5 sharing preference was not retained.");
         if (runtime is null) return new(true, false, "Settings saved; runtime activation was not requested.");
         if (!wasRunning && (plan.IsRemoval || plan.Targets.Count == 0 || plan.Prior?.ClientPath is not null))
             return new(true, false, "Settings saved; Client is stopped. Use Start client explicitly.");
         try
         {
+            if (preferenceOnly && wasRunning)
+            {
+                await Bounded(async t => { await runtime.ReloadTranscriptAsync(plan.ConfigPath, t); return true; }, token);
+                return new(true, true, "Detailed conversation preference saved and applied locally. " +
+                    "Remote receipt or purge is best effort; an offline Dashboard has not acknowledged it.", Hash(plan.ConfigBytes));
+            }
             var active = await Bounded(t => wasRunning ? runtime.ReloadAsync(plan.ConfigPath, t) :
                 runtime.StartAsync(clientPath, plan.ConfigPath, t), token);
             var applied = active.Running && active.EffectiveRevision == Hash(plan.ConfigBytes);

@@ -1,0 +1,29 @@
+@baseUrl = http://localhost:43117
+@machineId = 00000000-0000-0000-0000-000000000001
+@receiverEpoch = 00000000-0000-0000-0000-000000000002
+@streamId = 00000000-0000-0000-0000-000000000003
+
+### Synthetic examples only. Internet mode plus injected/owned-tunnel readiness is required.
+### Managed presence must already exist. Copy the epoch/revision from capabilities before opening.
+POST {{baseUrl}}/api/transcripts/v1/capabilities
+Content-Type: application/json
+
+{"protocolVersion":1,"machineId":"{{machineId}}"}
+
+### Open (409 until managed Started exists, or when epoch/revision is stale)
+POST {{baseUrl}}/api/transcripts/v1/streams/open
+Content-Type: application/json
+
+{"protocolVersion":1,"machineId":"{{machineId}}","generation":1,"receiverEpoch":"{{receiverEpoch}}","streamId":"{{streamId}}","source":{"kind":"copilot-cli","scopeId":"synthetic","version":"test"},"expectedOpenRevision":0,"openId":"00000000-0000-0000-0000-000000000004"}
+
+### Volatile event receipt; exact retry returns duplicate without appending
+POST {{baseUrl}}/api/transcripts/v1/events
+Content-Type: application/json
+
+{"protocolVersion":1,"eventId":"00000000-0000-0000-0000-000000000005","machineId":"{{machineId}}","generation":1,"receiverEpoch":"{{receiverEpoch}}","streamId":"{{streamId}}","sequence":1,"source":{"kind":"copilot-cli","scopeId":"synthetic","version":"test"},"sessionId":"synthetic-session","provenance":{"hostEventName":"userPromptSubmitted","adapterVersion":"synthetic-v1","observedAtUtc":"2026-09-17T00:00:00+00:00","acceptedAtUtc":"2026-09-17T00:00:00+00:00","ordering":"arrival","captureOrigin":"hook","formatProfileId":"test-only"},"payload":{"kind":"message","role":"user","messageId":"synthetic-message","messageIdOrigin":"local","text":"Synthetic demonstration only.","availability":"complete","truncated":false,"truncationReason":"none"}}
+
+### Close and purge volatile content
+POST {{baseUrl}}/api/transcripts/v1/streams/close
+Content-Type: application/json
+
+{"protocolVersion":1,"machineId":"{{machineId}}","generation":1,"receiverEpoch":"{{receiverEpoch}}","streamId":"{{streamId}}","purge":true}

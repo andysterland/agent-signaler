@@ -35,6 +35,19 @@ function Assert-Msi {
     if (-not $Condition) { throw $Message }
 }
 
+function Assert-ApplicationPayloadPath {
+    param([string] $RelativePath)
+    $segments = $RelativePath -split '[\\/]'
+    Assert-Msi (-not [IO.Path]::IsPathRooted($RelativePath) -and
+        @($segments | Where-Object { $_ -in @('', '.', '..') -or $_.Contains(':') }).Count -eq 0) 'Payload must remain in its application installation directory.'
+    $leaf = $segments[-1]
+    Assert-Msi ($leaf -notmatch '(?i)\.(jsonl|ndjson|log|db|sqlite|sqlite3|bak|pfx|p12|pem|key)(-wal|-shm)?$' -and
+        $leaf -notmatch '(?i)\.Tests\.(dll|pdb|deps\.json|runtimeconfig\.json)$' -and
+        $leaf -notmatch '(?i)^(remote|dashboard-settings|session-state|configurator-settings)\.json$' -and
+        $leaf -notmatch '(?i)(transcript|conversation|cursor|spool|journal|credential|pairing).*\.(json|txt|xml|bin|dat)$' -and
+        @($segments | Where-Object { $_ -match '^(?i:fixtures?|transcripts?|conversations?|spool|backups?|recovery|\.copilot|CopilotCli)$' }).Count -eq 0) 'Application payload contains prohibited runtime data, transcript inputs, test fixtures, or credential material.'
+}
+
 try {
     foreach ($name in @('Dashboard', 'Remote')) {
         $msi = Join-Path $root "artifacts\msi\AgentSignaler.$name.msi"
@@ -57,6 +70,8 @@ try {
                 Assert-Msi (@($allActions | Where-Object { $_.Action -notin @('SetIntegrationTransaction', 'RollbackDashboardIntegration', 'RemoveDashboardIntegration') }).Count -eq 0) 'Unexpected prerequisite/nested installer custom action.'
             }
             Assert-Msi (-not $properties.ContainsKey('ALLUSERS')) "$name is not strictly per-user."
+            $tables = @(Read-MsiTable $database 'SELECT `Name` FROM `_Tables`' @('Name'))
+            Assert-Msi (@($tables | Where-Object { $_.Name -in @('RemoveRegistry', 'Environment', 'ServiceInstall') }).Count -eq 0) 'Application package must not add host-profile cleanup, environment changes, or another reporting service.'
             $expectedUpgrade = if ($name -eq 'Dashboard') {
                 '{D67CE744-C442-473A-B751-CA70D3CBCA4D}'
             } else { '{BFA03A34-37C9-4149-9789-9A68EC2A9C3A}' }
@@ -73,14 +88,21 @@ try {
             Read-MsiTable $database 'SELECT `Directory`, `Directory_Parent`, `DefaultDir` FROM `Directory`' @('Id', 'Parent', 'Name') |
                 ForEach-Object { $directories[$_.Id] = $_ }
             Assert-Msi (($directories['INSTALLFOLDER'].Name -split '\|')[-1] -eq $name) "$name install directory changed."
+            Assert-Msi ($directories['ApplicationProgramsFolder'].Parent -eq 'ProgramMenuFolder' -and
+                ($directories['ApplicationProgramsFolder'].Name -split '\|')[-1] -eq 'Agent Signaler') 'Shortcut cleanup must remain in the owned Agent Signaler Start Menu directory.'
             Assert-Msi ($directories['AgentSignalerFolder'].Parent -eq 'ProgramsFolder' -and
                 $directories['ProgramsFolder'].Parent -eq 'LocalAppDataFolder') "$name is not under LocalAppData\Programs."
 
             $components = @{}
             $componentRows = @(Read-MsiTable $database 'SELECT `Component`, `Directory_`, `Attributes`, `ComponentId`, `KeyPath` FROM `Component`' @('Id', 'Directory', 'Attributes', 'Guid', 'KeyPath'))
             $registryRows = @{}
-            Read-MsiTable $database 'SELECT `Registry`, `Root` FROM `Registry`' @('Id', 'Root') |
-                ForEach-Object { $registryRows[$_.Id] = $_.Root }
+            Read-MsiTable $database 'SELECT `Registry`, `Root`, `Key` FROM `Registry`' @('Id', 'Root', 'Key') |
+                ForEach-Object {
+                    Assert-Msi ($_.Root -eq '1' -and
+                        ($_.Key -eq "Software\AgentSignaler\Installer\$name" -or
+                         $_.Key.StartsWith("Software\AgentSignaler\Installer\$name\", [StringComparison]::Ordinal))) 'Installer registry ownership must not extend to host transcript/profile settings.'
+                    $registryRows[$_.Id] = $_.Root
+                }
             foreach ($component in $componentRows) {
                 $components[$component.Id] = $component.Directory
                 Assert-Msi (([int]$component.Attributes -band 4) -ne 0 -and
@@ -92,8 +114,19 @@ try {
             Assert-Msi (@($componentRows.Guid | Select-Object -Unique).Count -eq $componentRows.Count) "$name has duplicate component GUIDs."
             $removedDirectories = @{}
             Read-MsiTable $database 'SELECT `DirProperty`, `FileName`, `InstallMode` FROM `RemoveFile`' @('Directory', 'Name', 'Mode') |
-                Where-Object { $_.Name -eq '' -and $_.Mode -eq '2' } |
-                ForEach-Object { $removedDirectories[$_.Directory] = $true }
+                ForEach-Object {
+                    Assert-Msi ($_.Name -eq '' -and $_.Mode -eq '2') 'Installer cleanup may remove only empty owned directories, never transcript files or wildcard host history.'
+                    $directory = $_.Directory
+                    $visited = @{}
+                    if ($directory -notin @('ApplicationProgramsFolder', 'AgentSignalerFolder', 'ProgramsFolder')) {
+                        while ($directory -ne 'INSTALLFOLDER') {
+                            Assert-Msi ($directories.ContainsKey($directory) -and -not $visited.ContainsKey($directory)) 'Installer cleanup targets an unowned directory.'
+                            $visited[$directory] = $true
+                            $directory = $directories[$directory].Parent
+                        }
+                    }
+                    $removedDirectories[$_.Directory] = $true
+                }
             foreach ($directory in $components.Values | Select-Object -Unique) {
                 Assert-Msi ($removedDirectories.ContainsKey($directory)) "$name directory lacks empty-folder cleanup: $directory"
             }
@@ -140,6 +173,7 @@ try {
                     if ($segment -ne '.') { $relative = Join-Path $segment $relative }
                     $directory = $entry.Parent
                 }
+                Assert-ApplicationPayloadPath $relative
                 $path = Join-Path $publish $relative
                 Assert-Msi (Test-Path -LiteralPath $path -PathType Leaf) "$name missing published source: $relative"
                 Assert-Msi ((Get-Item -LiteralPath $path).Length -eq [long]$file.Size) "$name payload size differs: $relative"

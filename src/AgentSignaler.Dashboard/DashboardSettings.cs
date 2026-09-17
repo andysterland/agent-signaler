@@ -17,11 +17,12 @@ internal sealed record DashboardSettings
     public Guid? DevBoxSubscriptionId { get; init; }
     public string? DevCenterName { get; init; }
     public bool AutoStartSharing { get; init; } = true;
+    public bool ReceiveDetailedConversations { get; init; } = true;
 
     [JsonIgnore]
     public bool ShouldStartSharing => ConnectionMode == DashboardConnectionMode.DevTunnel && AutoStartSharing;
 
-    internal static DashboardSettings RecoveryDefaults => new() { AutoStartSharing = false };
+    internal static DashboardSettings RecoveryDefaults => new() { AutoStartSharing = false, ReceiveDetailedConversations = false };
 
     public static string DataDirectory
     {

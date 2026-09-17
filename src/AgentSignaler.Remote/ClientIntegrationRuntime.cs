@@ -30,6 +30,8 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
     public async Task<IntegrationRuntimeState> ReloadAsync(string configPath, CancellationToken token)
     {
         configPath = ClientIdentity.CanonicalPath(configPath);
+        if (File.Exists(configPath) && RemoteConfiguration.Load(configPath).Version >= 5)
+            await ReloadTranscriptAsync(configPath, token);
         var current = await QueryAsync(configPath, token);
         if (!current.Running) return new(false, Message: "Client is stopped. Use Start client to resume reporting.");
         var revision = ClientConfigurationRevision.Read(configPath);
@@ -40,6 +42,30 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
         if (!response.Accepted)
             return current with { Message = response.Error ?? "Client did not acknowledge the saved settings." };
         return await AwaitRevision(configPath, revision, State(response), token, budget.Token);
+    }
+
+    public Task SuspendTranscriptAsync(string configPath, CancellationToken token) =>
+        SendTranscriptReloadAsync(configPath, "suspend", token);
+
+    public Task PauseTranscriptAsync(string configPath, CancellationToken token) =>
+        SendTranscriptReloadAsync(configPath, "pause", token);
+
+    public Task ReloadTranscriptAsync(string configPath, CancellationToken token) =>
+        SendTranscriptReloadAsync(configPath, null, token);
+
+    private async Task SendTranscriptReloadAsync(string configPath, string? control, CancellationToken token)
+    {
+        configPath = ClientIdentity.CanonicalPath(configPath);
+        token.ThrowIfCancellationRequested();
+        if (!platform.IsOwnerRunning(configPath)) return;
+        var revision = control ?? ClientConfigurationRevision.Read(configPath);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(TimeSpan.FromSeconds(1));
+        var response = await platform.SendAsync(configPath,
+            new(3, "transcript-reload", ExpectedRevision: revision), budget.Token).WaitAsync(budget.Token);
+        if (!response.Accepted || response.Version != 3)
+            throw new InvalidOperationException("Client did not acknowledge detailed conversation settings. " +
+                "Exit the exact Client and upgrade Client, Relay and Configurator together before retrying.");
     }
 
     public async Task<IntegrationRuntimeState> StartAsync(string clientPath, string configPath, CancellationToken token)

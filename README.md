@@ -37,7 +37,7 @@
 
 | Use case | Workflow and result |
 | --- | --- |
-| **Monitor long-running Copilot CLI work** | Run the managed Client on a development machine. The dashboard shows live execution, waiting, result, idle, and offline transitions without displaying prompt or response content. |
+| **Monitor long-running Copilot CLI work** | Run the managed Client on a development machine. Status tiles show execution, waiting, result, idle, and offline transitions. Separately enabled prototype details show bounded, partial conversation activity. |
 | **Track several development machines** | Connect multiple Windows environments and give them clear display names or notes. Each tile keeps machine identity and activity separate. |
 | **Keep status visible while multitasking** | Minimize the dashboard into compact always-on-top tiles. Status remains visible without keeping the full window open. |
 | **Open the correct Dev Box** | Explicitly map a machine to an Azure Dev Box. Agent Signaler refreshes the validated connection or restores and focuses a matching Windows App window. |
@@ -65,13 +65,22 @@ flowchart LR
     C -->|Trusted LAN/VPN| D[Dashboard]
     C -->|Anonymous HTTPS Dev Tunnel| D
     D --> E[Status tiles and local history]
+    D --> G[Volatile read-only Transcript tab]
     D --> F[Optional Windows App Dev Box launch]
 ```
 
-Relay accepts bounded hook events and sends sanitized state through local
-current-user IPC. The persistent Client owns network reporting and periodic
-presence snapshots. Dashboard stores local machine state in SQLite and never needs
-prompt text, response text, source code, or credentials.
+Relay accepts bounded hook events through current-user IPC. The persistent Client
+is the sole managed network reporter. Status/presence and SQLite machine history
+remain content-free. A separately versioned prototype transcript stream uses only
+the configured HTTPS Dev Tunnel and bounded memory, not SQLite.
+
+Computer details opens on **Settings**, preserving existing editing and Dev Box
+actions; **Transcript** is a read-only, partial view, not a conversation archive.
+No production assistant-file format is currently independently verified for
+Copilot CLI, VS Code, or Visual Studio. Supported hook prompts/activity can still
+appear; assistant readers remain unavailable until independent evidence exists.
+See the [published capability evidence](docs/transcript-capability-evidence.md);
+the production file-adapter registry is deliberately empty.
 
 ## Get started
 
@@ -111,11 +120,36 @@ See the [user guide](docs/user-guide.md) for setup and operation,
 
 ## Security and privacy
 
-Agent Signaler intentionally transports state, identity, timing, and bounded
-integration metadata—not prompts, responses, source code, tokens, or connection
-URIs. Anonymous Dev Tunnel mode encrypts transport but does **not** authenticate
-status senders; anyone who can reach the URL can submit reports and consume
-capacity.
+This prototype requires **external informed consent before distribution/use** for
+the content, destination, and retention policy. Agent Signaler neither collects nor
+verifies consent; installation and informational notices are not evidence of it.
+
+New configuration **v5** and explicit migrations default **Share detailed
+conversations** on, with an explicit opt-out. Versions 1–4 and ordinary HTTP/LAN
+remain status-only. Upgrade Dashboard first, then Relay/Client/Configurator
+together before migration. Repair/recovery must preserve a saved opt-out;
+downgrade requires an explicit status-only transaction, not a version-number edit.
+
+Allowed details are hook-sourced user messages, tool names/observed status, and
+completed user-facing assistant replies only from verified stop-triggered Client
+readers. Allowed message text can contain PII and is not automatically redacted.
+Tool arguments/results, raw errors, reasoning, attachments, and arbitrary payloads
+are excluded. Local stop references never enter HTTP, persistent state, logs, or
+viewer models. Relay never reads files, sends HTTP, or starts Client; tray Exit
+stops managed reporting.
+
+Conversation storage is bounded application memory: 32 KiB events, a 4 MiB Client
+budget, a 64 MiB receiver budget, and 30-minute receiver retention. No spool,
+export, or replay archive is created. Host transcript files, OS paging,
+hibernation, and external crash capture mean this is **not** a promise that
+conversation data never exists on disk.
+
+Details require the Dashboard's owned, running Dev Tunnel and loopback Internet
+listener, with normal HTTPS certificate validation. Anonymous senders are **not
+authenticated**: reachable callers can spoof identities, inject reports, request
+purges, and consume capacity. There is no pairing, bearer-token enrollment, or
+network-facing transcript reader. See the [user guide](docs/user-guide.md) for
+opt-out, receiver disable/clear, bounded reader/viewer controls, and limitations.
 
 Read [SECURITY.md](SECURITY.md) before deployment. Report vulnerabilities
 privately rather than opening a public issue.

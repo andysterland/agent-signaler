@@ -18,6 +18,8 @@ public sealed record DashboardServerOptions
     public int RequestBurstLimit { get; init; } = 200;
     public int RequestsPerSecond { get; init; } = 100;
     public int ConcurrentRequestLimit { get; init; } = 100;
+    public bool ReceiveDetailedConversations { get; init; } = true;
+    public bool TranscriptTunnelReady { get; init; }
 
     internal void Validate()
     {

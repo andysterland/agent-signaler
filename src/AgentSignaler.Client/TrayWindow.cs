@@ -11,6 +11,7 @@ internal sealed class TrayWindow : IDisposable
     private readonly Action _open;
     private readonly Func<ClientIpcResponse> _status;
     private readonly Action _resume;
+    private readonly Func<string> _details;
     private readonly uint _taskbarCreated;
     private readonly string _className = "AgentSignaler.Client." + Guid.NewGuid().ToString("N");
     private readonly nint _instance;
@@ -21,11 +22,12 @@ internal sealed class TrayWindow : IDisposable
     private bool _closing;
     public event Action<bool>? ExitRequested;
 
-    public TrayWindow(Action open, Func<ClientIpcResponse> status, Action resume)
+    public TrayWindow(Action open, Func<ClientIpcResponse> status, Action resume, Func<string> details)
     {
         _open = open;
         _status = status;
         _resume = resume;
+        _details = details;
         _procedure = Procedure;
         _instance = GetModuleHandle(null);
         _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
@@ -97,7 +99,7 @@ internal sealed class TrayWindow : IDisposable
             case 0x0113: // WM_TIMER
                 if (wParam == 2) { PostQuitMessage(0); return 0; }
                 var state = _status().State;
-                _icon.Tip = "Agent Signaler — " + state;
+                _icon.Tip = "Agent Signaler — " + state + "\n" + _details();
                 ShellNotifyIcon(1, ref _icon);
                 return 0;
             case 0x0010: // WM_CLOSE
@@ -137,6 +139,7 @@ internal sealed class TrayWindow : IDisposable
         if (menu == 0) { ShowError("The Client menu could not be opened. Use Configurator to stop the client."); return; }
         try
         {
+            AppendMenu(menu, 0x0002, 0, _details());
             AppendMenu(menu, 0, 1, "Open Configurator");
             AppendMenu(menu, 0, 2, "Exit");
             GetCursorPos(out var point);

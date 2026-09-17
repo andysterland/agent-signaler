@@ -4,6 +4,142 @@ A Windows 11 x64 dashboard for Copilot CLI and explicitly verified local IDE age
 HTTPS sharing by default, or on an explicitly selected trusted LAN/VPN.
 LAN mode requires no cloud account or service.
 
+## Read-only conversation prototype
+
+**External informed consent is a deployment prerequisite.** Before distributing
+or using this prototype, the operator must obtain permission for the content,
+configured destination, and retention policy. Agent Signaler neither collects nor
+verifies that permission. Installation, Apply confirmation, and the informational
+notice are not evidence of consent; no in-app consent, pairing, enrollment, bearer
+token, or credential-store workflow is added.
+
+New configuration **v5**, and deliberate migrations to v5, default **Share detailed
+conversations** on. Use this Configurator control to opt out, then apply the
+previewed settings. Valid v5 defaults to true when the field is omitted; a saved
+false must survive repair and recovery. Merely opening a newer binary does not
+rewrite versions 1–4: they remain status-only. HTTP/LAN is also status-only,
+regardless of the flag. Default-on is not auto-start: existing integration
+eligibility, explicit configuration/startup, a running Client, and a compatible
+receiver are still required; a hook never starts Client.
+
+Details use only the canonical configured **HTTPS Dev Tunnel**, normal certificate
+validation, and the Dashboard's loopback Internet listener while its owned tunnel
+is running. There is no direct HTTPS-hosting or certificate-setup workflow.
+Stopping/changing the tunnel disables transcript ingest and clears volatile state.
+Anonymous senders are not authenticated: anyone reaching the endpoint can spoof
+machine/source IDs, inject activity, request purges, and consume capacity.
+Loopback is not proof that a request came through the tunnel. Trust the configured
+destination, Windows certificate trust, and tunnel service/operator accordingly.
+
+### What is captured, and what remains unavailable
+
+- User messages and tool names/observed status come only from supported hooks.
+  Permitted message text, including any PII it contains, is not classified or
+  redacted. Do not treat this as a mechanism for safely sharing secrets.
+- Main-assistant replies require an independently verified, host/version-specific
+  file format, path/session binding, and completed-message definition. Only Client
+  may read the exact local stop reference, and only for completed user-facing
+  assistant text. **No production file profiles are currently verified for Copilot
+  CLI, VS Code, or Visual Studio.** Readers therefore remain unavailable; supported
+  prompt/activity capture is partial. A documented path field, bundled CLI, or
+  synthetic JSON fixture is not evidence of host transcript compatibility.
+  The [P0 evidence record](transcript-capability-evidence.md) documents the
+  reviewed public fields and missing proof; the production adapter registry is
+  intentionally empty. The invented test-only profile is not shipped support.
+- Tool arguments/results, raw errors, hidden reasoning, system/developer messages,
+  attachments, subagent replies, arbitrary metadata, and file-sourced user messages
+  are excluded. Missing assistant text is not an empty successful reply.
+- Local stop references never enter HTTP, persistent settings/state, logs,
+  diagnostics, or viewer models. A capture-source label identifies a verified
+  profile, not a path. Reading an existing host transcript grants no ownership:
+  installation, repair, rollback, opt-out, clear, and uninstall must not alter it.
+  Relay does not read files or send HTTP.
+
+### Stop, clear, and retention
+
+Client opt-out stops admission and cancels reads/sends before waiting on network
+work, clears queued text/references/cursors, and attempts one bounded best-effort
+remote purge. An unreachable Dashboard may retain earlier text until its TTL or a
+local clear/disable; the UI cannot prove an offline Client acknowledged a change.
+The single close/purge request identifies one stream, not every source on the
+machine. Other streams' previously received text may remain until TTL or local
+clear/disable even when the Dashboard is reachable.
+If opt-out cannot be saved, this Client run stays suspended with a save failure,
+not a success indication or automatic resumption. Re-enabling begins fresh without
+backfill. Tray **Exit** stops all managed reporting.
+Transcript-only reload does not wait for presence/network reload. A one-second
+configuration revision check suspends detail for deleted, invalid, or stale
+configuration; it is not a filesystem watcher. New admission, file access/output,
+and sends must recheck the enabled revision.
+
+Dashboard's **Receive detailed conversations** preference defaults on independently
+of the Client flag. Find it under **Settings > Internet sharing**. It applies and
+saves immediately, independently of the dialog's Save/Cancel; disabling purges
+before saving, and a save failure keeps reception disabled for this run with an
+error. Disable it to reject further details, purge retained text, and invalidate
+views without stopping status. In computer **Settings**, **Clear
+transcript** clears that computer's retained content without disabling future
+reception. Removal, receiver restart, or listener teardown also invalidate affected
+transcript state; restarting does not recover conversation history.
+
+Agent Signaler retains conversation content only in bounded memory: no SQLite
+conversation history, spool, export, saved cursor, content-derived recovery hash,
+or replay archive. Diagnostics are category-only. This does **not** mean
+conversation data never exists on disk: the agent host's own transcript input,
+OS paging/hibernation, and external crash capture are outside this storage policy.
+Do not paste transcript content into persistent notes or diagnostic evidence.
+
+### Computer details: Settings and Transcript
+
+Computer details has fixed **Settings** and **Transcript** tabs. Settings opens
+first and preserves display name/note, status/sessions, and Dev Box mapping,
+sign-in, refresh, launch, copy-URI, and cancellation workflows. Tab switches retain
+unsaved edits without saving or starting connection work. Save details/Remove
+belong only to Settings; Close and ongoing connection cancellation remain reachable
+from either tab.
+
+Transcript selects one reported machine/source/scope/session and stream, including
+ended sessions whose content has not expired. Identity labels are not authenticated
+identities. Text is inert, wrapped plain text with role/time/source and delivery
+order; missing host IDs mean arrival order, not invented causal correlation.
+Capabilities and availability distinguish disabled, HTTPS/receiver required,
+partial/unverified format, baseline, waiting for stop, file unavailable, budget
+exceeded, empty/loading/read failure, offline, gaps, truncation, expiry, and reset.
+Assistant provenance, when supported, is **Transcript file, read after stop**,
+never a path.
+
+There is no composer, Send, approval, agent-action retry, tool execution,
+transcript clipboard/export, active links, or remote images. Opening the tab does
+not enable reporting, start Client, or read a host file. It reads only the
+in-process volatile API; no browser/network-facing transcript reader exists.
+Returning to Settings or closing releases transcript text; expiry, eviction,
+clear/disable, removal, and reset invalidate visible content as well as caches.
+Refreshes are cancelled on selection/tab changes and stale completions rejected.
+
+### Fixed prototype bounds
+
+These are feature budgets, not guarantees about total CLR/WinUI process RSS.
+Limits are internal; only the enabled flags are user settings.
+
+| Boundary | Limit / behavior |
+| --- | --- |
+| Hook / IPC | 64 KiB raw input; 2.2-second Relay work / three-second host timeout; status/control 4 KiB; detail event 32 KiB serialized, Unicode-safe truncation marked explicitly |
+| Client | 4 MiB including scratch/metadata/in-flight ownership; 256 events / 16 streams; retries at most eight attempts / two minutes; no disk spool |
+| Local reader | One active pass, 16 queued sessions, two-second pending expiry, 32 contexts / eight per source, 30-minute inactivity expiry |
+| Each accepted stop | At most 750 ms, 2 MiB inspected, 128 records, 16 replies / 256 KiB output; at most three attempts at 0/100/300 ms, sharing the same budget |
+| Reader input | Exact profile-bound current-user regular file; 512-character reference, 64 MiB file ceiling, 16 KiB chunks, 64 KiB records, JSON depth 16; no relative/UNC/device/ADS/reparse paths |
+| No backfill | First unbound read establishes EOF baseline, potentially omitting the first reply; replacement/truncation/reset rebaseline; no scans, watchers, continuous polling, or whole-file replay |
+| Receiver | 64 MiB including 8 MiB reader/viewer reserve; 25 machines, 64 streams, 128 sessions, 2,048 events; per machine 8 MiB / 256 events; per session 2 MiB / 128 events |
+| Ingest | Four concurrent requests globally / one per reported machine, no wait queue; 20 requests/second burst 40 globally, 5/second burst 10 per machine |
+| Retention | 30 minutes from receiver receipt; reads/duplicates do not extend it; overflow, loss, restart, or exhaustion is partial capture, not guaranteed delivery |
+| Viewer | Session pages of 16, at most 32 entries per machine; event page 32 events / 128 KiB; visible window 64 events / 256 KiB plus one pending page |
+| Refresh / cursor | One viewer/read; one-second visible-tab polling; five-minute, at-most-512-byte selection/epoch-bound cursor; appends preserve older pages, destructive changes return resets |
+
+Older-page navigation stays bounded and preserves scroll intent; new activity
+does not force a jump while reading history. Manual keyboard, focus, screen-reader,
+high-contrast, DPI, and installed-UI acceptance remain **not performed** for this
+prototype. Synthetic tests do not verify actual hosts or live tunnel deployment.
+
 ## HTTPS client support and Dev Tunnels status
 
 Remote Configurator and Relay now accept a root HTTPS dashboard URL, including default
@@ -352,15 +488,21 @@ upgrade, and uninstall; reinstall reuses them. **Clear connection mapping**
 requires destructive confirmation and retains machine history/display name.
 Only that action or removing the machine deletes its mapping.
 
-Remote configuration v1–v3 continues to load without rewriting files. Approved
-multi-target Apply migrates to v4 with `integrations`, `dashboardBaseUrl` and `heartbeatIntervalSeconds`
+Remote configuration v1–v4 continues to load status-only without rewriting files.
+Approved multi-target Apply explicitly migrates to v5 with `integrations`,
+`dashboardBaseUrl`, `detailedReportingEnabled` and `heartbeatIntervalSeconds`
 (default **300**). **Heartbeat interval (minutes)** accepts whole numbers **1–60**;
 zero does not disable reporting. UUID and metadata are retained.
 Upgrade **Dashboard first**, then **Client, Configurator, and Relay together**.
 New multi-target integration requires the `/api/v3/health` capabilities check; an older
 dashboard is rejected rather than silently falling back to v1 reporting.
-Old-release recovery requires consistent configuration/integration backups, not
-editing the version number. See `installers\README.md`.
+Old Clients cannot read v5. Explicit downgrade requires stopping the exact owned
+Client, clearing volatile detail, transactionally writing validated status-only
+v4, and servicing compatible binaries; normal MSIs block older versions. A later
+v5 migration must preview default-on again: v4 cannot preserve a v5 opt-out flag.
+Failed migration rollback restores prior readable configuration/runtime without
+starting a stopped reporter. Successfully saved false must not be replaced by
+older true during recovery; report a conflict instead. See `installers\README.md`.
 
 Newly applied `remote.json` files also include `relayPath`, the absolute path to
 `AgentSignaler.Relay.exe`. Set **Remote relay location** on the **Hooks** tab to
@@ -507,7 +649,7 @@ session status. If the dashboard is hidden, open it to see the message; no Windo
 notification is sent. Ordinary health checks and relay reports do not show it.
 
 Relay `test --config <path>` uses `DashboardConnection.TestAsync` for read-only
-`GET /api/v3/health` with multi-target v4 configuration,
+`GET /api/v3/health` with multi-target v4/v5 configuration,
 `GET /api/v2/health` with managed v3 configuration, or `GET /health` with legacy
 v1/v2 configuration. It does not post status, register a machine, change
 session state, or refresh machine liveness. Like Configurator's test, it includes
@@ -554,7 +696,7 @@ Configurator has three fixed, non-closable, non-reorderable tabs:
 
 | Tab | Controls and workflow |
 | --- | --- |
-| **Connection** | Dashboard URL, heartbeat, machine UUID, saved/effective runtime status, Test connection / Cancel test, and Start client. |
+| **Connection** | Dashboard URL, heartbeat, Share detailed conversations with its external-consent/PII notice, machine UUID, saved/effective runtime status, Test connection / Cancel test, and Start client. |
 | **Hooks** | Editable remote relay executable location, saved as `relayPath` in `remote.json` when applying settings. Discovered locations with Enable checkboxes and pending-change feedback. Refresh / Cancel discovery and Add custom location. Custom type and path editors appear only for explicitly added rows. |
 | **Review & maintenance** | Optional settings preview, integration transaction recovery, cleanup of legacy diagnostic hooks, and full Uninstall integration. |
 
@@ -579,7 +721,7 @@ without requiring a separate Preview or Verification step. Validation returns to
 ### Independent CLI / Visual Studio / VS Code integration
 
 Upgrade Dashboard first, then co-install matching Client, Relay and Configurator.
-New previews save configuration **v4** with the complete selected target collection
+New previews save configuration **v5** with the complete selected target collection
 and require the source-aware Dashboard capability; there is no older-protocol fallback.
 Older configurations remain readable and migration retains machine identity,
 heartbeat, startup ownership and existing owned hooks.
@@ -664,8 +806,12 @@ can submit or spoof status reports. Use it only on a trusted LAN or VPN.**
   Its warning is informational, not a consent gate; the release checks above still apply.
 - A Private-profile firewall rule is a convenience, not authentication.
 - The server validates a fixed protocol and never executes incoming values.
-- Prompts, source, tool arguments/results, transcripts, and hook error messages are
-  neither sent nor persisted. Diagnostic logs contain category codes, not payloads.
+- Status/presence remains content-free. V5 detailed reporting uses the fixed
+  message/tool-metadata allowlist and externally consented HTTPS prototype policy
+  above; allowed text can contain PII. Excluded tool bodies, reasoning, raw errors,
+  attachments, and local transcript references never enter the network stream.
+  Conversation text and local references are not persisted by Agent Signaler;
+  diagnostic logs contain category codes, not payloads.
 - The raw hook payload remains transient in the relay process.
 
 ## Projects
@@ -686,7 +832,7 @@ can submit or spoof status reports. Use it only on a trusted LAN or VPN.**
 ## Protocol and state
 
 `GET /health` retains its strict legacy v1 version/status response.
-Configuration v4 verifies `GET /api/v3/health`, returning exactly
+Configuration v4/v5 verifies `GET /api/v3/health`, returning exactly
 `{"protocolVersion":3,"status":"ok"}`, and uses `POST /api/v3/reports`.
 Sessions carry source kind, integration scope and opaque host session identity;
 reporter identity/heartbeat remains machine-wide. Identical session IDs across
@@ -699,6 +845,15 @@ Generation/sequence ordering is persisted with acceptance; only an acknowledged
 newer `started` activates a new run. Duplicate/stale sequences and old generations
 cannot renew contact, and nothing in a terminal run can undo its offline report.
 Ordering metadata is not authentication.
+
+Detailed content uses separate transcript protocol v1 POST routes:
+`/api/transcripts/v1/capabilities`, `/api/transcripts/v1/streams/open`,
+`/api/transcripts/v1/events`, and `/api/transcripts/v1/streams/close`.
+Control bodies are at most 4 KiB; events at most 32 KiB. These negotiate or ingest,
+not read history or control an agent. Acknowledgement is volatile acceptance,
+not persistence. Shared IPC v3 adds transcript operations while preserving exact
+v2 status/control compatibility where the configuration is readable. Unsupported
+receivers or old Clients do not receive conversation text.
 
 `POST /api/v1/status` remains available to legacy machines. After a valid v2 start
 activates managed mode, v1 reports for that UUID return **409**, even duplicates and after

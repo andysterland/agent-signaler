@@ -31,6 +31,8 @@ internal sealed class LoopbackTlsDashboard : IAsyncDisposable
     private Uri HttpAddress { get; set; } = null!;
     public int PlaintextConnections => Volatile.Read(ref _plaintextConnections);
     public int? RedirectStatus { get; init; }
+    public int? TranscriptRedirectStatus { get; init; }
+    public string? TranscriptCapabilitiesBody { get; init; }
     public string? HealthBody { get; init; }
     public string HealthContentType { get; init; } = "application/json";
     public bool ChunkedHealth { get; init; }
@@ -95,6 +97,12 @@ internal sealed class LoopbackTlsDashboard : IAsyncDisposable
                 context.Request.Headers.Cookie.ToString(), context.Request.Headers.Authorization.ToString(),
                 context.Request.Headers["X-Tunnel-Authorization"].ToString(), context.Request.Headers.Accept.ToString()));
             context.Response.Headers.SetCookie = "test-session=must-not-be-replayed; Path=/; Secure";
+            if (context.Request.Path == "/api/transcripts/v1/capabilities" && TranscriptCapabilitiesBody is { } capabilities)
+            {
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(capabilities, context.RequestAborted);
+                return;
+            }
             if (context.Request.Path == "/health" && HealthBody is { } body)
             {
                 context.Response.ContentType = HealthContentType;
@@ -105,7 +113,8 @@ internal sealed class LoopbackTlsDashboard : IAsyncDisposable
                 await context.Response.WriteAsync(body, context.RequestAborted);
                 return;
             }
-            if (RedirectStatus is { } status)
+            if ((context.Request.Path.StartsWithSegments("/api/transcripts")
+                    ? TranscriptRedirectStatus ?? RedirectStatus : RedirectStatus) is { } status)
             {
                 context.Response.StatusCode = status;
                 context.Response.Headers.Location = new Uri(HttpAddress, context.Request.Path.Value!).AbsoluteUri;
@@ -135,6 +144,9 @@ internal sealed class LoopbackTlsDashboard : IAsyncDisposable
     }
 
     public HttpClient CreateTrustedClient(RemoteConfiguration configuration)
+        => new(CreateTrustedHandler(configuration)) { Timeout = TimeSpan.FromSeconds(10) };
+
+    public SocketsHttpHandler CreateTrustedHandler(RemoteConfiguration configuration)
     {
         var handler = RemoteHttpTransport.CreateHandler(configuration, interactive: true);
         Assert.Null(handler.SslOptions.RemoteCertificateValidationCallback);
@@ -146,7 +158,7 @@ internal sealed class LoopbackTlsDashboard : IAsyncDisposable
             ApplicationPolicy = { new Oid("1.3.6.1.5.5.7.3.1") },
             RevocationMode = X509RevocationMode.NoCheck
         };
-        return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        return handler;
     }
 
     public async ValueTask DisposeAsync()
