@@ -45,5 +45,8 @@ headers from the upstream WiX repository. See:
 
 ## Project assets
 
-`src\AgentSignaler.Configurator\AgentSignaler.ico` is an Agent Signaler source
-asset. Its authorship and redistribution approval remain a public-release gate.
+The maintainer confirms that Agent Signaler's original project artwork,
+including `src\AgentSignaler.Configurator\AgentSignaler.ico`, was generated using
+GitHub Copilot and is licensed under the repository's [MIT License](LICENSE).
+The maintainer approves its redistribution under those terms. Third-party
+components and assets remain subject to their respective licenses.
