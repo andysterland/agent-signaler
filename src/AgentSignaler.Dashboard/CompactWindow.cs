@@ -39,7 +39,11 @@ internal sealed class CompactWindow : Window
         };
         _handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         _sizing = new CompactWindowSizing(_handle);
-        Closed += (_, _) => _sizing.Dispose();
+        Closed += (_, _) =>
+        {
+            foreach (var tile in _cards.Values) tile.Hover.Dispose();
+            _sizing.Dispose();
+        };
         var presenter = OverlappedPresenter.Create();
         presenter.SetBorderAndTitleBar(false, false);
         presenter.IsResizable = false;
@@ -59,8 +63,14 @@ internal sealed class CompactWindow : Window
     public void CloseForExit()
     {
         _allowClose = true;
-        AppWindow.Hide();
+        Hide();
         Close();
+    }
+
+    public void Hide()
+    {
+        foreach (var tile in _cards.Values) tile.Hover.Hide();
+        AppWindow.Hide();
     }
 
     public void Update(IEnumerable<MachineView> machines, ElementTheme theme, WindowId dashboardId)
@@ -70,6 +80,7 @@ internal sealed class CompactWindow : Window
         var ids = ordered.Select(machine => machine.MachineId).ToHashSet();
         foreach (var id in _cards.Keys.Where(id => !ids.Contains(id)).ToArray())
         {
+            _cards[id].Hover.Dispose();
             _tiles.Children.Remove(_cards[id].Container);
             _cards.Remove(id);
         }
@@ -137,8 +148,10 @@ internal sealed class CompactWindow : Window
             Child = card.Button,
             ContextFlyout = menu
         };
-        return new CompactTile(card, container, connect);
+        var hover = new CompactHoverPreview(container, card.HoverPreview
+            ?? throw new InvalidOperationException("The compact machine preview is unavailable."));
+        return new CompactTile(card, container, connect, hover);
     }
 
-    private sealed record CompactTile(MachineCard Card, Border Container, MenuFlyoutItem Connect);
+    private sealed record CompactTile(MachineCard Card, Border Container, MenuFlyoutItem Connect, CompactHoverPreview Hover);
 }

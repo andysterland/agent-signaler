@@ -15,6 +15,7 @@
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyMetadata Include="DashboardResourceLeaseVersion" Value="1" />
     <Content Include="..\AgentSignaler.Configurator\AgentSignaler.ico" Link="AgentSignaler.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Page Remove="BrandResources.xaml" />
   </ItemGroup>
@@ -22,6 +23,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
     <ProjectReference Include="..\AgentSignaler.Service\AgentSignaler.Service.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Dashboard.Core\AgentSignaler.Dashboard.Core.csproj" />
     <ProjectReference Include="..\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
   </ItemGroup>
   <Target Name="PublishDashboardXamlResources" AfterTargets="ComputeFilesToPublish">

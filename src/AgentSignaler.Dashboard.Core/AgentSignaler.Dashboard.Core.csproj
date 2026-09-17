@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22621.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentSignaler.Service\AgentSignaler.Service.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
+    <InternalsVisibleTo Include="AgentSignaler.Dashboard" />
+    <InternalsVisibleTo Include="AgentSignaler.RpcHost" />
+    <InternalsVisibleTo Include="AgentSignaler.Integration.Tests" />
+    <InternalsVisibleTo Include="AgentSignaler.Dashboard.Core.Tests" />
+    <InternalsVisibleTo Include="AgentSignaler.RpcHost.Tests" />
+    <InternalsVisibleTo Include="AgentSignaler.Dashboard.Core.Tests.ProcessFixture" />
+  </ItemGroup>
+</Project>

@@ -12,7 +12,8 @@ public sealed record IntegrationManifest(Guid MachineId, string HookPath, string
 }
 public sealed record IntegrationRemovalJournal(string ConfigPath, string HookPath, byte[]? HookBytes,
     byte[] ManifestBytes, string TaskName, string? TaskXml, string? StartupName = null,
-    string? StartupCommand = null, bool WasRunning = false);
+    string? StartupCommand = null, bool WasRunning = false,
+    IntegrationStartupState? StartupStateBefore = null, IntegrationStartupState? StartupStateAfter = null);
 public sealed record LegacyHeartbeatMigrationJournal(int Version, string ConfigPath, Guid MachineId,
     string RelayPath, string TaskName, string TaskXml);
 public sealed record IntegrationPlan(RemoteConfiguration Config, string ConfigPath, string HookPath, string RelayPath,
@@ -24,7 +25,7 @@ public sealed record IntegrationPlan(RemoteConfiguration Config, string ConfigPa
     public string Preview => $"WRITE {ConfigPath}\n{System.Text.Encoding.UTF8.GetString(ConfigBytes)}\n\n" +
         $"WRITE owned hook file {HookPath}\n{System.Text.Encoding.UTF8.GetString(HookBytes)}\n\n" +
         $"Client: {ClientPath}\nRelay: {RelayPath}\n" +
-        $"REGISTER HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{StartupName}\n{StartupCommand}\n" +
+        $"PRESERVE existing sign-in preference; first setup registers owned current-user Startup programs shortcut {StartupName}.lnk\n{StartupCommand}\n" +
         $"Heartbeat: {Config.HeartbeatIntervalSeconds / 60} minutes. Offline deadline: {Config.HeartbeatIntervalSeconds * 2 + 60} seconds.\n" +
         "Startup is at this user's sign-in, not before login. First setup and first legacy migration launch Client immediately; " +
         "updates reload an already-running Client only. After Exit, use Start client explicitly.\n\n" +
@@ -123,9 +124,12 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
         if (oldTask is not null && !ScheduledTaskDefinition.IsOwned(oldTask, plan.Config.MachineId,
             prior?.RelayPath ?? plan.RelayPath, plan.ConfigPath))
             throw new InvalidDataException("Scheduled task name is occupied by an unrelated task.");
-        var oldStartup = startup?.Read(plan.StartupName);
+        var startupBefore = startup?.Capture(plan.StartupName);
+        var oldStartup = startupBefore?.Command;
         if (oldStartup is not null && oldStartup != plan.StartupCommand && oldStartup != prior?.StartupCommand)
             throw new InvalidDataException("Startup name is occupied by an unrelated command.");
+        var desiredStartup = prior?.ClientPath is not null && oldStartup is null ? null : plan.StartupCommand;
+        var startupAfter = startup?.Prepare(plan.StartupName, startupBefore!, desiredStartup);
         var paths = new[] { plan.ConfigPath, plan.HookPath, manifestPath, prior?.HookPath }
             .Where(p => p is not null).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var originals = paths.ToDictionary(p => p, p => File.Exists(p) ? AtomicFile.ReadBounded(p, 262144) : null);
@@ -140,51 +144,23 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
         }
         if (scheduler.ReadXml(plan.TaskName) != oldTask)
             throw new InvalidDataException("Scheduled task changed during validation; nothing was changed.");
+        if (startup is not null && !IntegrationStartup.Equivalent(startup.Capture(plan.StartupName), startupBefore!))
+            throw new InvalidDataException("Startup changed during validation; nothing was changed.");
         token.ThrowIfCancellationRequested();
-        BackupFiles(originals, oldTask, plan.ConfigPath);
-        var taskRemovalAttempted = false;
-        var startupAttempted = false;
-        try
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(new IntegrationManifest(
+            plan.Config.MachineId, plan.HookPath, Hash(plan.HookBytes), Hash(plan.ConfigBytes), plan.RelayPath,
+            startup is null ? null : plan.ClientPath, startup is null ? null : plan.StartupName,
+            startup is null ? null : plan.StartupCommand), Protocol.Json);
+        var changes = originals.Select(pair => new IntegrationFileChange(pair.Key, pair.Value,
+            SamePath(pair.Key, plan.ConfigPath) ? plan.ConfigBytes :
+            SamePath(pair.Key, plan.HookPath) ? plan.HookBytes :
+            SamePath(pair.Key, manifestPath) ? manifestBytes : null)).ToArray();
+        await new MultiTargetIntegrationManager(scheduler, verifyDelivery, startup, runtime).ExecuteAsync(new()
         {
-            AtomicFile.Write(plan.ConfigPath, plan.ConfigBytes);
-            AtomicFile.Write(plan.HookPath, plan.HookBytes);
-            if (prior is not null && !SamePath(prior.HookPath, plan.HookPath) && File.Exists(prior.HookPath)) File.Delete(prior.HookPath);
-            _ = RemoteConfiguration.Load(plan.ConfigPath);
-            using var hookCheck = JsonDocument.Parse(AtomicFile.ReadBounded(plan.HookPath, 32768));
-            if (oldTask is not null)
-            {
-                if (scheduler.ReadXml(plan.TaskName) != oldTask)
-                    throw new InvalidDataException("Scheduled task changed; the unrelated task will not be removed.");
-                taskRemovalAttempted = true;
-                scheduler.Delete(plan.TaskName);
-                if (scheduler.ReadXml(plan.TaskName) is not null)
-                    throw new InvalidOperationException("Legacy scheduled task removal failed.");
-            }
-            if (startup is not null)
-            {
-                startupAttempted = true;
-                startup.Replace(plan.StartupName, oldStartup, plan.StartupCommand);
-            }
-            AtomicFile.Write(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new IntegrationManifest(
-                plan.Config.MachineId, plan.HookPath, Hash(plan.HookBytes), Hash(plan.ConfigBytes), plan.RelayPath,
-                startup is null ? null : plan.ClientPath, startup is null ? null : plan.StartupName,
-                startup is null ? null : plan.StartupCommand), Protocol.Json));
-        }
-        catch (Exception failure) when (RemoteFailure.IsExpected(failure))
-        {
-            var rollbackErrors = new List<Exception>();
-            try { if (startupAttempted) RestoreStartup(plan.StartupName, plan.StartupCommand, oldStartup); }
-            catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { rollbackErrors.Add(ex); }
-            try { if (taskRemovalAttempted) RestoreLegacyTask(plan.TaskName, oldTask!); }
-            catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { rollbackErrors.Add(ex); }
-            foreach (var pair in originals)
-            {
-                try { if (pair.Value is null) File.Delete(pair.Key); else AtomicFile.Write(pair.Key, pair.Value); }
-                catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { rollbackErrors.Add(ex); }
-            }
-            if (rollbackErrors.Count != 0) throw new AggregateException("Rollback incomplete; retained backups require manual recovery.", new[] { failure }.Concat(rollbackErrors));
-            throw;
-        }
+            ConfigPath = plan.ConfigPath, Changes = changes, TaskName = plan.TaskName, TaskBefore = oldTask,
+            StartupName = plan.StartupName, StartupBefore = oldStartup, StartupAfter = startupAfter?.Command,
+            StartupStateBefore = startupBefore, StartupStateAfter = startupAfter
+        }, Path.Combine(dataDirectory, "integration-recovery.json"), token, backupUnchangedFiles: true);
         if (runtime is null)
             return new(true, false, "Settings saved. Runtime activation was not requested.");
         try
@@ -411,11 +387,13 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
             return;
         }
         ValidateStartupManifest(manifest, configPath);
-        var startupCommand = manifest.StartupName is null ? null : startup?.Read(manifest.StartupName);
+        var startupBefore = manifest.StartupName is null ? null : startup?.Capture(manifest.StartupName);
+        var startupCommand = startupBefore?.Command;
         if (startupCommand is not null && startupCommand != manifest.StartupCommand)
             throw new InvalidDataException("Unrelated startup command occupies the registered name; nothing removed.");
         if (manifest.StartupName is not null && startup is null)
             throw new InvalidOperationException("Startup servicing is unavailable; use the matching installed uninstall helper.");
+        var startupAfter = startupBefore is null ? null : startup!.Prepare(manifest.StartupName!, startupBefore, null);
         var taskName = ScheduledTaskDefinition.Name(manifest.MachineId);
         var task = scheduler.ReadXml(taskName);
         if (task is not null && !ScheduledTaskDefinition.IsOwned(task, manifest.MachineId, manifest.RelayPath, configPath))
@@ -432,7 +410,7 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
         if (prepare)
             AtomicFile.Write(journalPath, JsonSerializer.SerializeToUtf8Bytes(new IntegrationRemovalJournal(
                 configPath, manifest.HookPath, originals[manifest.HookPath], originals[manifestPath]!, taskName, task,
-                manifest.StartupName, startupCommand, wasRunning), Protocol.Json));
+                manifest.StartupName, startupCommand, wasRunning, startupBefore, startupAfter), Protocol.Json));
         var taskRemovalAttempted = false;
         var startupRemovalAttempted = false;
         try
@@ -443,7 +421,7 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
             if (manifest.StartupName is not null && startupCommand is not null)
             {
                 startupRemovalAttempted = true;
-                startup!.Replace(manifest.StartupName, startupCommand, null);
+                startup!.ReplaceState(manifest.StartupName, startupBefore!, startupAfter!);
             }
             if (task is not null)
             {
@@ -467,7 +445,7 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
                 catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
             try { if (taskRemovalAttempted) RestoreLegacyTask(taskName, task!); }
             catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
-            try { if (startupRemovalAttempted) RestoreStartup(manifest.StartupName!, null, startupCommand); }
+            try { if (startupRemovalAttempted) startup!.RestoreState(manifest.StartupName!, startupBefore!, startupAfter!); }
             catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
             if (errors.Count == 1 && prepare) File.Delete(journalPath);
             if (errors.Count > 1) throw new AggregateException("Uninstall rollback incomplete.", errors);
@@ -499,6 +477,8 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
             journal.StartupName != manifest.StartupName ||
             (journal.StartupCommand is not null && journal.StartupCommand != manifest.StartupCommand))
             throw new InvalidDataException("Removal journal ownership mismatch.");
+        IntegrationStartup.ValidateJournalStates(journal.StartupStateBefore, journal.StartupStateAfter,
+            journal.StartupCommand, null);
         var task = scheduler.ReadXml(journal.TaskName);
         if (task is not null && task != journal.TaskXml)
             throw new InvalidDataException("Task changed during uninstall; rollback will not overwrite it.");
@@ -519,7 +499,11 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
                 throw new InvalidDataException("Files changed during uninstall; rollback will not overwrite them.");
         if (task is null && journal.TaskXml is not null) scheduler.Write(journal.TaskName, journal.TaskXml);
         if (journal.StartupName is not null)
-            RestoreStartup(journal.StartupName, null, journal.StartupCommand);
+        {
+            if (journal.StartupStateBefore is { } before && journal.StartupStateAfter is { } after)
+                startup!.RestoreState(journal.StartupName, before, after);
+            else RestoreStartup(journal.StartupName, null, journal.StartupCommand);
+        }
         foreach (var pair in originals)
             if (pair.Value is not null) AtomicFile.Write(pair.Key, pair.Value);
         File.Delete(journalPath);
@@ -534,9 +518,7 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
 
     private void RestoreStartup(string name, string? applied, string? original)
     {
-        var current = startup!.Read(name);
-        if (current == original) return;
-        startup.Replace(name, applied, original);
+        startup!.RestoreLegacyState(name, original, applied);
     }
 
     internal static void ValidateStartupManifest(IntegrationManifest? manifest, string configPath)

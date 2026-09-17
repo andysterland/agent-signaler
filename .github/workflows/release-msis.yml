@@ -26,6 +26,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 75
     env:
+      AGENT_SIGNALER_LIVE_TUNNEL_TEST: "0"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
       RELEASE_PRERELEASE: ${{ inputs.prerelease }}
@@ -121,6 +122,44 @@ jobs:
       - name: Build and validate installers
         shell: powershell
         run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -ApplicationMsisOnly
+      - name: Build and test release contracts
+        shell: pwsh
+        run: |
+          dotnet restore AgentSignaler.slnx -p:Platform=x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build AgentSignaler.slnx --no-restore --configuration Release -p:Platform=x64 -p:Version=$env:RELEASE_VERSION
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:AGENT_SIGNALER_RPC_TEST_EXE = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe'
+          foreach ($project in @('Service', 'Remote', 'Integration', 'Tunneling', 'Dashboard.Core', 'RpcHost')) {
+            dotnet test "tests\AgentSignaler.$project.Tests\AgentSignaler.$project.Tests.csproj" --no-build --configuration Release -p:Platform=x64
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/AgentSignaler.RpcHost.Web.Tests/package-lock.json
+      - name: Audit NuGet dependencies
+        shell: pwsh
+        run: .\scripts\Test-DependencyAudit.ps1
+      - name: Validate browser contract and dependencies
+        shell: pwsh
+        working-directory: tests/AgentSignaler.RpcHost.Web.Tests
+        run: |
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run typecheck
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run test:unit
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm audit --omit=optional --audit-level=high
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:AGENT_SIGNALER_RPC_HOST_EXE = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe'
+          $env:AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS = '1'
+          npm run test:browser
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Prepare release assets and notes
         shell: pwsh
         run: |
@@ -128,12 +167,19 @@ jobs:
           New-Item -ItemType Directory -Path $release -Force | Out-Null
           $assets = @(
             'AgentSignaler.Dashboard.msi',
-            'AgentSignaler.Remote.msi'
+            'AgentSignaler.Remote.msi',
+            'AgentSignaler.RpcHost.msi'
           )
           foreach ($asset in $assets) {
             Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "artifacts\msi\$asset") `
               -Destination (Join-Path $release $asset)
           }
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe') `
+            -Destination (Join-Path $release 'AgentSignaler.RpcHost.exe')
+          $assets += 'AgentSignaler.RpcHost.exe'
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\THIRD-PARTY-NOTICES.txt') `
+            -Destination (Join-Path $release 'AgentSignaler.RpcHost.NOTICES.txt')
+          $assets += 'AgentSignaler.RpcHost.NOTICES.txt'
           $assets | ForEach-Object {
             $hash = (Get-FileHash -LiteralPath (Join-Path $release $_) -Algorithm SHA256).Hash
             "$hash  $_"
@@ -151,7 +197,16 @@ jobs:
 
           - ``AgentSignaler.Dashboard.msi`` - dashboard installation
           - ``AgentSignaler.Remote.msi`` - remote Dev Box installation
-          - ``SHA256SUMS.txt`` - SHA-256 checksums for both unsigned MSIs
+          - ``AgentSignaler.RpcHost.msi`` - per-user headless RPC host with mandatory MSI-owned Private receiver firewall rule; servicing requires MSI elevation
+          - ``AgentSignaler.RpcHost.exe`` - standalone single-file host; firewall setup is manual
+          - ``AgentSignaler.RpcHost.NOTICES.txt`` - redistribution license/notices accompanying the standalone EXE
+          - ``SHA256SUMS.txt`` - SHA-256 checksums for the unsigned MSIs, RpcHost EXE and notices
+
+          RpcHost is explicitly launched, never registered at sign-in. Stop the installed
+          host before servicing. Its loopback control is unauthenticated: unrelated localhost
+          pages and native clients, including other local users, can control it.
+          Actual elevated install/repair/upgrade/uninstall/rollback and clean-image execution
+          are **Not run - deferred release acceptance**; read-only gates do not prove them.
 
           Review the [acceptance record](https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/docs/ACCEPTANCE.md)
           and [installer guide](https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/installers/README.md)
@@ -165,6 +220,9 @@ jobs:
             'release', 'create', "v$env:RELEASE_VERSION",
             (Join-Path $release 'AgentSignaler.Dashboard.msi'),
             (Join-Path $release 'AgentSignaler.Remote.msi'),
+            (Join-Path $release 'AgentSignaler.RpcHost.msi'),
+            (Join-Path $release 'AgentSignaler.RpcHost.exe'),
+            (Join-Path $release 'AgentSignaler.RpcHost.NOTICES.txt'),
             (Join-Path $release 'SHA256SUMS.txt'),
             '--repo', $env:GITHUB_REPOSITORY,
             '--target', $env:GITHUB_SHA,

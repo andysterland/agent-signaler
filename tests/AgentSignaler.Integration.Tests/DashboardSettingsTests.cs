@@ -102,14 +102,14 @@ public sealed class DashboardSettingsTests
     [InlineData("""[42,null,"relative"]""")]
     [InlineData("null")]
     [InlineData("\"not a list\"")]
-    public void ObsoleteEndpointSettingsAreIgnoredWithoutLosingOtherPreferences(string endpoints)
+    public void UnknownEndpointSettingsArePreservedWithoutLosingOtherPreferences(string endpoints)
     {
         var settings = DashboardSettings.FromJson(
             $"{{\"DevCenterEndpoints\":{endpoints},\"Theme\":\"Dark\",\"Port\":51821,\"AutoStartSharing\":false}}");
         Assert.Equal("Dark", settings.Theme);
         Assert.Equal(51821, settings.Port);
         Assert.False(settings.AutoStartSharing);
-        Assert.DoesNotContain("DevCenterEndpoints", JsonSerializer.Serialize(settings));
+        Assert.Contains("DevCenterEndpoints", JsonSerializer.Serialize(settings));
     }
 
     [Theory]
@@ -137,7 +137,7 @@ public sealed class DashboardSettingsTests
             Assert.Equal(json, File.ReadAllText(DashboardSettings.FilePath));
             settings = settings.WithDiscoveryTarget(subscription, center);
             settings.Save();
-            Assert.DoesNotContain("DevCenterEndpoints", File.ReadAllText(DashboardSettings.FilePath));
+            Assert.Contains("DevCenterEndpoints", File.ReadAllText(DashboardSettings.FilePath));
             var restored = DashboardSettings.Load();
             Assert.Equal(settings, restored);
             Assert.Equal(subscription, restored.DevBoxSubscriptionId?.ToString());

@@ -76,7 +76,7 @@
                             <ToolTip Placement="Left" MaxWidth="440">
                                 <StackPanel Spacing="10" MaxWidth="400">
                                     <TextBlock Text="Configure a connection to your dashboard. The heartbeat interval must be a whole number of minutes from 1 to 60. The persistent machine UUID is retained when integration or the application is removed." TextWrapping="Wrap" />
-                                    <TextBlock Text="Client runs in the tray at user sign-in. Exit stops reporting until you explicitly start Client or sign in again. Start client uses saved settings." TextWrapping="Wrap" />
+                                    <TextBlock Text="Enable Start client when I sign in to add an owned shortcut to your Startup folder when you apply settings. Exit stops reporting until you explicitly start Client or sign in again with startup enabled. Start client uses saved settings." TextWrapping="Wrap" />
                                     <TextBlock Text="Select integrations on Hooks, then Apply settings and confirm the preview. Hook files and required profile settings are configured automatically. Opening, editing and testing do not change hooks or start Client." TextWrapping="Wrap" />
                                     <TextBlock Text="Legacy settings report status only. Applying settings explicitly upgrades to v5; upgrade Client, Relay and Configurator together first. Detailed sharing sends allowed user and assistant messages plus tool names, never tool arguments/results, raw errors or reasoning. Hook failures never block Copilot." TextWrapping="Wrap" />
                                 </StackPanel>
@@ -87,6 +87,10 @@
                         <StackPanel Spacing="14">
                             <TextBox x:Name="UrlBox" Header="Dashboard base URL" PlaceholderText="http://desktop-pc:51820 or https://your-service-returned-host" TextChanged="SettingsChanged" />
                             <NumberBox x:Name="HeartbeatBox" Header="Heartbeat interval (minutes)" Value="5" Minimum="1" Maximum="60" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="HeartbeatChanged" />
+                            <CheckBox x:Name="StartClientAtSignInCheckBox" Content="Start client when I sign in"
+                                      Checked="StartupChanged" Unchecked="StartupChanged" />
+                            <TextBlock Text="Apply settings to add or remove Agent Signaler's shortcut in your Startup programs folder. Disabling startup does not stop a running Client."
+                                       TextWrapping="Wrap" />
                             <ToggleSwitch x:Name="ShareDetailsSwitch" Header="Share detailed conversations" IsOn="True"
                                           Toggled="ShareDetailsChanged" />
                             <TextBlock Text="Message text, including personal information, is sent to the configured Dashboard. Consent is handled outside the app. Requires HTTPS, a running upgraded Client, a compatible receiver and verified source capabilities. Apply settings to save; legacy settings stay status-only until this explicit v5 upgrade."
@@ -237,7 +241,6 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
                 <TextBlock x:Name="ConfigPathText" TextTrimming="CharacterEllipsis" IsTextSelectionEnabled="True"
@@ -245,9 +248,11 @@
                 <TextBlock x:Name="RelayPathText" TextTrimming="CharacterEllipsis" IsTextSelectionEnabled="True"
                            ToolTipService.ToolTip="{Binding Text, ElementName=RelayPathText}" />
             </StackPanel>
-            <Button x:Name="StartClientButton" Grid.Column="1" Content="Start client" Click="StartClient_Click" />
-            <Button x:Name="ApplyButton" Grid.Column="2" Content="Apply settings" Click="Apply_Click"
-                    Style="{StaticResource AccentButtonStyle}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+                <Button x:Name="StartClientButton" Content="Start client" Click="StartClient_Click" />
+                <Button x:Name="ApplyButton" Content="Apply settings" Click="Apply_Click"
+                        Style="{StaticResource AccentButtonStyle}" />
+            </StackPanel>
         </Grid>
     </Grid>
 </Window>

@@ -26,7 +26,8 @@
   another application. Compact tiles show only the state glyph, using the same
   colors and symbols as the full dashboard; hover for machine details.
 - **Open the mapped Dev Box:** refresh a validated Windows App connection or focus
-  an existing matching window. Launches from compact view show a cancellable progress
+  an existing matching window. Use **Remote** at the bottom of a computer tile's
+  details view, from either the Settings or Transcript tab. Launches from compact view show a cancellable progress
   dialog while searching local windows, refreshing the connection, and launching Windows App.
 - **Choose the network boundary:** use a trusted private LAN/VPN or an explicitly
   configured anonymous Dev Tunnel backed by a loopback-only listener.
@@ -118,6 +119,37 @@ See the [user guide](docs/user-guide.md) for setup and operation,
 [installer guide](installers/README.md) for packaging details, and
 [contribution guide](CONTRIBUTING.md) for development safety requirements.
 
+### Headless RPC host
+
+`AgentSignaler.RpcHost` is an explicitly launched Windows x64 console host for
+the shared Dashboard runtime. Dashboard retains its WinUI behavior; the headless
+adapter exposes non-visual operations through WebSocket JSON-RPC 2.0 at
+`ws://localhost:51821/rpc`. It is separate from the receiver/LAN/Dev Tunnel
+listener. Only one supported Dashboard or RpcHost may own a data directory.
+
+```powershell
+.\AgentSignaler.RpcHost.exe --rpc-port 51821
+```
+
+**RPC is unauthenticated.** Any localhost-origin page or native local client
+supplying an accepted Origin can control the host, including executable-path
+changes and destructive commands. This is an accepted trusted-desktop policy,
+not access restricted to one WebView or Windows user. Parent exit does not stop
+the host; shut it down explicitly before switching hosts or MSI servicing.
+
+The self-contained EXE may extract native libraries to the .NET per-user cache.
+The dedicated RpcHost MSI owns a Private-profile, exact-EXE receiver firewall
+rule; there are no firewall RPC methods or runtime elevation helpers. Standalone
+copies require manual receiver firewall setup and updates. Neither distribution
+registers sign-in startup or launches automatically. Azure CLI, Dev Tunnels CLI
+and Windows App remain external prerequisites for their optional features.
+
+See [the RPC protocol and operational guide](docs/rpc-host-protocol.md) for the
+command line, revisions/stateless pagination, localhost trust policy, numerical
+limits, errors, lifecycle, servicing and deferred acceptance. The pinned
+TypeScript/Chromium contract harness is test-only; production web UI is out of
+scope. Automated gate failures still block publication.
+
 ## Security and privacy
 
 This prototype requires **external informed consent before distribution/use** for
@@ -160,8 +192,10 @@ privately rather than opening a public issue.
   development path.
 - Installer, upgrade, rollback, Windows App, Azure, Dev Tunnel, and IDE workflows
   still have documented manual release gates.
-- GitHub Releases may contain explicitly labeled unsigned development MSIs with
-  published SHA-256 checksums. No signed release is currently promised.
+- GitHub Releases may contain explicitly labeled unsigned development Dashboard,
+  Remote and RpcHost MSIs, plus the standalone RpcHost EXE and `SHA256SUMS.txt`.
+  All product assets use the workflow-calculated version. No signed release is
+  currently promised.
 - Source code is available under the [MIT License](LICENSE).
 
 Detailed status is tracked in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) and

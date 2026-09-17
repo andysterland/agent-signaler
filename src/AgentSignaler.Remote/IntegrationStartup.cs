@@ -1,7 +1,5 @@
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Win32;
 
 namespace AgentSignaler.Remote;
 
@@ -10,10 +8,47 @@ public interface IIntegrationStartup
     string? Read(string name);
     void Replace(string name, string? expected, string? command);
     bool IsDisabled(string name);
+
+    IntegrationStartupState Capture(string name) => new(Read(name));
+    IntegrationStartupState Prepare(string name, IntegrationStartupState before, string? command) => new(command);
+    void ReplaceState(string name, IntegrationStartupState before, IntegrationStartupState after) =>
+        Replace(name, before.Command, after.Command);
+    void RestoreState(string name, IntegrationStartupState before, IntegrationStartupState after)
+    {
+        if (!IntegrationStartup.Equivalent(Capture(name), before)) ReplaceState(name, after, before);
+    }
+    void RestoreLegacyState(string name, string? original, string? applied)
+    {
+        if (Read(name) != original) Replace(name, applied, original);
+    }
 }
+
+public sealed record IntegrationStartupState(string? Command, byte[]? Shortcut = null,
+    string? LegacyCommand = null, byte[]? ShortcutApproval = null, byte[]? LegacyApproval = null);
 
 public static class IntegrationStartup
 {
+    public static bool Equivalent(IntegrationStartupState a, IntegrationStartupState b) =>
+        a.Command == b.Command && a.LegacyCommand == b.LegacyCommand &&
+        Equal(a.Shortcut, b.Shortcut) && Equal(a.ShortcutApproval, b.ShortcutApproval) &&
+        Equal(a.LegacyApproval, b.LegacyApproval);
+
+    internal static bool Equal(byte[]? a, byte[]? b) =>
+        a is null ? b is null : b is not null && a.AsSpan().SequenceEqual(b);
+
+    internal static void ValidateJournalStates(IntegrationStartupState? before, IntegrationStartupState? after,
+        string? beforeCommand, string? afterCommand)
+    {
+        if (before is null && after is null) return;
+        if (before is null || after is null || before.Command != beforeCommand || after.Command != afterCommand)
+            throw new InvalidDataException("Startup recovery state mismatch.");
+        foreach (var state in new[] { before, after })
+            if (state.Shortcut?.Length > 65536 || state.ShortcutApproval?.Length is < 4 or > 256 ||
+                state.LegacyApproval?.Length is < 4 or > 256 ||
+                (state.LegacyCommand is not null && state.LegacyCommand != state.Command))
+                throw new InvalidDataException("Invalid startup recovery state.");
+    }
+
     public static string Name(string configPath) => "AgentSignaler-Client-" +
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(CanonicalConfigPath(configPath))))[..24];
 
@@ -31,39 +66,5 @@ public static class IntegrationStartup
             throw new InvalidDataException("An absolute path to AgentSignaler.Client.exe is required.");
         return $"{ScheduledTaskDefinition.QuoteArgument(Path.GetFullPath(clientPath))} --background --config " +
             ScheduledTaskDefinition.QuoteArgument(CanonicalConfigPath(configPath));
-    }
-}
-
-[SupportedOSPlatform("windows")]
-public sealed class WindowsIntegrationStartup : IIntegrationStartup
-{
-    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-
-    public string? Read(string name)
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-        var value = key?.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-        if (value is null) return null;
-        if (value is not string command || key!.GetValueKind(name) != RegistryValueKind.String)
-            throw new InvalidDataException("An unrelated startup value occupies the client registration.");
-        return command;
-    }
-
-    public void Replace(string name, string? expected, string? command)
-    {
-        if (!string.Equals(Read(name), expected, StringComparison.Ordinal))
-            throw new InvalidDataException("Startup registration changed; the unrelated value will not be overwritten.");
-        using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
-        if (command is null) key.DeleteValue(name, throwOnMissingValue: false);
-        else key.SetValue(name, command, RegistryValueKind.String);
-        if (!string.Equals(Read(name), command, StringComparison.Ordinal))
-            throw new InvalidOperationException("Client startup registration could not be verified.");
-    }
-
-    public bool IsDisabled(string name)
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
-        return key?.GetValue(name) is byte[] { Length: >= 4 } value && (value[0] == 3 || value[0] == 7);
     }
 }

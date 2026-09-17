@@ -26,6 +26,60 @@ public sealed class CliTunnelController : IAsyncDisposable
     private bool disposed;
     private TunnelIdentity identity;
     private TunnelStatus status = new(TunnelState.Stopped, "Internet sharing is stopped.");
+    private readonly AsyncLocal<OperationResultTracker?> resultTracker = new();
+    private sealed class OperationResultTracker
+    {
+        public TunnelOperationOutcome Outcome = TunnelOperationOutcome.Failed;
+        public TunnelCommitState CommitState;
+        public TunnelOperationFailure Failure;
+    }
+
+    public Task<TunnelOperationResult> StartWithResultAsync(CancellationToken token = default) =>
+        WithResultAsync(() => StartAsync(token), token);
+    public Task<TunnelOperationResult> DeleteWithResultAsync(CancellationToken token = default) =>
+        WithResultAsync(() => DeleteAsync(token), token);
+    public Task<TunnelOperationResult> LogoutWithResultAsync(CancellationToken token = default) =>
+        WithResultAsync(() => LogoutAsync(token), token);
+    public Task<TunnelOperationResult> StopWithResultAsync(CancellationToken token = default) =>
+        WithResultAsync(async () => { await StopAsync(token).ConfigureAwait(false); RecordOutcome(TunnelOperationOutcome.Succeeded); }, token);
+
+    private async Task<TunnelOperationResult> WithResultAsync(Func<Task> action, CancellationToken token)
+    {
+        var tracker = new OperationResultTracker();
+        var previous = resultTracker.Value;
+        resultTracker.Value = tracker;
+        try
+        {
+            try { await action().ConfigureAwait(false); }
+            catch (OperationCanceledException)
+            {
+                RecordOutcome(token.IsCancellationRequested ? TunnelOperationOutcome.Cancelled : TunnelOperationOutcome.TimedOut);
+            }
+            catch (Exception error) when (IsOperational(error))
+            {
+                RecordFailure(error);
+            }
+            if (token.IsCancellationRequested && tracker.Outcome == TunnelOperationOutcome.Succeeded)
+                tracker.Outcome = TunnelOperationOutcome.Cancelled;
+            return new(tracker.Outcome, tracker.CommitState, Status, tracker.Failure);
+        }
+        finally { resultTracker.Value = previous; }
+    }
+
+    private void RecordOutcome(TunnelOperationOutcome outcome)
+    {
+        if (resultTracker.Value is { } tracker) tracker.Outcome = outcome;
+    }
+
+    private void RecordFailure(Exception error) => RecordOutcome(
+        error is TimeoutException or TunnelException { FailureKind: CliFailureKind.CommandTimeout }
+            ? TunnelOperationOutcome.TimedOut : TunnelOperationOutcome.Failed);
+
+    private void RecordCommit(TunnelCommitState state)
+    {
+        if (resultTracker.Value is { } tracker && tracker.CommitState != TunnelCommitState.Committed)
+            tracker.CommitState = state;
+    }
 
     /// <param name="persistIdentity">
     /// Required atomic, bounded durable write. It must finish before returning and must not
@@ -110,10 +164,11 @@ public sealed class CliTunnelController : IAsyncDisposable
             lock (sync)
             {
                 ObjectDisposedException.ThrowIf(disposed, this);
-                if (requestedGeneration != generation) return;
+                if (requestedGeneration != generation) { RecordOutcome(TunnelOperationOutcome.Cancelled); return; }
                 if (host is not null && !host.Completion.IsCompleted &&
                     Status.State is TunnelState.Connected or TunnelState.Reconnecting or TunnelState.Verifying &&
-                    (port is null || port == receiverPort)) { keepHost = true; return; }
+                    (port is null || port == receiverPort))
+                { keepHost = true; RecordOutcome(Status.CanCopy ? TunnelOperationOutcome.Succeeded : TunnelOperationOutcome.Failed); return; }
                 if (port is { } requestedPort) receiverPort = requestedPort;
                 start = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 start.CancelAfter(options.StartupTimeout);
@@ -188,7 +243,9 @@ public sealed class CliTunnelController : IAsyncDisposable
                     }
                 }
             }
+            RecordCommit(TunnelCommitState.Unknown);
             host = await runner.StartHostAsync(options.CliPath, ["host", id], OnLine, token).ConfigureAwait(false);
+            RecordCommit(TunnelCommitState.Committed);
             var currentHost = host;
             var first = await Task.WhenAny(ready.Task, currentHost.Completion).WaitAsync(token).ConfigureAwait(false);
             if (first == currentHost.Completion) throw new TunnelException("The relay host exited before becoming ready.");
@@ -212,14 +269,18 @@ public sealed class CliTunnelController : IAsyncDisposable
             monitoring = MonitorHostAsync(currentHost, requestedGeneration, uri, outputFailure.Task, hostLifetime.Token);
             keepHost = true;
             startupTiming.Complete();
+            RecordOutcome(TunnelOperationOutcome.Succeeded);
         }
         catch (OperationCanceledException)
         {
+            RecordOutcome(cancellationToken.IsCancellationRequested || requestedGeneration != Interlocked.Read(ref generation)
+                ? TunnelOperationOutcome.Cancelled : TunnelOperationOutcome.TimedOut);
             await StopHostAsync().ConfigureAwait(false);
             SetStatus(TunnelState.Stopped, "Sharing startup was cancelled or timed out; saved identity was retained.");
         }
         catch (Exception exception) when (IsOperational(exception))
         {
+            RecordFailure(exception);
             var failedStage = Status.State;
             await StopHostAsync().ConfigureAwait(false);
             if (failedStage == TunnelState.Verifying && exception is HttpRequestException or TimeoutException)
@@ -307,14 +368,14 @@ public sealed class CliTunnelController : IAsyncDisposable
             lock (sync)
             {
                 ObjectDisposedException.ThrowIf(disposed, this);
-                if (requestedGeneration != generation) return;
+                if (requestedGeneration != generation) { RecordOutcome(TunnelOperationOutcome.Cancelled); return; }
                 activeStart = operation;
             }
             var token = operation.Token;
             await StopHostAsync().ConfigureAwait(false);
             await CheckAccountCoreAsync(token).ConfigureAwait(false);
             var id = Identity.TunnelId ?? Identity.PendingTunnelId;
-            if (id is null) return;
+            if (id is null) { RecordOutcome(TunnelOperationOutcome.Succeeded); return; }
             using var before = await LookupAsync(id, token).ConfigureAwait(false);
             if (before is not null)
             {
@@ -324,15 +385,22 @@ public sealed class CliTunnelController : IAsyncDisposable
                 using var deleted = await JsonCommandAsync(token, "delete", fullId, "--force", "--json").ConfigureAwait(false);
                 if (TunnelValidation.Text(deleted.RootElement, "deletedTunnel") != fullId)
                     throw new TunnelException("The CLI did not confirm deletion of the requested tunnel. Identity retained.");
+                RecordCommit(TunnelCommitState.Committed);
                 using var after = await LookupAsync(fullId, token).ConfigureAwait(false);
                 if (after is not null)
                     throw new TunnelException("The tunnel is still present after deletion. Identity retained; retry explicitly.");
             }
             await SaveAsync(Identity with { TunnelId = null, PendingTunnelId = null }, token).ConfigureAwait(false);
             SetStatus(TunnelState.Stopped, "Tunnel absence confirmed. Saved resource identity cleared.");
+            RecordOutcome(TunnelOperationOutcome.Succeeded);
         }
-        catch (OperationCanceledException) { SetStatus(TunnelState.Stopped, "Deletion cancelled; identity retained."); }
-        catch (Exception exception) when (IsOperational(exception)) { Fail(exception); }
+        catch (OperationCanceledException)
+        {
+            RecordOutcome(operation.IsCancellationRequested ? TunnelOperationOutcome.Cancelled : TunnelOperationOutcome.TimedOut);
+            SetStatus(TunnelState.Stopped, "Deletion cancelled; identity retained.");
+        }
+        catch (Exception exception) when (IsOperational(exception))
+        { RecordFailure(exception); Fail(exception); }
         finally
         {
             lock (sync) { if (ReferenceEquals(activeStart, operation)) activeStart = null; }
@@ -352,16 +420,23 @@ public sealed class CliTunnelController : IAsyncDisposable
             lock (sync)
             {
                 ObjectDisposedException.ThrowIf(disposed, this);
-                if (requestedGeneration != generation) return;
+                if (requestedGeneration != generation) { RecordOutcome(TunnelOperationOutcome.Cancelled); return; }
                 activeStart = operation;
             }
             await StopHostAsync().ConfigureAwait(false);
             await CheckVersionAsync(operation.Token).ConfigureAwait(false);
             await CommandAsync(operation.Token, "user", "logout").ConfigureAwait(false);
+            RecordCommit(TunnelCommitState.Committed);
             SetStatus(TunnelState.AccountRequired, "CLI logout completed. Browser cookies are unchanged; tunnel identity is retained.");
+            RecordOutcome(TunnelOperationOutcome.Succeeded);
         }
-        catch (OperationCanceledException) { SetStatus(TunnelState.Stopped, "Logout cancelled; hosting is stopped."); }
-        catch (Exception exception) when (IsOperational(exception)) { Fail(exception); }
+        catch (OperationCanceledException)
+        {
+            RecordOutcome(operation.IsCancellationRequested ? TunnelOperationOutcome.Cancelled : TunnelOperationOutcome.TimedOut);
+            SetStatus(TunnelState.Stopped, "Logout cancelled; hosting is stopped.");
+        }
+        catch (Exception exception) when (IsOperational(exception))
+        { RecordFailure(exception); Fail(exception); }
         finally
         {
             lock (sync) { if (ReferenceEquals(activeStart, operation)) activeStart = null; }
@@ -501,6 +576,9 @@ public sealed class CliTunnelController : IAsyncDisposable
 
     private async Task<CliCommandResult> CommandAsync(CancellationToken token, params string[] args)
     {
+        if (args[0] is "create" or "delete" ||
+            args.Length > 1 && (args[0] is "port" or "access" && args[1] == "create" || args[0] == "user" && args[1] == "logout"))
+            RecordCommit(TunnelCommitState.Unknown);
         var result = await runner.RunAsync(options.CliPath, args, options.CommandTimeout, token).ConfigureAwait(false);
         if (result.ExitCode != 0)
             throw new TunnelException("The CLI command failed. Check explicit CLI sign-in, connectivity, permissions, and quota, then retry. Saved identity was retained.");
@@ -522,12 +600,15 @@ public sealed class CliTunnelController : IAsyncDisposable
 
     private async Task SaveAsync(TunnelIdentity value, CancellationToken token)
     {
+        RecordCommit(TunnelCommitState.Unknown);
         try { await persist(value, token).ConfigureAwait(false); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or JsonException)
         {
+            if (resultTracker.Value is { } tracker) tracker.Failure = TunnelOperationFailure.Persistence;
             throw new TunnelException("Cannot persist tunnel ownership state. Sharing is blocked; recover the saved pending intent before retrying.");
         }
         Volatile.Write(ref identity, value);
+        RecordCommit(TunnelCommitState.Committed);
     }
 
     private void CancelStart()
@@ -548,7 +629,12 @@ public sealed class CliTunnelController : IAsyncDisposable
         try
         {
             lifetime?.Cancel();
-            if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
+            if (previous is not null)
+            {
+                RecordCommit(TunnelCommitState.Unknown);
+                await previous.DisposeAsync().ConfigureAwait(false);
+                RecordCommit(TunnelCommitState.Committed);
+            }
         }
         finally { lifetime?.Dispose(); }
     }

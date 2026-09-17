@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Collections.Concurrent;
 using Microsoft.Win32.SafeHandles;
 
 namespace AgentSignaler.Tunneling;
@@ -58,6 +59,7 @@ public sealed class WindowsTunnelProcessRunner : ITunnelProcessRunner
 
 internal sealed class NativeChild : ITunnelHostProcess
 {
+    private static readonly ConcurrentDictionary<NativeChild, byte> ownedChildren = new();
     private readonly SafeFileHandle job;
     private readonly SafeFileHandle process;
     private readonly StreamReader stdout;
@@ -68,26 +70,30 @@ internal sealed class NativeChild : ITunnelHostProcess
     public Task<int> Completion { get; }
 
     private NativeChild(SafeFileHandle job, SafeFileHandle process, SafeFileHandle output, SafeFileHandle error,
-        FileStream? executableLock, StringBuilder? outBuffer, StringBuilder? errBuffer, Action<string>? onLine, int limit)
+        FileStream? executableLock, StringBuilder? outBuffer, StringBuilder? errBuffer, Action<string>? onLine, int limit, bool rawStreams = false)
     {
         this.job = job;
         this.process = process;
         this.executableLock = executableLock;
         stdout = new StreamReader(new FileStream(output, FileAccess.Read, 4096, isAsync: false), Encoding.UTF8, true, 4096);
         stderr = new StreamReader(new FileStream(error, FileAccess.Read, 4096, isAsync: false), Encoding.UTF8, true, 4096);
-        Completion = ObserveAsync(
+        Completion = rawStreams ? ObserveAsync(Task.CompletedTask, Task.CompletedTask) : ObserveAsync(
             Task.Run(() => Pump(stdout, outBuffer, onLine, limit)),
             Task.Run(() => Pump(stderr, errBuffer, null, limit)));
     }
 
+    internal Stream StandardOutput => stdout.BaseStream;
+    internal Stream StandardError => stderr.BaseStream;
+
     internal static NativeChild Start(string executable, IReadOnlyList<string> arguments, StringBuilder? stdout,
-        StringBuilder? stderr, Action<string>? outputLine, int limit, bool verifyTrust, TunnelDiagnostics.Scope? timing = null)
+        StringBuilder? stderr, Action<string>? outputLine, int limit, bool verifyTrust, TunnelDiagnostics.Scope? timing = null,
+        bool rawStreams = false, IEnumerable<KeyValuePair<string, string?>>? environment = null)
     {
         if (!OperatingSystem.IsWindows()) throw new TunnelException("CLI containment requires Windows.", TunnelState.Unsupported)
         { FailureKind = CliFailureKind.UnsupportedPlatform };
         FileStream? lockedFile = null;
         SafeFileHandle? job = null, process = null, thread = null, outRead = null, outWrite = null, errRead = null, errWrite = null, input = null;
-        IntPtr attributes = IntPtr.Zero, handles = IntPtr.Zero, jobs = IntPtr.Zero;
+        IntPtr attributes = IntPtr.Zero, handles = IntPtr.Zero, jobs = IntPtr.Zero, environmentBlock = IntPtr.Zero;
         var attributesInitialized = false;
         try
         {
@@ -149,16 +155,21 @@ internal sealed class NativeChild : ITunnelHostProcess
                 if (argument.Contains('\0')) throw new ArgumentException("Arguments cannot contain NUL.");
                 commandLine.Append(' ').Append(QuoteArgument(argument));
             }
-            // CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT.
-            if (!Native.CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, 0x08080004,
-                IntPtr.Zero, Path.GetDirectoryName(executable), ref startupInfo, out var info))
+            if (environment is not null)
+                environmentBlock = Marshal.StringToHGlobalUni(string.Join('\0', environment
+                    .Where(pair => pair.Value is not null).OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(pair => $"{pair.Key}={pair.Value}")) + "\0\0");
+            // CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT.
+            if (!Native.CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, 0x08080404,
+                environmentBlock, Path.GetDirectoryName(executable), ref startupInfo, out var info))
                 throw new Win32Exception();
             process = new SafeFileHandle(info.Process, ownsHandle: true);
             thread = new SafeFileHandle(info.Thread, ownsHandle: true);
             if (Native.ResumeThread(thread) == uint.MaxValue) throw new Win32Exception();
             outWrite.Dispose(); outWrite = null;
             errWrite.Dispose(); errWrite = null;
-            var result = new NativeChild(job, process, outRead, errRead, lockedFile, stdout, stderr, outputLine, limit);
+            var result = new NativeChild(job, process, outRead, errRead, lockedFile, stdout, stderr, outputLine, limit, rawStreams);
+            ownedChildren.TryAdd(result, 0);
             job = process = outRead = errRead = null;
             lockedFile = null;
             startup?.Complete();
@@ -176,6 +187,7 @@ internal sealed class NativeChild : ITunnelHostProcess
             if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
             if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
             if (jobs != IntPtr.Zero) Marshal.FreeHGlobal(jobs);
+            if (environmentBlock != IntPtr.Zero) Marshal.FreeHGlobal(environmentBlock);
             input?.Dispose(); thread?.Dispose(); outWrite?.Dispose(); errWrite?.Dispose();
             job?.Dispose(); process?.Dispose(); outRead?.Dispose(); errRead?.Dispose(); lockedFile?.Dispose();
         }
@@ -197,6 +209,12 @@ internal sealed class NativeChild : ITunnelHostProcess
 
     internal void BindCancellation(CancellationToken token) => cancellation = token.Register(Kill);
     internal void Kill() => job.Dispose();
+    internal static async Task StopOwnedChildrenAsync()
+    {
+        var children = ownedChildren.Keys.ToArray();
+        foreach (var child in children) child.Kill();
+        await Task.WhenAll(children.Select(child => child.Completion)).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+    }
 
     private void Pump(StreamReader reader, StringBuilder? buffer, Action<string>? onLine, int limit)
     {
@@ -255,6 +273,7 @@ internal sealed class NativeChild : ITunnelHostProcess
         try { await Completion.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
         finally
         {
+            ownedChildren.TryRemove(this, out _);
             try { stdout.Dispose(); }
             finally
             {

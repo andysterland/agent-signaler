@@ -10,6 +10,32 @@ For local testing without a second computer, follow
 [the single-machine manual test plan](MANUAL-TEST-PLAN.md). Record its results
 separately; loopback tests do not establish LAN/VPN or remote firewall behavior.
 
+## RpcHost release acceptance
+
+The [RPC protocol](rpc-host-protocol.md) separates required deterministic
+automated gates from interactive release acceptance. Do not treat configuration
+assertions, fake CLI/native adapters or a queued workflow as live verification.
+The execution handoff records actual automated results, artifact hashes, source
+SHA and publication status separately from this checklist.
+
+| Check | Status |
+| --- | --- |
+| Supported WebView/browser shell and real origin policy | Not run - deferred release acceptance |
+| Real Azure account login/permissions and Dev Tunnel lifecycle | Not run - deferred release acceptance |
+| Real Windows App mapping, reuse, sign-in and foreground denial | Not run - deferred release acceptance |
+| Dashboard visual/tray parity and second interactive Windows session | Not run - deferred release acceptance |
+| Clean supported Windows image without .NET/Windows App SDK | Not run - deferred release acceptance |
+| Disposable-VM MSI install/upgrade/repair/uninstall/rollback | Not run - deferred release acceptance |
+| UAC approve/deny, silent insufficient privilege and intended-user elevation | Not run - deferred release acceptance |
+| Mandatory exact Private receiver rule, port maintenance, foreign-rule preservation and rollback | Not run - deferred release acceptance |
+| Parent-exit/forced termination/port collision repeated in production launcher | Not run - deferred release acceptance |
+
+RpcHost intentionally accepts unauthenticated control from unrelated localhost
+pages and native clients, including other local users supplying Origin. This
+accepted risk includes executable-path changes, diagnostics and destructive
+operations. Neither Origin nor the single-controller lease authenticates a user.
+Do not use the endpoint across a trust boundary.
+
 ## Detailed-conversation prototype release gates — pending
 
 This is the resolved externally consented prototype policy, **not a release
@@ -375,8 +401,11 @@ Long-duration credentials and independent-network/MSI acceptance remain outstand
   state; diagnostics must identify cross-session ownership without resetting history.
   Updated Relay with v1/v2 configuration still has no direct HTTP fallback.
 - Client Open Configurator uses co-installed trusted path/context and keeps reporting.
-  Verify exact owned HKCU Run registration starts Client only at user sign-in,
-  never pre-login; deliberate Exit retains registration for next sign-in.
+  Verify the Configurator checkbox creates/removes only its owned current-user
+  Startup `.lnk`, targeting the adjacent Client with canonical background/config
+  arguments. Startup occurs only at user sign-in, never pre-login; deliberate
+  Exit retains registration for next sign-in. Repair preserves opt-out; owned Run
+  migration avoids duplicate launches and preserves Windows Startup Apps disabled state.
 - Resize through compact/wide layouts and verify square readable cards.
 - Check high contrast, light/dark themes, keyboard navigation and screen-reader labels.
 - Toggle always-on-top; restart and verify the choice persists.

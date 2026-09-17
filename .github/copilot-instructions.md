@@ -20,8 +20,15 @@ every change.
 - `AgentSignaler.Service` hosts the bounded Kestrel receiver and persists
   dashboard machine state in SQLite.
 - `AgentSignaler.Dashboard` is an unpackaged, self-contained WinUI 3 x64 app. It
-  owns display, local history, listener mode, Dev Tunnels, Azure Dev Box, and
-  Windows App workflows.
+  owns display, tray, compact navigation and visual workflow adapters.
+- `AgentSignaler.Dashboard.Core` owns the shared operational runtime, canonical
+  data resource lease, settings, receiver, local state, CLI workflows and
+  independent domain revisions for Dashboard and RpcHost.
+- `AgentSignaler.RpcHost` is an explicitly launched self-contained console host
+  with a separate loopback-only JSON-RPC listener. Preserve the reviewed
+  unauthenticated localhost policy, bounded protocol, single-controller drain,
+  explicit DTO privacy boundary and stateless revision-checked pagination.
+  Never tunnel its control port or add runtime firewall/elevation helpers.
 - `AgentSignaler.Configurator` is an unpackaged, self-contained WinUI 3 x64 app
   for discovering, previewing, applying, repairing, and removing user-level
   integrations.

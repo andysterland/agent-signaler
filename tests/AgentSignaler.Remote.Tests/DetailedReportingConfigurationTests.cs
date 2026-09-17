@@ -170,7 +170,9 @@ public sealed class DetailedReportingConfigurationTests : IDisposable
         startup.Fail = true;
         var changed = RemoteConfiguration.Load(ConfigPath) with { DetailedReportingEnabled = false };
         var manager = Manager();
-        var failure = await Assert.ThrowsAsync<AggregateException>(() => manager.ApplyAsync(Plan(changed), default));
+        var failure = await Assert.ThrowsAsync<AggregateException>(() => manager.ApplyAsync(
+            MultiTargetIntegrationManager.Preview(changed, ConfigPath, changed.Integrations, RelayPath,
+                startClientAtSignIn: true), default));
         Assert.Contains("opt-out", failure.ToString());
         Assert.False(RemoteConfiguration.Load(ConfigPath).DetailedReportingEnabled);
         Assert.True(runtime.Suspended);
@@ -206,7 +208,9 @@ public sealed class DetailedReportingConfigurationTests : IDisposable
         startup.Value = null;
         startup.Fail = true;
         var changed = RemoteConfiguration.Load(ConfigPath) with { DetailedReportingEnabled = true };
-        await Assert.ThrowsAsync<IOException>(() => Manager().ApplyAsync(Plan(changed), default));
+        await Assert.ThrowsAsync<IOException>(() => Manager().ApplyAsync(
+            MultiTargetIntegrationManager.Preview(changed, ConfigPath, changed.Integrations, RelayPath,
+                startClientAtSignIn: true), default));
         Assert.Equal(before, File.ReadAllBytes(ConfigPath));
         Assert.False(RemoteConfiguration.Load(ConfigPath).DetailedReportingEnabled);
         Assert.True(runtime.Suspended);

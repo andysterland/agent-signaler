@@ -251,3 +251,5 @@ try {
     }
 }
 finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer) }
+
+& (Join-Path $PSScriptRoot 'Test-RpcHostInstaller.ps1') -Version $Version

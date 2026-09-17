@@ -19,8 +19,9 @@ public sealed class DashboardServer : IAsyncDisposable
     public DashboardServer(MachineStore store, int port, Action? onConfiguratorTestConnection = null,
         DashboardServerOptions? options = null)
     {
-        if (port is < 1024 or > 65535) throw new ArgumentOutOfRangeException(nameof(port), "Choose a port between 1024 and 65535.");
         options ??= new DashboardServerOptions();
+        if ((port != 0 || !options.AllowEphemeralPort) && port is < 1024 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(port), "Choose a port between 1024 and 65535.");
         options.Validate();
         ListenerMode = options.ListenerMode;
         Transcripts = new TranscriptStore(async (machineId, generation, cancellationToken) =>
@@ -35,7 +36,8 @@ public sealed class DashboardServer : IAsyncDisposable
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.AddServerHeader = false;
-            if (ListenerMode == DashboardListenerMode.Internet) options.ListenLocalhost(port);
+            if (port == 0) options.Listen(System.Net.IPAddress.Loopback, 0);
+            else if (ListenerMode == DashboardListenerMode.Internet) options.ListenLocalhost(port);
             else options.ListenAnyIP(port);
             options.Limits.MaxRequestBodySize = Protocol.MaxBodyBytes;
             options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(5);
@@ -177,6 +179,7 @@ public sealed class DashboardServer : IAsyncDisposable
     }
 
     public DashboardListenerMode ListenerMode { get; }
+    internal int BoundPort => _application.Urls.Select(url => new Uri(url).Port).FirstOrDefault();
     public TranscriptStore Transcripts { get; }
     public void SetTranscriptReadiness(bool ready) =>
         Transcripts.SetReadiness(ListenerMode == DashboardListenerMode.Internet && ready);

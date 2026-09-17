@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="ChildFixture\**\*.cs" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\AgentSignaler.RpcHost\AgentSignaler.RpcHost.csproj" />
+    <ProjectReference Include="ChildFixture\AgentSignaler.RpcHost.ChildFixture.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

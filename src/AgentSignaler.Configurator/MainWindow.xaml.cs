@@ -18,6 +18,7 @@ public sealed partial class MainWindow : Window
     private bool busy;
     private bool closed;
     private bool detailsSuspended;
+    private bool startupPreferenceLoaded;
     private readonly CancellationTokenSource windowLifetime = new();
     private CancellationTokenSource? connectionTest;
     private CancellationTokenSource? discoveryCancellation;
@@ -90,6 +91,7 @@ public sealed partial class MainWindow : Window
 
     private async Task RefreshAsync(bool preserveSelection = true)
     {
+        if (!preserveSelection || !startupPreferenceLoaded) LoadStartupPreference();
         InvalidatePreview();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         discoveryCancellation = timeout;
@@ -102,7 +104,10 @@ public sealed partial class MainWindow : Window
             UpdateActionStates();
         }
         var config = File.Exists(ConfigPath) ? RemoteConfiguration.Load(ConfigPath) : null;
-        if (!preserveSelection) ShareDetailsSwitch.IsOn = config?.DetailedReportingEnabled ?? true;
+        if (!preserveSelection)
+        {
+            ShareDetailsSwitch.IsOn = config?.DetailedReportingEnabled ?? true;
+        }
         var savedRelayPath = config?.RelayPath ?? Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Relay.exe");
         RelayPathText.Text = $"Relay: {savedRelayPath}";
         if (!preserveSelection) RelayPathBox.Text = savedRelayPath;
@@ -195,8 +200,18 @@ public sealed partial class MainWindow : Window
 
     private MultiTargetIntegrationPlan CreatePlan()
     {
+        if (!startupPreferenceLoaded)
+            throw new InvalidOperationException("The startup preference is unavailable. Refresh and resolve the startup error before applying settings.");
         var config = ReadConfiguration();
-        return MultiTargetIntegrationManager.Preview(config, ConfigPath, SelectedTargets(), config.RelayPath!);
+        return MultiTargetIntegrationManager.Preview(config, ConfigPath, SelectedTargets(), config.RelayPath!,
+            startClientAtSignIn: StartClientAtSignInCheckBox.IsChecked == true);
+    }
+
+    private void LoadStartupPreference()
+    {
+        startupPreferenceLoaded = false;
+        StartClientAtSignInCheckBox.IsChecked = startup.Read(IntegrationStartup.Name(ConfigPath)) is not null;
+        startupPreferenceLoaded = true;
     }
 
     private async Task RefreshRuntimeAsync()
@@ -217,12 +232,18 @@ public sealed partial class MainWindow : Window
             !state.Running ? "Sharing enabled in settings; Client is stopped. No details are being captured." :
             "Sharing enabled in settings; capture requires a compatible receiver and verified host capability. Remote state has not been confirmed.";
         var revision = ClientConfigurationRevision.Read(ConfigPath);
+        var startupName = IntegrationStartup.Name(ConfigPath);
+        var startupStatus = startup.Read(startupName) is null
+            ? " Sign-in startup is not configured."
+            : startup.IsDisabled(startupName)
+                ? " Windows has disabled sign-in startup; enable it in Startup Apps."
+                : " Client is registered to start when you sign in.";
         RuntimeText.Text = $"Saved heartbeat: {saved.HeartbeatIntervalSeconds / 60} minutes. " +
             (state.Running ? $"Client running; effective heartbeat: {(state.HeartbeatIntervalSeconds is { } seconds ? $"{seconds / 60} minutes" : "unknown")}; " +
                 $"effective revision: {state.EffectiveRevision ?? "unknown"}. " +
                 (revision == state.EffectiveRevision ? "Saved settings are effective." : "Saved settings are not yet effective.") :
                 "Client not running; saved settings are not active.") +
-            (startup.IsDisabled(IntegrationStartup.Name(ConfigPath)) ? " Windows has disabled sign-in startup." : "");
+            startupStatus;
     }
 
     private async void StartClient_Click(object sender, RoutedEventArgs e)
@@ -460,6 +481,7 @@ public sealed partial class MainWindow : Window
     private void HeartbeatChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => InvalidatePreview();
     private void SettingsChanged(object sender, TextChangedEventArgs e) => InvalidatePreview();
     private void ShareDetailsChanged(object sender, RoutedEventArgs e) => InvalidatePreview();
+    private void StartupChanged(object sender, RoutedEventArgs e) => InvalidatePreview();
     private void InvalidatePreview()
     {
         if (PreviewBox is not null) PreviewBox.Text = "";
@@ -478,9 +500,11 @@ public sealed partial class MainWindow : Window
         var state = new ConfiguratorActionState(busy, discoveryCancellation is not null, connectionTest is not null);
         UrlBox.IsEnabled = HeartbeatBox.IsEnabled = ShareDetailsSwitch.IsEnabled =
             TestButton.IsEnabled = StartClientButton.IsEnabled = state.CanUseConnection;
+        StartClientAtSignInCheckBox.IsEnabled = state.CanUseConnection && startupPreferenceLoaded;
         RelayPathBox.IsEnabled = RefreshButton.IsEnabled = AddLocationButton.IsEnabled = HooksGrid.IsEnabled = PreviewButton.IsEnabled =
             RecoverVerificationButton.IsEnabled = RecoverIntegrationButton.IsEnabled = UninstallButton.IsEnabled = state.CanChangeIntegration;
-        ApplyButton.IsEnabled = state.CanApply;
+        PreviewButton.IsEnabled &= startupPreferenceLoaded;
+        ApplyButton.IsEnabled = state.CanApply && startupPreferenceLoaded;
         CancelDiscoveryButton.IsEnabled = state.CanCancelDiscovery;
         CancelTestButton.IsEnabled = state.CanCancelTest;
     }

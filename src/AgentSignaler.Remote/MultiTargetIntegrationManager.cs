@@ -27,6 +27,8 @@ public sealed class MultiTargetIntegrationPlan
     public IReadOnlyList<IntegrationTarget> Targets => Config.Integrations;
     public bool IsRemoval { get; }
     public bool IsStatusOnlyDowngrade { get; }
+    public bool StartClientAtSignIn { get; }
+    internal bool PreserveStartupPreference { get; }
     public string Preview { get; }
     internal IReadOnlyList<IntegrationFileChange> Changes { get; }
     internal IntegrationManifest? Prior { get; }
@@ -35,7 +37,8 @@ public sealed class MultiTargetIntegrationPlan
 
     internal MultiTargetIntegrationPlan(RemoteConfiguration config, string configPath,
         IReadOnlyList<IntegrationFileChange> changes, IntegrationManifest? prior, bool removal,
-        Func<string, bool>? loaderHookExists = null, bool statusOnlyDowngrade = false)
+        Func<string, bool>? loaderHookExists = null, bool statusOnlyDowngrade = false,
+        bool startClientAtSignIn = true, bool preserveStartupPreference = false)
     {
         Config = config;
         ConfigPath = configPath;
@@ -43,6 +46,8 @@ public sealed class MultiTargetIntegrationPlan
         Prior = prior;
         IsRemoval = removal;
         IsStatusOnlyDowngrade = statusOnlyDowngrade;
+        StartClientAtSignIn = startClientAtSignIn;
+        PreserveStartupPreference = preserveStartupPreference;
         ConfigBytes = MultiTargetIntegrationManager.Serialize(config);
         LoaderHookExists = loaderHookExists ?? File.Exists;
         Preview = string.Join("\n\n", changes.Where(c => !MultiTargetIntegrationManager.Equal(c.Before, c.After))
@@ -54,10 +59,11 @@ public sealed class MultiTargetIntegrationPlan
             "\nSelected hook files and profile locations are configured automatically; configuration is not proof of actual host event delivery." +
             $"\nOne tray Client; heartbeat {config.HeartbeatIntervalSeconds / 60} minutes. " +
             (removal ? "Retain configuration and sign-in startup; do not start a stopped Client." :
-                config.Integrations.Count == 0 ? "Save reporter configuration and owned sign-in startup only. Use Start client explicitly to begin reporting; no hook files are installed." :
-                "Register owned sign-in startup and remove an owned legacy heartbeat task. First setup/migration starts Client; updates only reload a running Client.") +
-            (removal ? "" : $"\nREGISTER HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{IntegrationStartup.Name(configPath)}" +
-                $"\n{IntegrationStartup.Command(Path.Combine(Path.GetDirectoryName(config.RelayPath!)!, "AgentSignaler.Client.exe"), configPath)}" +
+                config.Integrations.Count == 0 ? "Save reporter configuration. Use Start client explicitly to begin reporting; no hook files are installed." :
+                "Remove an owned legacy heartbeat task. First setup/migration starts Client; updates only reload a running Client.") +
+            (removal ? "" : $"\n{(preserveStartupPreference ? "PRESERVE existing" : startClientAtSignIn ? "REGISTER owned" : "REMOVE owned")} current-user Startup programs shortcut: {IntegrationStartup.Name(configPath)}.lnk" +
+                (startClientAtSignIn ? $"\n{IntegrationStartup.Command(Path.Combine(Path.GetDirectoryName(config.RelayPath!)!, "AgentSignaler.Client.exe"), configPath)}" : "") +
+                "\nSign-in startup does not start or stop the current Client. Windows Startup Apps disabled state is preserved. Owned legacy Run registration is migrated or removed; unrelated entries are preserved." +
                 $"\nREMOVE owned legacy task {ScheduledTaskDefinition.Name(config.MachineId)} if present; no scheduled task is installed.") +
             "\nDashboard source-aware capability verification is required before installation changes." +
             (config.Version >= 5
@@ -92,12 +98,18 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
     internal static byte[]? Read(string path) => File.Exists(path) ? AtomicFile.ReadBounded(path, 4194304) : null;
     private static string RecoveryPath(string configPath) => Path.Combine(Path.GetDirectoryName(configPath)!, "integration-recovery.json");
 
+    // Repair/servicing callers without an explicit user choice must not resurrect a saved startup opt-out.
     public static MultiTargetIntegrationPlan Preview(RemoteConfiguration config, string configPath,
         IReadOnlyList<IntegrationTarget> targets, string relayPath) =>
-        Preview(config, configPath, targets, relayPath, File.Exists);
+        Preview(config, configPath, targets, relayPath, File.Exists, preserveStartupPreference: true);
+
+    public static MultiTargetIntegrationPlan Preview(RemoteConfiguration config, string configPath,
+        IReadOnlyList<IntegrationTarget> targets, string relayPath, bool startClientAtSignIn = true) =>
+        Preview(config, configPath, targets, relayPath, File.Exists, startClientAtSignIn, preserveStartupPreference: false);
 
     internal static MultiTargetIntegrationPlan Preview(RemoteConfiguration config, string configPath,
-        IReadOnlyList<IntegrationTarget> targets, string relayPath, Func<string, bool> loaderHookExists)
+        IReadOnlyList<IntegrationTarget> targets, string relayPath, Func<string, bool> loaderHookExists,
+        bool startClientAtSignIn = true, bool preserveStartupPreference = true)
     {
         config.Validate();
         configPath = Canonical(configPath);
@@ -119,7 +131,7 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             AutomaticHookConfiguration.RequireInstallable(target, configPath);
         }
         ValidateScopes(selected, loaderHookExists);
-        return Build(config, configPath, false, loaderHookExists);
+        return Build(config, configPath, false, loaderHookExists, startClientAtSignIn, preserveStartupPreference);
     }
 
     public static MultiTargetIntegrationPlan PreviewRemove(string configPath, IReadOnlyList<string> targetIds)
@@ -157,7 +169,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
     }
 
     private static MultiTargetIntegrationPlan Build(RemoteConfiguration config, string configPath, bool removal,
-        Func<string, bool>? loaderHookExists = null)
+        Func<string, bool>? loaderHookExists = null, bool startClientAtSignIn = true,
+        bool preserveStartupPreference = false)
     {
         EnsureNoPending(configPath);
         var manifestPath = Canonical(ManifestPath(configPath));
@@ -261,7 +274,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         changes[configPath] = new(configPath, existingConfig, configBytes);
         changes[manifestPath] = new(manifestPath, manifestBytes, nextManifestBytes);
         CheckFiles(changes.Values);
-        return new(config, configPath, changes.Values.ToArray(), prior, removal, loaderHookExists);
+        return new(config, configPath, changes.Values.ToArray(), prior, removal, loaderHookExists,
+            startClientAtSignIn: startClientAtSignIn, preserveStartupPreference: preserveStartupPreference);
     }
 
     private static void ValidateScopes(IReadOnlyList<IntegrationTarget> targets, Func<string, bool> loaderHookExists)
@@ -446,18 +460,24 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             throw new InvalidDataException("Legacy task is modified or unrelated; no changes made.");
         var startupName = IntegrationStartup.Name(plan.ConfigPath);
         var startupCommand = IntegrationStartup.Command(clientPath, plan.ConfigPath);
-        var oldStartup = startup?.Read(startupName);
+        var startupBefore = startup?.Capture(startupName);
+        var oldStartup = startupBefore?.Command;
         if (oldStartup is not null && oldStartup != startupCommand && oldStartup != plan.Prior?.StartupCommand)
             throw new InvalidDataException("An unrelated startup command occupies the owned name.");
-        var preferenceOnly = IsTranscriptPreferenceOnly(plan) && task is null &&
-            (startup is null || oldStartup == startupCommand);
+        var enableStartup = plan.PreserveStartupPreference && plan.Prior?.ClientPath is not null
+            ? oldStartup is not null : plan.StartClientAtSignIn;
+        var desiredStartup = plan.IsRemoval ? oldStartup : enableStartup ? startupCommand : null;
+        var startupAfter = startup is null ? null : plan.IsRemoval ? startupBefore :
+            startup.Prepare(startupName, startupBefore!, desiredStartup);
+        var preferenceOnly = IsTranscriptPreferenceOnly(plan) && task is null;
         var wasRunning = runtime is not null && (await Bounded(t => runtime.QueryAsync(plan.ConfigPath, t), token)).Running;
         if (plan.IsStatusOnlyDowngrade)
             await Bounded(async t => { await runtime!.StopAsync(plan.ConfigPath, t); return true; }, token);
         if (!plan.IsRemoval && !preferenceOnly)
             await DashboardConnection.VerifyBeforeApplyAsync(plan.Config, verifyDelivery, token);
         CheckFiles(plan.Changes);
-        if (scheduler.ReadXml(taskName) != task || startup?.Read(startupName) != oldStartup)
+        if (scheduler.ReadXml(taskName) != task || (startup is not null &&
+            !IntegrationStartup.Equivalent(startup.Capture(startupName), startupBefore!)))
             throw new InvalidDataException("Startup or legacy task changed during validation.");
         token.ThrowIfCancellationRequested();
         var changes = plan.Changes.ToList();
@@ -475,7 +495,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             ConfigPath = plan.ConfigPath, Changes = changes, TaskName = taskName,
             TaskBefore = task, TaskAfter = plan.IsRemoval ? task : null,
             StartupName = startupName, StartupBefore = oldStartup,
-            StartupAfter = plan.IsRemoval || startup is null ? oldStartup : startupCommand
+            StartupAfter = startupAfter?.Command,
+            StartupStateBefore = startupBefore, StartupStateAfter = startupAfter
         };
         await ExecuteAsync(journal, RecoveryPath(plan.ConfigPath), token);
         if (plan.IsStatusOnlyDowngrade)

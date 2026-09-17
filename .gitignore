@@ -2,7 +2,12 @@
 **/obj/
 .vs/
 artifacts/
+.rpc-test-work/
 TestResults/
+**/node_modules/
+**/playwright-report/
+**/test-results/
+**/dist/
 *.user
 UpgradeLog*.htm
 *.msi

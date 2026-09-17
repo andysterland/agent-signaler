@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="AgentSignaler.Dashboard.Core" />
     <ProjectReference Include="..\AgentSignaler.Contracts\AgentSignaler.Contracts.csproj" />
   </ItemGroup>
 </Project>

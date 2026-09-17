@@ -45,16 +45,23 @@ internal static class Program
 
             if (args.Contains("--exit")) return 0;
 
+            using var resourceLease = DashboardResourceLease.Acquire();
             WinRT.ComWrappersSupport.InitializeComWrappers();
             Application.Start(initialization =>
             {
                 SynchronizationContext.SetSynchronizationContext(
                     new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
-                _ = new App(instance, args.Contains("--background"));
+                _ = new App(instance, resourceLease, args.Contains("--background"));
             });
             return 0;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or
+        catch (DashboardOwnershipException)
+        {
+            NativeWindow.ShowError("Dashboard or RpcHost already owns this data directory. Exit that process before starting Dashboard. " +
+                "Older Dashboard versions must be exited and upgraded before sharing state.");
+            return 3;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or
             COMException or Win32Exception or DllNotFoundException or BadImageFormatException or TypeLoadException)
         {
             // This is the process boundary: do not expose paths or machine/event data in errors.

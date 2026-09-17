@@ -19,29 +19,7 @@ internal sealed record WindowsAppConnectionState(
     public override string ToString() => $"{Status}: {Message}";
 }
 
-internal sealed record WindowsAppActionResult(bool Succeeded, string Message, bool RestoreDetails);
-
-internal sealed class WindowsAppConnectionActions(
-    WindowsAppConnectionController controller, Func<Task> refresh, Func<bool> exiting,
-    Action restoreDashboard, Action<string> showError, Func<Guid, string, Task> showDetails,
-    Func<Guid, IDisposable>? showProgress = null)
-{
-    public async Task<WindowsAppActionResult> OpenWindowsAppAsync(Guid id, bool compact = false)
-    {
-        WindowsAppActionResult result;
-        using (compact && !exiting() && !controller.IsBusy(id) ? showProgress?.Invoke(id) : null)
-            result = await controller.OpenWindowsAppAsync(id, compact);
-        if (exiting()) return result;
-        await refresh();
-        if (result.RestoreDetails && !exiting())
-        {
-            restoreDashboard();
-            showError(result.Message);
-            await showDetails(id, result.Message);
-        }
-        return result;
-    }
-}
+internal sealed record WindowsAppOperationResult(bool Succeeded, string Message, WindowsAppFailure? Failure = null);
 
 // Owns all details/compact work, including its cancellation lifetime. The launcher owns
 // the gate for launch operations; other operations acquire that same gate here.
@@ -53,7 +31,8 @@ internal sealed class WindowsAppConnectionController(
     IDevBoxConnectionResolver resolver,
     WindowsAppLauncher launcher,
     WindowsAppOperationGate gate,
-    Func<bool>? catalogBusy = null)
+    Func<bool>? catalogBusy = null,
+    Action<RuntimeCommitState>? sideEffect = null)
 {
     private readonly object sync = new();
     private readonly Dictionary<Guid, WindowsAppConnectionState> states = [];
@@ -90,35 +69,35 @@ internal sealed class WindowsAppConnectionController(
         lock (sync) return pending.ContainsKey(id) || gate.IsBusy(id);
     }
 
-    public Task<WindowsAppActionResult> OpenWindowsAppAsync(Guid id, bool compact = false) =>
-        ExecuteAsync(id, WindowsAppOperation.Open, compact: compact);
+    public Task<WindowsAppOperationResult> OpenWindowsAppAsync(Guid id, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(id, WindowsAppOperation.Open, cancellationToken: cancellationToken);
 
-    public Task<WindowsAppActionResult> ExecuteAsync(Guid id, WindowsAppOperation operation,
-        DevBoxMappingSelection? selection = null, bool compact = false)
+    public Task<WindowsAppOperationResult> ExecuteAsync(Guid id, WindowsAppOperation operation,
+        DevBoxMappingSelection? selection = null, CancellationToken cancellationToken = default)
     {
         Pending work;
         lock (sync)
         {
             if (stopping)
-                return Task.FromResult(new WindowsAppActionResult(false, "Dashboard is exiting. The connection operation was cancelled.", compact));
-            if (id == Guid.Empty || !Enum.IsDefined(operation) || (compact && operation != WindowsAppOperation.Open))
-                return FailureResult(WindowsAppFailure.InvalidMapping, compact);
-            if (pending.ContainsKey(id) || gate.IsBusy(id)) return FailureResult(WindowsAppFailure.Busy, compact);
+                return Task.FromResult(new WindowsAppOperationResult(false, "The runtime is stopping. The connection operation was cancelled."));
+            if (id == Guid.Empty || !Enum.IsDefined(operation))
+                return FailureResult(WindowsAppFailure.InvalidMapping);
+            if (pending.ContainsKey(id) || gate.IsBusy(id)) return FailureResult(WindowsAppFailure.Busy);
             if (operation == WindowsAppOperation.Map && catalogBusy?.Invoke() == true)
-                return FailureResult(WindowsAppFailure.Busy, compact);
-            work = new(new CancellationTokenSource(), new(TaskCreationOptions.RunContinuationsAsynchronously));
+                return FailureResult(WindowsAppFailure.Busy);
+            work = new(CancellationTokenSource.CreateLinkedTokenSource(cancellationToken), new(TaskCreationOptions.RunContinuationsAsynchronously));
             pending.Add(id, work);
             states[id] = State(id) with { Operation = operation, Message = Progress(operation) };
         }
         Changed?.Invoke(id);
-        return RunAsync(id, operation, selection, compact, work);
+        return RunAsync(id, operation, selection, work);
     }
 
-    private static Task<WindowsAppActionResult> FailureResult(WindowsAppFailure failure, bool compact) =>
-        Task.FromResult(new WindowsAppActionResult(false, new WindowsAppConnectionException(failure).Message, compact));
+    private static Task<WindowsAppOperationResult> FailureResult(WindowsAppFailure failure) =>
+        Task.FromResult(new WindowsAppOperationResult(false, new WindowsAppConnectionException(failure).Message, failure));
 
-    private async Task<WindowsAppActionResult> RunAsync(Guid id, WindowsAppOperation operation,
-        DevBoxMappingSelection? selection, bool compact, Pending work)
+    private async Task<WindowsAppOperationResult> RunAsync(Guid id, WindowsAppOperation operation,
+        DevBoxMappingSelection? selection, Pending work)
     {
         var token = work.Cancellation.Token;
         try
@@ -161,7 +140,9 @@ internal sealed class WindowsAppConnectionController(
                     var tenant = selection is { AzureTenantId: var selectedTenant } && selectedTenant != Guid.Empty
                         ? selectedTenant : stored?.AzureTenantId;
                     var command = AzureCliCommand.Login(tenant);
+                    sideEffect?.Invoke(RuntimeCommitState.Unknown);
                     var result = await cli.RunAsync(command, command.Timeout, token).ConfigureAwait(false);
+                    if (result.ExitCode == 0) sideEffect?.Invoke(RuntimeCommitState.Committed);
                     token.ThrowIfCancellationRequested();
                     if (result.ExitCode != 0)
                         throw new WindowsAppConnectionException(WindowsAppFailure.SignInRequired);
@@ -206,30 +187,30 @@ internal sealed class WindowsAppConnectionController(
                 _ => "Connection discovered and saved."
             };
             SetState(id, new(mapping, mapping is null ? "Not configured" : "Ready", message));
-            return new(true, message, false);
+            return new(true, message);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             const string message = "The connection operation was cancelled.";
             SetState(id, State(id) with { Message = message, Operation = null });
-            return new(false, message, compact);
+            return new(false, message);
         }
         catch (WindowsAppConnectionException error)
         {
             SetState(id, State(id) with { Status = error.Status, Message = error.Message, Operation = null });
-            return new(false, error.Message, compact);
+            return new(false, error.Message, error.Failure);
         }
         catch (KeyNotFoundException)
         {
             var failure = new WindowsAppConnectionException(WindowsAppFailure.InvalidMapping);
             SetState(id, State(id) with { Status = failure.Status, Message = failure.Message, Operation = null });
-            return new(false, failure.Message, compact);
+            return new(false, failure.Message, WindowsAppFailure.InvalidMapping);
         }
         catch (Exception error) when (error is SqliteException or IOException or UnauthorizedAccessException or SecurityException or JsonException)
         {
             var failure = new WindowsAppConnectionException(WindowsAppFailure.PersistenceFailed);
             SetState(id, State(id) with { Status = failure.Status, Message = failure.Message, Operation = null });
-            return new(false, failure.Message, compact);
+            return new(false, failure.Message, WindowsAppFailure.PersistenceFailed);
         }
         finally
         {
@@ -296,6 +277,13 @@ internal sealed class WindowsAppConnectionController(
             foreach (var work in pending.Values) work.Cancellation.Cancel();
             return Task.WhenAll(pending.Values.Select(work => work.Completion.Task));
         }
+    }
+
+    internal void ForgetExcept(IReadOnlySet<Guid> ids)
+    {
+        lock (sync)
+            foreach (var id in states.Keys.Where(id => !ids.Contains(id) && !pending.ContainsKey(id)).ToArray())
+                states.Remove(id);
     }
 
     private static string Progress(WindowsAppOperation operation) => operation switch

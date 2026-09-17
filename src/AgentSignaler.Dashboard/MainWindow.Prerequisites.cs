@@ -50,7 +50,7 @@ internal sealed partial class MainWindow
         var tunnelCheck = AddCheck("Dev Tunnels CLI", () =>
         {
             var selectedPath = tunnelPath.Text.Trim();
-            return token => DevTunnelDiagnostics.CheckAsync(selectedPath, token);
+            return token => CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.DevTunnel, selectedPath, token);
         }, () => true);
 
         panel.Children.Add(Text("Azure CLI", 18));
@@ -73,7 +73,7 @@ internal sealed partial class MainWindow
         var azureCheck = _azureCliCheck = AddCheck("Azure CLI status", () =>
         {
             var selectedPath = azurePath.Text.Trim();
-            return token => AzureCliDiagnostics.CheckAsync(selectedPath, token);
+            return token => CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.AzureCli, selectedPath, token);
         }, () => !AzurePrerequisiteBusy && _catalog?.State.IsBusy != true);
 
         panel.Children.Add(Text("Azure CLI devcenter extension", 18));
@@ -83,13 +83,14 @@ internal sealed partial class MainWindow
         var extensionCheck = _devCenterExtensionCheck = AddCheck("devcenter extension", () =>
         {
             var selectedPath = azurePath.Text.Trim();
-            return token => AzureCliDiagnostics.CheckDevCenterExtensionAsync(selectedPath, token);
+            return token => CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.DevCenterExtension, selectedPath, token);
         }, () => !AzurePrerequisiteBusy && _catalog?.State.IsBusy != true);
 
         panel.Children.Add(Text("Windows App", 18));
         help.Children.Add(Text("Install or update Windows App separately from Microsoft Store. Version 2.0.804.0 or later is required. " +
             "Check inspects the current user's ms-cloudpc association only; it does not verify the app version or launch Windows App."));
-        var windowsCheck = AddCheck("Windows App protocol", () => WindowsAppDiagnostics.CheckAsync, () => true);
+        var windowsCheck = AddCheck("Windows App protocol",
+            () => token => CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.WindowsApp, null, token), () => true);
 
         checkAll.Click += async (_, _) =>
         {
@@ -170,8 +171,12 @@ internal sealed partial class MainWindow
             };
             check.Changed += () =>
             {
-                _updatePrerequisiteControls?.Invoke();
-                _updateDevBoxSettingsControls?.Invoke();
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_exiting) return;
+                    _updatePrerequisiteControls?.Invoke();
+                    _updateDevBoxSettingsControls?.Invoke();
+                });
             };
             run.Click += async (_, _) => await check.RunAsync(capture());
             cancel.Click += (_, _) => check.Cancel();

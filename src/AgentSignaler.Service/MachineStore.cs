@@ -48,7 +48,7 @@ public sealed class MachineStore : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(databasePath))!);
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false
+            DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false, DefaultTimeout = 10
         }.ToString();
         using var connection = Open();
         using var command = connection.CreateCommand();

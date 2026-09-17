@@ -36,19 +36,18 @@ public sealed class TranscriptGapRetryBudgetTests
             await transport.GapEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
             for (var index = 0; index < 5; index++) Assert.True(delivery.TryAccept(Message(), 1));
             transport.ReleaseGap.TrySetResult();
-            await Eventually(() => Volatile.Read(ref scheduledGapAttempts) == 1 && delivery.Status == "retrying");
+            await WaitForRetry(1);
             for (var index = 0; index < 5; index++) Assert.True(delivery.TryAccept(Message(), 1));
             clock.Advance(TimeSpan.FromSeconds(9));
             await Task.Delay(300);
             Assert.Single(transport.Gaps);
             clock.Advance(TimeSpan.FromSeconds(1));
-            await Eventually(() => Volatile.Read(ref scheduledGapAttempts) == 2 && delivery.Status == "retrying");
+            await WaitForRetry(2);
             for (var expected = 3; expected <= 8; expected++)
             {
                 for (var index = 0; index < 3; index++) Assert.True(delivery.TryAccept(Message(), 1));
                 clock.Advance(TimeSpan.FromSeconds(expected > 5 ? 15 : 10));
-                var count = expected;
-                await Eventually(() => Volatile.Read(ref scheduledGapAttempts) == count && delivery.Status == "retrying");
+                await WaitForRetry(expected);
             }
             for (var index = 0; index < 3; index++) Assert.True(delivery.TryAccept(Message(), 1));
             clock.Advance(TimeSpan.FromSeconds(15));
@@ -62,6 +61,25 @@ public sealed class TranscriptGapRetryBudgetTests
         {
             transport.ReleaseMessage.TrySetResult();
             transport.ReleaseGap.TrySetResult();
+        }
+
+        async Task WaitForRetry(int expected)
+        {
+            try
+            {
+                await Eventually(() =>
+                {
+                    if (Volatile.Read(ref scheduledGapAttempts) != expected) return false;
+                    // Acquire the deadline lock; capability refresh may independently change the status to ready.
+                    _ = delivery.Status;
+                    return true;
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                Assert.Fail($"Expected retry {expected}; scheduled {Volatile.Read(ref scheduledGapAttempts)}, " +
+                    $"sent {transport.Gaps.Count}, status {delivery.Status}, pending {delivery.PendingEvents}, clock {clock.GetUtcNow():O}.");
+            }
         }
     }
 

@@ -9,14 +9,23 @@ Updates the current user's installed Agent Signaler apps from the latest GitHub 
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [ValidateSet('Dashboard', 'Remote')]
-    [string[]] $Apps = @('Dashboard', 'Remote')
+    [ValidateSet('Dashboard', 'Remote', 'RpcHost')]
+    [string[]] $Apps = @('Dashboard', 'Remote', 'RpcHost'),
+    [Parameter(DontShow = $true)]
+    [string] $FixturePath
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = 'andysterland/agent-signaler'
 $apiRoot = "https://api.github.com/repos/$repository"
+. (Join-Path $PSScriptRoot 'UpdaterPolicy.ps1')
+
+if (-not [string]::IsNullOrWhiteSpace($FixturePath)) {
+    if (-not $WhatIfPreference) { throw 'Synthetic inventory is allowed only with -WhatIf; it cannot service applications.' }
+    & (Join-Path $PSScriptRoot 'Test-UpdaterFixture.ps1') -FixturePath $FixturePath -Apps $Apps
+    return
+}
 
 if (-not [Environment]::Is64BitOperatingSystem -or
     [Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
@@ -24,6 +33,7 @@ if (-not [Environment]::Is64BitOperatingSystem -or
 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 try {
+    $installingUserSid = $identity.User.Value
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     if ($identity.IsSystem -or $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'Run this script from a non-elevated PowerShell as the Windows user who installed the apps.'
@@ -100,8 +110,22 @@ function Read-GitHubJsonResponse($Response) {
         if (-not $Response.IsSuccessStatusCode) {
             throw "GitHub request failed with HTTP $([int]$Response.StatusCode) $($Response.ReasonPhrase)."
         }
-        $json = $Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        return $json | ConvertFrom-Json
+        $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(30))
+        try {
+            $stream = $Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+            $memory = [IO.MemoryStream]::new()
+            try {
+                $buffer = New-Object byte[] 16384
+                while (($read = $stream.ReadAsync($buffer, 0, $buffer.Length, $deadline.Token).GetAwaiter().GetResult()) -gt 0) {
+                    if ($memory.Length + $read -gt 4MB) { throw 'GitHub release metadata exceeds its bound.' }
+                    $memory.Write($buffer, 0, $read)
+                }
+                $json = [Text.UTF8Encoding]::new($false, $true).GetString($memory.ToArray())
+                return $json | ConvertFrom-Json
+            }
+            finally { $memory.Dispose(); $stream.Dispose() }
+        }
+        finally { $deadline.Dispose() }
     }
     finally { $Response.Dispose() }
 }
@@ -128,7 +152,7 @@ function Get-LatestGitHubRelease {
     [pscustomobject]@{
         Release = $release
         Token = $token
-        Version = [version]$release.tag_name.Substring(1)
+        Version = ConvertTo-AgentSignalerVersion $release.tag_name.Substring(1)
     }
 }
 
@@ -142,7 +166,17 @@ function Save-GitHubAsset($Asset, [string] $Token, [string] $Destination) {
         try {
             $file = New-Object IO.FileStream(
                 $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-            try { $source.CopyTo($file) }
+            try {
+                $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromMinutes(5))
+                try {
+                    $buffer = New-Object byte[] 65536
+                    while (($read = $source.ReadAsync($buffer, 0, $buffer.Length, $deadline.Token).GetAwaiter().GetResult()) -gt 0) {
+                        if ($file.Length + $read -gt [long]$Asset.size) { throw 'Download exceeded its declared size.' }
+                        $file.Write($buffer, 0, $read)
+                    }
+                }
+                finally { $deadline.Dispose() }
+            }
             finally { $file.Dispose() }
         }
         finally { $source.Dispose() }
@@ -164,7 +198,7 @@ function Get-Sha256([string] $Path) {
 }
 
 function Read-Package {
-    param($Installer, [string] $Path, [string] $UpgradeCode)
+    param($Installer, [string] $Path, [string] $App)
 
     $database = $Installer.OpenDatabase($Path, 0)
     try {
@@ -181,25 +215,11 @@ function Read-Package {
             [void]$view.Close()
             [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
         }
-        if ($properties['UpgradeCode'] -ne $UpgradeCode -or $properties.ContainsKey('ALLUSERS')) {
-            throw "Not the expected per-user Agent Signaler package: $Path"
-        }
         $summary = $database.SummaryInformation(0)
         try {
-            if ($summary.Property(7) -notlike 'x64;*' -or
-                ([int]$summary.Property(15) -band 8) -eq 0) {
-                throw "Not a non-elevated x64 package: $Path"
-            }
+            return Assert-AgentSignalerPackageMetadata $properties $summary.Property(7) ([int]$summary.Property(15)) $App
         }
         finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($summary) }
-        if ($properties['ProductVersion'] -notmatch '^\d+\.\d+\.\d+$' -or
-            [string]::IsNullOrWhiteSpace($properties['ProductCode'])) {
-            throw "Invalid MSI product metadata: $Path"
-        }
-        [pscustomobject]@{
-            Version = [version]$properties['ProductVersion']
-            ProductCode = $properties['ProductCode']
-        }
     }
     finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database) }
 }
@@ -253,9 +273,64 @@ function Stop-OwnedRemoteClient {
     finally { $process.Dispose() }
 }
 
+function Assert-RpcHostProcessInventory([string] $Directory) {
+    if ($null -eq ('AgentSignalerUpdater.FileIdentity' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace AgentSignalerUpdater {
+    public static class FileIdentity {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Info {
+            public uint Attributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME Created, Accessed, Written;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+            IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out Info info);
+        public static bool Same(string a, string b) {
+            using (var first = CreateFile(a, 0x80, 7, IntPtr.Zero, 3, 0, IntPtr.Zero))
+            using (var second = CreateFile(b, 0x80, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+                Info x, y;
+                if (first.IsInvalid || second.IsInvalid ||
+                    !GetFileInformationByHandle(first, out x) || !GetFileInformationByHandle(second, out y))
+                    return false;
+                return x.Volume == y.Volume && x.IndexHigh == y.IndexHigh && x.IndexLow == y.IndexLow;
+            }
+        }
+    }
+}
+'@
+    }
+    $exe = Join-Path $Directory 'AgentSignaler.RpcHost.exe'
+    $processes = @(
+        foreach ($process in Get-Process) {
+            try {
+                $path = $null
+                try { $path = $process.Path }
+                catch [System.ComponentModel.Win32Exception] { }
+                catch [System.InvalidOperationException] { }
+                [pscustomobject]@{
+                    Name = $process.ProcessName
+                    Path = $path
+                    IdentityAvailable = -not [string]::IsNullOrWhiteSpace($path)
+                    SameFile = -not [string]::IsNullOrWhiteSpace($path) -and [AgentSignalerUpdater.FileIdentity]::Same($path, $exe)
+                }
+            }
+            finally { $process.Dispose() }
+        }
+    )
+    Assert-AgentSignalerRpcHostNotInUse $Directory $processes
+}
+
 $upgradeCodes = @{
     Dashboard = '{D67CE744-C442-473A-B751-CA70D3CBCA4D}'
     Remote = '{BFA03A34-37C9-4149-9789-9A68EC2A9C3A}'
+    RpcHost = '{A8D1F2A9-762B-4B2C-A5A3-451463D743B2}'
 }
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $staging = $null
@@ -264,26 +339,14 @@ try {
     $releaseInfo = Get-LatestGitHubRelease
     $release = $releaseInfo.Release
     $assets = @($release.assets)
-    $checksumAssets = @($assets | Where-Object { $_.name -ceq 'SHA256SUMS.txt' })
-    if ($checksumAssets.Count -ne 1) {
-        throw 'The latest GitHub Release must contain exactly one SHA256SUMS.txt asset.'
-    }
+    $checksumAsset = Get-AgentSignalerReleaseAsset $assets 'SHA256SUMS.txt'
     $updateRoot = Join-Path $env:LOCALAPPDATA 'AgentSignaler\Updates'
     $runId = [guid]::NewGuid().ToString('N')
     $staging = Join-Path $updateRoot $runId
     [void](New-Item -ItemType Directory -Path $staging -Force -WhatIf:$false)
     $checksumPath = Join-Path $staging 'SHA256SUMS.txt'
-    Save-GitHubAsset $checksumAssets[0] $releaseInfo.Token $checksumPath
-    $checksums = @{}
-    foreach ($line in [IO.File]::ReadAllLines($checksumPath)) {
-        if ($line -match '^([A-Fa-f0-9]{64})  (AgentSignaler\.(Dashboard|Remote)\.msi)$') {
-            if ($checksums.ContainsKey($matches[2])) { throw "Duplicate checksum for $($matches[2])." }
-            $checksums[$matches[2]] = $matches[1].ToUpperInvariant()
-        }
-    }
-    foreach ($name in @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi')) {
-        if (-not $checksums.ContainsKey($name)) { throw "SHA256SUMS.txt is missing $name." }
-    }
+    Save-GitHubAsset $checksumAsset $releaseInfo.Token $checksumPath
+    $checksums = Read-AgentSignalerChecksums ([IO.File]::ReadAllLines($checksumPath))
     Write-Host "Latest published release: $($release.tag_name) ($($release.html_url))"
 
     $plan = @(
@@ -294,22 +357,24 @@ try {
                 continue
             }
             $name = "AgentSignaler.$app.msi"
-            $matchingAssets = @($assets | Where-Object { $_.name -ceq $name })
-            if ($matchingAssets.Count -ne 1) {
-                throw "The latest GitHub Release must contain exactly one $name asset."
-            }
+            $asset = Get-AgentSignalerReleaseAsset $assets $name
             $source = Join-Path $staging $name
-            Save-GitHubAsset $matchingAssets[0] $releaseInfo.Token $source
+            Save-GitHubAsset $asset $releaseInfo.Token $source
             if ((Get-Sha256 $source) -cne $checksums[$name]) {
                 throw "GitHub Release checksum verification failed for $name."
             }
-            $package = Read-Package $installer $source $upgradeCodes[$app]
-            if ($package.Version -ne $releaseInfo.Version) {
-                throw "$name version $($package.Version) does not match release $($release.tag_name)."
-            }
-            if ($package.Version -le $installed) {
+            $package = Read-Package $installer $source $app
+            $decision = Get-AgentSignalerUpdateDecision $installed $package.Version $releaseInfo.Version
+            if ($decision -eq 'NoUpgrade') {
                 Write-Host "$app installed: $installed; available: $($package.Version). No upgrade needed."
                 continue
+            }
+            $receiverPort = $null
+            if ($app -eq 'RpcHost') {
+                $metadata = Get-ItemProperty -LiteralPath 'HKCU:\Software\AgentSignaler\Installer\RpcHost'
+                $directory = Assert-AgentSignalerRpcHostInventory $metadata $installingUserSid $env:LOCALAPPDATA
+                Assert-RpcHostProcessInventory $directory
+                $receiverPort = [int]$metadata.ReceiverPort
             }
             [pscustomobject]@{
                 App = $app
@@ -317,6 +382,7 @@ try {
                 Package = $package
                 Source = $source
                 Staged = $null
+                ReceiverPort = $receiverPort
             }
         }
     )
@@ -348,7 +414,10 @@ try {
         # Revalidate every downloaded package before changing either installation.
         foreach ($item in $approved) {
             $item.Staged = $item.Source
-            $stagedPackage = Read-Package $installer $item.Staged $upgradeCodes[$item.App]
+            if ((Get-Sha256 $item.Staged) -cne $checksums["AgentSignaler.$($item.App).msi"]) {
+                throw 'The staged package checksum changed. No further servicing will run.'
+            }
+            $stagedPackage = Read-Package $installer $item.Staged $item.App
             if ($stagedPackage.Version -ne $item.Package.Version -or
                 $stagedPackage.ProductCode -ne $item.Package.ProductCode) {
                 throw "The downloaded $($item.App) package changed during validation. Run the script again."
@@ -359,23 +428,43 @@ try {
         if ($approved.App -contains 'Remote') { Stop-OwnedRemoteClient }
 
         foreach ($item in $approved) {
-            $log = Join-Path $logRoot "$runId-$($item.App).log"
-            Write-Host "Updating $($item.App) to $($item.Package.Version). Log: $log"
-            $arguments = "/i `"$($item.Staged)`" /passive /norestart /L*v `"$log`" REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=Disable"
-            $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" `
-                -ArgumentList $arguments -Wait -PassThru
-            if ($process.ExitCode -notin @(0, 3010)) {
-                throw "Updating $($item.App) failed with MSI exit code $($process.ExitCode). See $log. Earlier successful updates are not rolled back."
+            # Keep the verified download pinned against replacement through the
+            # Windows Installer elevation handoff and the complete servicing run.
+            $pin = [IO.File]::Open($item.Staged, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            try {
+                if ((Get-Sha256 $item.Staged) -cne $checksums["AgentSignaler.$($item.App).msi"]) {
+                    throw 'The staged package changed before servicing. No MSI was invoked.'
+                }
+                $currentPackage = Read-Package $installer $item.Staged $item.App
+                if ($currentPackage.Version -ne $item.Package.Version -or $currentPackage.ProductCode -cne $item.Package.ProductCode) {
+                    throw 'The pinned package identity changed before servicing.'
+                }
+                $log = Join-Path $logRoot "$runId-$($item.App).log"
+                Write-Host "Updating $($item.App) to $($item.Package.Version). Log: $log"
+                $arguments = "/i `"$($item.Staged)`" /passive /norestart /L*v `"$log`" REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=Disable"
+                if ($item.App -eq 'RpcHost') {
+                    Assert-RpcHostProcessInventory (Join-Path $env:LOCALAPPDATA 'Programs\AgentSignaler\RpcHost')
+                    $arguments += " RECEIVERPORT=$($item.ReceiverPort) MSIDISABLERMRESTART=1"
+                    Write-Warning 'RpcHost requires Windows Installer elevation for its mandatory Private receiver rule. Denial or firewall failure fails servicing; no updater firewall helper is used.'
+                }
+                $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" `
+                    -ArgumentList $arguments -Wait -PassThru
+                try {
+                    try { $outcome = Get-AgentSignalerServicingOutcome $process.ExitCode }
+                    catch { throw "Updating $($item.App) failed with MSI exit code $($process.ExitCode). See $log. Earlier successful updates are not rolled back." }
+                    $actual = Get-InstalledVersion $installer $upgradeCodes[$item.App]
+                    if ($null -eq $actual -or $actual -ne $item.Package.Version) {
+                        throw "Post-install version verification failed for $($item.App). See $log."
+                    }
+                    Write-Host "$($item.App) updated to $actual."
+                    if ($outcome -eq 'RestartRequired') {
+                        $exitCode = 3010
+                        Write-Warning 'Windows Installer reports that a restart is required. This script will not restart Windows.'
+                    }
+                }
+                finally { $process.Dispose() }
             }
-            $actual = Get-InstalledVersion $installer $upgradeCodes[$item.App]
-            if ($null -eq $actual -or $actual -ne $item.Package.Version) {
-                throw "Post-install version verification failed for $($item.App). See $log."
-            }
-            Write-Host "$($item.App) updated to $actual."
-            if ($process.ExitCode -eq 3010) {
-                $exitCode = 3010
-                Write-Warning 'Windows Installer reports that a restart is required. This script will not restart Windows.'
-            }
+            finally { $pin.Dispose() }
         }
         Write-Host 'Updates completed. Reopen the apps when ready. Start Agent Signaler Client explicitly to resume remote reporting; upgrade does not override Exit.'
     }

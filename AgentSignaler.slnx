@@ -5,6 +5,7 @@
   <Folder Name="/installers/">
     <Project Path="installers/AgentSignaler.Dashboard/AgentSignaler.Dashboard.wixproj"><Build Project="false" /></Project>
     <Project Path="installers/AgentSignaler.Remote/AgentSignaler.Remote.wixproj"><Build Project="false" /></Project>
+    <Project Path="installers/AgentSignaler.RpcHost/AgentSignaler.RpcHost.wixproj"><Build Project="false" /></Project>
     <Project Path="installers/AgentSignaler.DevTunnelsPrerequisite/AgentSignaler.DevTunnelsPrerequisite.wixproj"><Build Project="false" /></Project>
     <Project Path="installers/AgentSignaler.Dashboard.Bundle/AgentSignaler.Dashboard.Bundle.wixproj"><Build Project="false" /></Project>
   </Folder>
@@ -21,6 +22,12 @@
     <Project Path="src/AgentSignaler.Dashboard/AgentSignaler.Dashboard.csproj">
       <Platform Project="x64" />
     </Project>
+    <Project Path="src/AgentSignaler.Dashboard.Core/AgentSignaler.Dashboard.Core.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/AgentSignaler.RpcHost/AgentSignaler.RpcHost.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/AgentSignaler.Relay/AgentSignaler.Relay.csproj">
       <Platform Project="x64" />
     </Project>
@@ -35,6 +42,18 @@
     </Project>
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AgentSignaler.Dashboard.Core.Tests/AgentSignaler.Dashboard.Core.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/AgentSignaler.Dashboard.Core.Tests/ProcessFixture/AgentSignaler.Dashboard.Core.Tests.ProcessFixture.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/AgentSignaler.RpcHost.Tests/AgentSignaler.RpcHost.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/AgentSignaler.RpcHost.Tests/ChildFixture/AgentSignaler.RpcHost.ChildFixture.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="tests/AgentSignaler.Integration.Tests/AgentSignaler.Integration.Tests.csproj">
       <Platform Project="x64" />
     </Project>

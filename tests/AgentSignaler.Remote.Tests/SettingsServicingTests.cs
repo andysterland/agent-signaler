@@ -104,7 +104,9 @@ public sealed class SettingsServicingTests : IDisposable
         Assert.Equal($"\"{plan.ClientPath}\" --background --config \"{ConfigPath.ToUpperInvariant()}\"", plan.StartupCommand);
         Assert.Contains(plan.ClientPath, plan.Preview);
         Assert.Contains("660 seconds", plan.Preview);
-        Assert.Contains("HKCU\\", plan.Preview);
+        Assert.Contains("current-user Startup programs shortcut", plan.Preview);
+        Assert.Contains(plan.StartupName + ".lnk", plan.Preview);
+        Assert.DoesNotContain("REGISTER HKCU\\", plan.Preview);
         Assert.Contains("First setup and first legacy migration launch", plan.Preview);
         Assert.Contains("remove/reset the machine locally in Dashboard", plan.Preview);
         Assert.Contains("display names, notes and mappings", plan.Preview);
@@ -357,13 +359,37 @@ public sealed class SettingsServicingTests : IDisposable
         var manager = Manager(startup, runtime);
         await manager.ApplyAsync(Plan(), default);
         var original = File.ReadAllBytes(ConfigPath);
+        var movedRelay = Path.Combine(root, "moved", "AgentSignaler.Relay.exe");
+        AtomicFile.Write(movedRelay, []);
+        AtomicFile.Write(Path.Combine(root, "moved", "AgentSignaler.Client.exe"), []);
+        var movedPlan = IntegrationManager.Preview(Config with { HeartbeatIntervalSeconds = 600 },
+            ConfigPath, Path.Combine(root, "copilot"), movedRelay);
         startup.FailAfterWrite = true;
-        await Assert.ThrowsAsync<IOException>(() => manager.ApplyAsync(Plan(600), default));
+        await Assert.ThrowsAsync<IOException>(() => manager.ApplyAsync(movedPlan, default));
         Assert.Equal(original, File.ReadAllBytes(ConfigPath));
         Assert.Equal(id, RemoteConfiguration.Load(ConfigPath).MachineId);
         Assert.Equal(Plan().StartupCommand, startup.Value);
         Assert.True(runtime.Running);
         Assert.Equal(0, runtime.Reloads);
+    }
+
+    [Fact]
+    public async Task LegacyRepairAndUninstallRollbackNeverRecreateMissingStartup()
+    {
+        var startup = new FakeStartup();
+        var runtime = new FakeRuntime();
+        var manager = Manager(startup, runtime);
+        await manager.ApplyAsync(Plan(), default);
+        startup.Value = null;
+        runtime.Running = false;
+        await manager.ApplyAsync(Plan(600), default);
+        Assert.Null(startup.Value);
+        Assert.Equal(1, runtime.Starts);
+        manager.PrepareUninstall(ConfigPath, "startup-opt-out");
+        manager.RollbackUninstall(ConfigPath, "startup-opt-out");
+        Assert.Null(startup.Value);
+        Assert.False(runtime.Running);
+        Assert.Equal(1, runtime.Starts);
     }
 
     [Fact]

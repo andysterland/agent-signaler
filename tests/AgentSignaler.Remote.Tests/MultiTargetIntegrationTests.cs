@@ -37,6 +37,96 @@ public sealed class MultiTargetIntegrationTests : IDisposable
     private IntegrationManager Legacy() => new(scheduler, (_, _) => Task.FromResult(true), startup, runtime);
     private IntegrationManifest Manifest() => JsonSerializer.Deserialize<IntegrationManifest>(File.ReadAllBytes(ManifestPath), Protocol.Json)!;
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExplicitStartupChoiceIsImmutableAndIndependentOfFirstRuntimeActivation(bool enabled)
+    {
+        var plan = MultiTargetIntegrationManager.Preview(Config, ConfigPath, [Cli()], RelayPath,
+            startClientAtSignIn: enabled);
+        Assert.Equal(enabled, plan.StartClientAtSignIn);
+        Assert.Contains(enabled ? "REGISTER owned" : "REMOVE owned", plan.Preview);
+        Assert.Contains(IntegrationStartup.Name(ConfigPath) + ".lnk", plan.Preview);
+        Assert.DoesNotContain("REGISTER HKCU", plan.Preview);
+        await Manager().ApplyAsync(plan, default);
+        Assert.Equal(enabled, startup.Value is not null);
+        Assert.Equal(1, runtime.Starts);
+        Assert.Equal(0, runtime.Stops);
+        Assert.NotNull(Manifest().ClientPath);
+    }
+
+    [Fact]
+    public async Task StartupToggleReloadsRunningClientAndDefaultRepairPreservesTheOptOut()
+    {
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(Config, ConfigPath, [Cli()], RelayPath), default);
+        var saved = RemoteConfiguration.Load(ConfigPath);
+        var disabled = MultiTargetIntegrationManager.Preview(saved, ConfigPath, saved.Integrations, RelayPath,
+            startClientAtSignIn: false);
+        await Manager().ApplyAsync(disabled, default);
+        Assert.Null(startup.Value);
+        Assert.Equal(1, runtime.Starts);
+        Assert.Equal(1, runtime.Reloads);
+        Assert.Equal(0, runtime.Stops);
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(saved, ConfigPath, saved.Integrations, RelayPath), default);
+        Assert.Null(startup.Value);
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(saved, ConfigPath, saved.Integrations, RelayPath,
+            startClientAtSignIn: true), default);
+        Assert.NotNull(startup.Value);
+        Assert.Equal(1, runtime.Starts);
+        Assert.Equal(0, runtime.Stops);
+    }
+
+    [Fact]
+    public async Task StartupOptOutSurvivesRemovalUninstallRollbackAndStoppedRepair()
+    {
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(Config, ConfigPath, [Cli()], RelayPath,
+            startClientAtSignIn: false), default);
+        runtime.Running = false;
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.PreviewRemove(ConfigPath, ["cli"]), default);
+        Assert.Null(startup.Value);
+        var saved = RemoteConfiguration.Load(ConfigPath);
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(saved, ConfigPath, saved.Integrations, RelayPath), default);
+        Assert.Null(startup.Value);
+        Assert.Equal(1, runtime.Starts);
+        Legacy().PrepareUninstall(ConfigPath, "disabled-startup");
+        Legacy().RollbackUninstall(ConfigPath, "disabled-startup");
+        Assert.Null(startup.Value);
+        Assert.Equal(1, runtime.Starts);
+        Assert.False(runtime.Running);
+    }
+
+    [Fact]
+    public async Task UnchangedStartupDoesNotRewriteRegistration()
+    {
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(Config, ConfigPath, [], RelayPath), default);
+        startup.OnReplace = () => throw new IOException("An unchanged startup must not be rewritten.");
+        var saved = RemoteConfiguration.Load(ConfigPath);
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(saved, ConfigPath, [], RelayPath,
+            startClientAtSignIn: true), default);
+        Assert.NotNull(startup.Value);
+        Assert.Equal(0, runtime.Starts);
+    }
+
+    [Fact]
+    public async Task FailedStartupDisableRestoresConfigurationAndLeavesRunningClientUntouched()
+    {
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(Config, ConfigPath, [Cli()], RelayPath), default);
+        var before = File.ReadAllBytes(ConfigPath);
+        var manifest = File.ReadAllBytes(ManifestPath);
+        var command = startup.Value;
+        startup.Fail = true;
+        var saved = RemoteConfiguration.Load(ConfigPath) with { HeartbeatIntervalSeconds = 600 };
+        await Assert.ThrowsAsync<IOException>(() => Manager().ApplyAsync(
+            MultiTargetIntegrationManager.Preview(saved, ConfigPath, saved.Integrations, RelayPath,
+                startClientAtSignIn: false), default));
+        Assert.Equal(before, File.ReadAllBytes(ConfigPath));
+        Assert.Equal(manifest, File.ReadAllBytes(ManifestPath));
+        Assert.Equal(command, startup.Value);
+        Assert.True(runtime.Running);
+        Assert.Equal(0, runtime.Reloads);
+        Assert.Equal(0, runtime.Stops);
+    }
+
     private IntegrationTarget VerifiedIde(string kind, string id, string? hookDirectory = null, string? hostVersion = null)
     {
         if (!File.Exists(ConfigPath))

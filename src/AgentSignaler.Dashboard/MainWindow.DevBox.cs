@@ -124,22 +124,11 @@ internal sealed partial class MainWindow
                 targetValidation.Text = message;
                 return;
             }
-            try
-            {
-                next.Save();
-                _settings = next;
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-            {
-                targetValidation.Text = "Discovery settings could not be saved. Check local application-data permissions and retry. Discovery has not started.";
-                return;
-            }
-            if (_catalog is not null)
-                await _catalog.RefreshAsync(subscriptionId: next.DevBoxSubscriptionId, devCenterName: next.DevCenterName);
+            await RefreshRuntimeCatalogAsync(next);
         };
         subscriptionInput.TextChanged += (_, _) => _updateDevBoxSettingsControls?.Invoke();
         devCenterInput.TextChanged += (_, _) => _updateDevBoxSettingsControls?.Invoke();
-        cancel.Click += (_, _) => _catalog?.Cancel();
+        cancel.Click += (_, _) => _runtime.CancelCatalog();
         return ReadSettings;
 
         DashboardSettings ReadSettings() => _settings.WithDiscoveryTarget(subscriptionInput.Text, devCenterInput.Text);

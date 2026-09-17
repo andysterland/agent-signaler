@@ -172,8 +172,9 @@ public sealed class WindowsAppConnectionControllerTests
         var h = new Harness { Stored = ConnectionTestData.CachedMapping };
         h.Platform.Reuse = true;
         h.Platform.Failure = WindowsAppFailure.ActivationFailed;
+        var cachedResult = cached ? await h.Controller.ExecuteAsync(h.Id, WindowsAppOperation.OpenLastKnown) : null;
         var result = cached
-            ? await h.Controller.ExecuteAsync(h.Id, WindowsAppOperation.OpenLastKnown)
+            ? new WindowsAppActionResult(cachedResult!.Succeeded, cachedResult.Message, false)
             : await h.Actions.OpenWindowsAppAsync(h.Id, compact: true);
         Assert.False(result.Succeeded);
         Assert.Equal(!cached, result.RestoreDetails);
@@ -329,9 +330,8 @@ public sealed class WindowsAppConnectionControllerTests
         h.Controller.Observe(h.Id, h.Stored);
         Assert.Equal(h.Stored.ConnectionUriRetrievedAtUtc!.Value.ToLocalTime().ToString("G"),
             h.Controller.State(h.Id).LastRefresh);
-        var rejected = await h.Controller.ExecuteAsync(h.Id, WindowsAppOperation.OpenLastKnown, compact: true);
-        Assert.False(rejected.Succeeded);
-        Assert.Empty(h.Platform.Launched);
+        Assert.DoesNotContain(typeof(WindowsAppConnectionController).GetMethods().SelectMany(method => method.GetParameters()),
+            parameter => parameter.Name == "compact");
         var result = await h.Controller.ExecuteAsync(h.Id, WindowsAppOperation.OpenLastKnown);
         Assert.True(result.Succeeded);
         Assert.Equal(ConnectionTestData.Uri, Assert.Single(h.Platform.Launched));
@@ -602,7 +602,7 @@ public sealed class WindowsAppConnectionControllerTests
         Assert.Equal(state, h.Controller.State(h.Id));
         Assert.Empty(h.Cli.Commands);
         Assert.False(h.Controller.IsBusy(h.Id));
-        Assert.True((await h.Controller.OpenWindowsAppAsync(h.Id, compact: true)).Succeeded);
+        Assert.True((await h.Controller.OpenWindowsAppAsync(h.Id)).Succeeded);
         Assert.Single(h.Platform.Launched);
     }
 
@@ -862,21 +862,23 @@ public sealed class WindowsAppConnectionControllerTests
         var main = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "MainWindow.cs"));
         var compact = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "CompactWindow.cs"));
         Assert.Contains("async id => await OpenWindowsAppAsync(id, compact: true)", main);
-        Assert.Contains("await OpenWindowsAppAsync(id)", main);
-        Assert.Matches(@"dialog\.Closing \+= \(_, _\) =>\s*\{\s*connections\.Cancel\(id\);", main);
+        Assert.Contains("await ExecuteRuntimeConnectionAsync(id, operation, ReadSelection())", main);
+        Assert.Matches(@"dialog\.Closing \+= \(sender, args\) =>\s*\{\s*" +
+            @"if \(savingDetails && !_exiting\)\s*\{\s*args\.Cancel = true;\s*return;\s*\}\s*" +
+            @"_runtime\.CancelWindowsApp\(id\);", main);
         Assert.Contains("await connections.CancelAndWaitAsync(id)", main);
         Assert.Contains("SecondaryButtonText = \"Clear connection mapping\"", main);
         Assert.Contains("confirmClear.ShowAsync() == ContentDialogResult.Secondary", main);
-        Assert.True(main.IndexOf("await connectionShutdown", StringComparison.Ordinal) <
-            main.IndexOf("_store?.Dispose()", StringComparison.Ordinal));
+        Assert.Contains("await _runtime.ShutdownAsync()", main);
+        Assert.DoesNotContain("_store?.Dispose()", main);
         Assert.Contains("Func<Guid, Task> connect", compact);
         Assert.Contains("tile.Card.Button.IsEnabled = tile.Connect.IsEnabled = !_isBusy(id)", compact);
         Assert.Contains("WindowsAppConnectionController.LaunchLabel(machine.Name)", main);
         Assert.Contains("Content = \"Save mapping\"", main);
         Assert.Contains("RunConnectionAsync(WindowsAppOperation.Map)", main);
-        Assert.Contains("connections.ExecuteAsync(id, operation, ReadSelection())", main);
+        Assert.Contains("ExecuteRuntimeConnectionAsync(id, operation, ReadSelection())", main);
         Assert.Contains("DevBoxMappingPresentation.CanSaveMapping(busy, catalogBusy, ReadSelection() is not null)", main);
-        Assert.Contains("() => _catalog?.State.IsBusy == true", main);
+        Assert.DoesNotContain("new WindowsAppConnectionController", main);
         Assert.Contains("DevBoxMappingPresentation.CreatePicker(snapshot, mapping)", main);
         Assert.Contains("DevBoxMappingPresentation.TileText(machine.WindowsAppConnection)", main);
         Assert.Contains("card.MinHeight = MachineCardPresentation.MinimumHeight", main);

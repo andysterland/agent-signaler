@@ -61,6 +61,7 @@ internal sealed partial class MainWindow : Window
     private readonly DispatcherQueueTimer _timer;
     private readonly nint _handle;
     private DashboardSettings _settings = new();
+    private readonly DashboardRuntime _runtime;
     private MachineStore? _store;
     private DashboardServer? _server;
     private TrayIcon? _tray;
@@ -95,18 +96,18 @@ internal sealed partial class MainWindow : Window
     private static string AppVersion =>
         typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
-    public MainWindow()
+    public MainWindow(DashboardResourceLease resourceLease)
     {
+        _runtime = new DashboardRuntime(resourceLease);
         Title = $"Agent Signaler v{AppVersion}";
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "AgentSignaler.ico"));
         SystemBackdrop = new MicaBackdrop();
         Content = _root;
         _handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         BuildLayout();
-        try { _settings = DashboardSettings.Load(); }
-        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        _settings = _runtime.Settings.State.Saved;
+        if (_runtime.Settings.State.Recovered)
         {
-            _settings = DashboardSettings.RecoveryDefaults;
             ShowProblem("Settings could not be read. Defaults are in use with automatic sharing disabled. Check dashboard-settings.json in " +
                 "%LOCALAPPDATA%\\AgentSignaler; saving settings will replace that file.");
         }
@@ -127,7 +128,7 @@ internal sealed partial class MainWindow : Window
             if (_tray is { IsAvailable: true })
             {
                 _minimized = false;
-                _compactWindow?.AppWindow.Hide();
+                _compactWindow?.Hide();
                 AppWindow.Hide();
             }
             else await ExitAsync();
@@ -292,50 +293,54 @@ internal sealed partial class MainWindow : Window
             ShowProblem("The notification-area icon is unavailable. Closing this window will exit Agent Signaler. " +
                 "Restart Explorer or sign in again to restore the notification area.");
         }
-        try
+        _runtime.Changed += change =>
         {
-            ReportStartupProgress("Loading local data and Dev Box connections...");
-            _runningPort = _settings.Port;
-            _runningMode = _settings.ConnectionMode;
-            _runningCliPath = _settings.DevTunnelCliPath;
-            _runningAzureCliPath = _settings.AzureCliPath;
-            Directory.CreateDirectory(DashboardSettings.DataDirectory);
-            _store = new MachineStore(DashboardSettings.DatabasePath);
-            _effectiveAzureCliPath = AzureCliInstallation.ResolvePath(_runningAzureCliPath);
-            var cli = new AzureCliProcess(executablePath: _effectiveAzureCliPath);
-            var resolver = new DevBoxConnectionResolver(cli);
-            _catalog = new DevBoxCatalogController(new DevBoxCatalogService(cli));
-            _catalog.Changed += () =>
+            var progress = change.Domain switch
             {
-                void UpdateCatalogAvailability()
-                {
-                    if (_exiting) return;
-                    _updateDevBoxSettingsControls?.Invoke();
-                    _updateConnectionControls?.Invoke();
-                }
-                if (DispatcherQueue.HasThreadAccess) UpdateCatalogAvailability();
-                else DispatcherQueue.TryEnqueue(UpdateCatalogAvailability);
+                "system" => DashboardStartupController.ProgressMessage(_runtime.Status.State.Stage,
+                    _runtime.Settings.State.Saved.ShouldStartSharing),
+                "sharing" => _runtime.Sharing.State.Message,
+                _ => null
             };
-            var gate = WindowsAppOperationGate.Shared;
-            var launcher = new WindowsAppLauncher(resolver, new WindowsAppPlatform(), _store.SetWindowsAppConnectionAsync, gate);
-            _connections = new WindowsAppConnectionController(async (id, token) =>
-            {
-                var machine = (await _store.GetMachinesAsync(token)).FirstOrDefault(machine => machine.MachineId == id)
-                    ?? throw new WindowsAppConnectionException(WindowsAppFailure.InvalidMapping);
-                return machine.WindowsAppConnection;
-            }, _store.SetWindowsAppConnectionAsync, _store.ClearWindowsAppConnectionAsync, cli, resolver, launcher, gate,
-                () => _catalog?.State.IsBusy == true);
-            void UpdateConnectionAvailability()
+            DispatcherQueue.TryEnqueue(() =>
             {
                 if (_exiting) return;
+                _settings = _runtime.Settings.State.Saved;
+                _running = _runtime.Receiver.State.Running;
+                _tunnel = _runtime.Tunnel;
+                _updateDevBoxSettingsControls?.Invoke();
                 _updateConnectionControls?.Invoke();
                 _compactWindow?.UpdateConnectionAvailability();
-            }
-            _connections.Changed += _ =>
-            {
-                if (DispatcherQueue.HasThreadAccess) UpdateConnectionAvailability();
-                else DispatcherQueue.TryEnqueue(UpdateConnectionAvailability);
-            };
+                _updatePrerequisiteControls?.Invoke();
+                UpdateConnectionPresentation();
+                if (progress is not null) ReportStartupProgress(progress);
+            });
+        };
+        _runtime.ConnectionTestReceived += () => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_exiting) _connectionTest.IsOpen = true;
+        });
+        _runtime.Problem += error => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_exiting) ShowProblem($"The {error.Field} component is unavailable. Check settings and retry, or Exit and restart.");
+        });
+        _runningPort = _settings.Port;
+        _runningMode = _settings.ConnectionMode;
+        _runningCliPath = _settings.DevTunnelCliPath;
+        _runningAzureCliPath = _settings.AzureCliPath;
+        _effectiveAzureCliPath = _runtime.Settings.State.Effective.AzureCliPath;
+        _effectiveTunnelCliPath = _runtime.Settings.State.Effective.DevTunnelCliPath;
+        await _runtime.InitializeAsync(cancellationToken);
+        _store = _runtime.Store;
+        _server = _runtime.Server;
+        _catalog = _runtime.CatalogController;
+        _connections = _runtime.Connections;
+        _tunnel = _runtime.Tunnel;
+        _ownedTunnelPort = _runningPort;
+        _running = _runtime.Receiver.State.Running;
+        if (_exiting) return;
+        if (_connections is not null)
+        {
             _connectionActions = new WindowsAppConnectionActions(_connections, RefreshAsync, () => _exiting,
                 ShowDashboard, ShowProblem, ShowConnectionDetailsAsync, id =>
                 {
@@ -344,44 +349,13 @@ internal sealed partial class MainWindow : Window
                         _root.RequestedTheme, _compactWindow?.AppWindow.Id ?? AppWindow.Id);
                     progress.Activate();
                     return progress;
-                });
-            _server = new DashboardServer(_store, _runningPort, () =>
-            {
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    if (!_exiting) _connectionTest.IsOpen = true;
-                });
-            }, new DashboardServerOptions
-            {
-                ListenerMode = _runningMode == DashboardConnectionMode.DevTunnel
-                    ? DashboardListenerMode.Internet : DashboardListenerMode.Lan,
-                ReceiveDetailedConversations = _settings.ReceiveDetailedConversations
-            });
-            ReportStartupProgress("Starting the local receiver...");
-            await _server.StartAsync(cancellationToken);
-            _running = true;
-            if (_exiting) return;
-            ReportStartupProgress("Preparing connection settings...");
-            await InitializeTunnelAsync(cancellationToken);
-            if (_exiting) return;
-            UpdateConnectionPresentation();
-            ReportStartupProgress("Loading computer tiles...");
-            _refreshTask = RefreshAsync();
-            await _refreshTask;
-            if (_exiting) return;
-            _timer.Start();
-            // Keep all machine views gated until sharing finishes public HTTPS verification
-            // (or is skipped/failed). A running receiver or a populated cache is not readiness.
-            await StartSharingOnStartupAsync();
+                }, id => ExecuteRuntimeConnectionAsync(id, WindowsAppOperation.Open));
         }
-        catch (Exception error) when (error is IOException or SocketException or SqliteException or UnauthorizedAccessException)
-        {
-            if (_exiting) return;
-            UpdateConnectionPresentation();
-            ShowProblem("The receiver could not start. Check that the configured port is unused and that " +
-                "%LOCALAPPDATA%\\AgentSignaler is writable. Change the port in Settings, then Exit and restart. " +
-                "No firewall rule or URL ACL is required to start the local receiver.");
-        }
+        UpdateConnectionPresentation();
+        ReportStartupProgress("Loading computer tiles...");
+        _refreshTask = RefreshAsync();
+        await _refreshTask;
+        if (!_exiting) _timer.Start();
     }
 
     private void UpdateStartupPresentation()
@@ -403,7 +377,7 @@ internal sealed partial class MainWindow : Window
     {
         if (_exiting) return;
         _minimized = false;
-        _compactWindow?.AppWindow.Hide();
+        _compactWindow?.Hide();
         AppWindow.Show();
         NativeWindow.ShowWindow(_handle, 9);
         NativeWindow.SetForegroundWindow(_handle);
@@ -422,7 +396,7 @@ internal sealed partial class MainWindow : Window
     {
         if (_exiting || !_startup.ShowMachines || !_minimized || !_settings.ShowCompactViewWhenMinimized || _cardMap.Count == 0)
         {
-            _compactWindow?.AppWindow.Hide();
+            _compactWindow?.Hide();
             return;
         }
         try
@@ -471,7 +445,10 @@ internal sealed partial class MainWindow : Window
         try
         {
             // DispatcherQueueTimer and this captured UI context keep all control updates on the UI thread.
-            var machines = await _store.GetMachinesAsync();
+            await Task.CompletedTask;
+            var snapshot = _runtime.GetMachines();
+            if (snapshot.IsStale) throw new IOException("Machine state is stale.");
+            var machines = snapshot.State.Items.Select(item => item.Machine).ToList();
             if (_exiting) return;
             var ids = machines.Select(m => m.MachineId).ToHashSet();
             var layoutChanged = false;
@@ -492,7 +469,6 @@ internal sealed partial class MainWindow : Window
                 }
                 if (card.Machine.Name != machine.Name) layoutChanged = true;
                 card.Update(machine);
-                _connections?.Observe(machine.MachineId, machine.WindowsAppConnection);
             }
             _empty.Visibility = machines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             _machineCount.Text = $"{machines.Count} development machine{(machines.Count == 1 ? "" : "s")}";
@@ -576,7 +552,6 @@ internal sealed partial class MainWindow : Window
         _closeDialogForNavigation = false;
         _dialogFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var connections = _connections;
-        connections.Observe(id, card.Machine.WindowsAppConnection);
         var name = new TextBox
         {
             Header = "Display name (blank uses hostname)", Text = card.Machine.DisplayName ?? "",
@@ -588,6 +563,7 @@ internal sealed partial class MainWindow : Window
             PlaceholderText = "Shown when hovering over the computer tile",
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80
         };
+        var detailsRevision = _runtime.GetMachine(id).Revision;
         var current = Text("");
         current.IsTextSelectionEnabled = true;
         var sessions = Text("");
@@ -705,6 +681,7 @@ internal sealed partial class MainWindow : Window
         var detailsLayout = new Grid { Height = Math.Clamp(_root.ActualHeight - 190, 320, 520), MinWidth = 280, RowSpacing = 8 };
         detailsLayout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         detailsLayout.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        detailsLayout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         detailsLayout.Children.Add(tabs);
         var sharedProgress = new StackPanel { Spacing = 6 };
         sharedProgress.Children.Add(progress);
@@ -714,16 +691,30 @@ internal sealed partial class MainWindow : Window
         var footer = new ScrollViewer { Content = sharedProgress, MaxHeight = 120 };
         Grid.SetRow(footer, 1);
         detailsLayout.Children.Add(footer);
+        var saveDetails = new Button { Content = "Save details" };
+        var removeMachine = new Button { Content = "Remove" };
+        var remote = new Button { Content = "Remote" };
+        var closeDetails = new Button { Content = "Close" };
+        ToolTipService.SetToolTip(remote, "Connect or reuse the existing Windows App session.");
+        var detailActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8
+        };
+        foreach (var action in new[] { saveDetails, removeMachine, remote, closeDetails })
+            detailActions.Children.Add(action);
+        Grid.SetRow(detailActions, 2);
+        detailsLayout.Children.Add(detailActions);
         var dialog = new ContentDialog
         {
             XamlRoot = _root.XamlRoot, Title = "Machine details",
             Content = detailsLayout,
-            PrimaryButtonText = "Save details", SecondaryButtonText = "Remove", CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Close
+            DefaultButton = ContentDialogButton.None
         };
         _activeDialog = dialog;
         _machineDetailsDialog = dialog;
         var machineExists = true;
+        var savingDetails = false;
+        var requestedResult = ContentDialogResult.None;
         bool SettingsSelected() => ReferenceEquals(tabs.SelectedItem, settingsTab);
         var catalogRefreshOwned = false;
         var updatingControls = false;
@@ -735,11 +726,13 @@ internal sealed partial class MainWindow : Window
             try
             {
                 var state = connections.State(id);
-                var busy = connections.IsBusy(id);
+                var connectionBusy = connections.IsBusy(id);
+                var busy = connectionBusy || savingDetails;
                 var catalogBusy = _catalog?.State.IsBusy == true;
                 LoadPicker();
                 picker.IsEnabled = machineExists && !busy && !catalogBusy;
                 foreach (var action in actions) action.IsEnabled = machineExists && state.ActionsEnabled && !busy;
+                remote.IsEnabled = open.IsEnabled && !_exiting;
                 discover.IsEnabled &= DevBoxMappingPresentation.CanSaveMapping(busy, catalogBusy, ReadSelection() is not null);
                 refreshCatalog.IsEnabled = machineExists && !catalogBusy && !busy && _catalog is not null;
                 cancelCatalog.Visibility = catalogBusy && catalogRefreshOwned ? Visibility.Visible : Visibility.Collapsed;
@@ -766,10 +759,11 @@ internal sealed partial class MainWindow : Window
                 connectionStatus.Text = state.Status;
                 if (busy) connectionMessage = null;
                 progress.Text = connectionMessage ?? state.Message;
-                cancel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-                cancel.IsEnabled = busy;
+                cancel.Visibility = connectionBusy ? Visibility.Visible : Visibility.Collapsed;
+                cancel.IsEnabled = connectionBusy;
                 name.IsEnabled = note.IsEnabled = machineExists && !busy;
-                dialog.IsPrimaryButtonEnabled = dialog.IsSecondaryButtonEnabled = SettingsSelected() && machineExists && !busy;
+                saveDetails.IsEnabled = removeMachine.IsEnabled = SettingsSelected() && machineExists && !busy;
+                closeDetails.IsEnabled = !savingDetails;
                 clearTranscript.IsEnabled = SettingsSelected() && machineExists && !busy;
                 transcriptSettings.Text = TranscriptReceiverDescription();
                 if (clearConfirmation is not null) clearConfirmation.IsSecondaryButtonEnabled = machineExists && !busy;
@@ -780,8 +774,7 @@ internal sealed partial class MainWindow : Window
         tabs.SelectionChanged += async (_, _) =>
         {
             var settingsSelected = SettingsSelected();
-            dialog.PrimaryButtonText = settingsSelected ? "Save details" : "";
-            dialog.SecondaryButtonText = settingsSelected ? "Remove" : "";
+            saveDetails.Visibility = removeMachine.Visibility = settingsSelected ? Visibility.Visible : Visibility.Collapsed;
             _updateConnectionControls?.Invoke();
             if (transcriptView is not null) await transcriptView.SetVisibleAsync(!settingsSelected && machineExists);
         };
@@ -794,11 +787,10 @@ internal sealed partial class MainWindow : Window
         async Task RunConnectionAsync(WindowsAppOperation operation)
         {
             connectionMessage = null;
-            var result = operation == WindowsAppOperation.Open
-                ? await OpenWindowsAppAsync(id)
-                : await connections.ExecuteAsync(id, operation, ReadSelection());
+            var result = await ExecuteRuntimeConnectionAsync(id, operation, ReadSelection());
             if (_exiting) return;
             await RefreshAsync();
+            detailsRevision = _runtime.GetMachine(id).Revision;
             if (result.Succeeded && operation is WindowsAppOperation.Map or WindowsAppOperation.Clear)
                 LoadPicker(useSavedMapping: true);
             connectionMessage = result.Message;
@@ -836,7 +828,7 @@ internal sealed partial class MainWindow : Window
             catalogRefreshOwned = true;
             try
             {
-                await _catalog.RefreshAsync(subscriptionId: _settings.DevBoxSubscriptionId, devCenterName: _settings.DevCenterName);
+                await RefreshRuntimeCatalogAsync(_settings);
             }
             finally
             {
@@ -844,12 +836,13 @@ internal sealed partial class MainWindow : Window
                 _updateConnectionControls?.Invoke();
             }
         };
-        cancelCatalog.Click += (_, _) => _catalog?.Cancel();
+        cancelCatalog.Click += (_, _) => _runtime.CancelCatalog();
         signIn.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.SignIn);
         refresh.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.Refresh);
         open.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.Open);
+        remote.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.Open);
         cached.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.OpenLastKnown);
-        cancel.Click += (_, _) => connections.Cancel(id);
+        cancel.Click += (_, _) => _runtime.CancelWindowsApp(id);
         var clearRequested = false;
         clear.Click += (_, _) =>
         {
@@ -857,11 +850,16 @@ internal sealed partial class MainWindow : Window
             clearRequested = true;
             dialog.Hide();
         };
-        dialog.Closing += (_, _) =>
+        dialog.Closing += (sender, args) =>
         {
-            connections.Cancel(id);
+            if (savingDetails && !_exiting)
+            {
+                args.Cancel = true;
+                return;
+            }
+            _runtime.CancelWindowsApp(id);
             if (transcriptView is not null) _ = transcriptView.SetVisibleAsync(false);
-            if (catalogRefreshOwned) _catalog?.Cancel();
+            if (catalogRefreshOwned) _runtime.CancelCatalog();
         };
         dialog.Opened += (_, _) =>
         {
@@ -898,38 +896,48 @@ internal sealed partial class MainWindow : Window
                     $" · last observed {s.UpdatedAtUtc.ToLocalTime():G}"));
         };
         _updateDetails(card.Machine);
-        dialog.PrimaryButtonClick += async (_, args) =>
+        saveDetails.Click += async (_, _) =>
         {
-            if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || _exiting)
-            {
-                args.Cancel = true;
-                return;
-            }
-            var deferral = args.GetDeferral();
+            if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || savingDetails || _exiting) return;
+            var saved = false;
+            savingDetails = true;
+            _updateConnectionControls?.Invoke();
             try
             {
                 if (name.Text.Any(char.IsControl))
                 {
                     validation.Text = "Use a display name without control characters.";
-                    args.Cancel = true;
                     return;
                 }
-                _mutationTask = _store.UpdateDetailsAsync(id, name.Text, note.Text);
+                _mutationTask = UpdateRuntimeMachineAsync(id, name.Text, note.Text, detailsRevision);
                 await _mutationTask;
                 await RefreshAsync();
+                saved = true;
             }
-            catch (Exception error) when (error is SqliteException or JsonException or IOException or UnauthorizedAccessException or KeyNotFoundException)
+            catch (Exception error) when (error is SqliteException or JsonException or IOException or UnauthorizedAccessException or KeyNotFoundException or RuntimeCommandException)
             {
-                validation.Text = error is KeyNotFoundException ? "This machine was removed." :
+                validation.Text = error is RuntimeCommandException runtimeError ? RuntimeFailureMessage(runtimeError.Error) :
+                    error is KeyNotFoundException ? "This machine was removed." :
                     "The details could not be saved. Check database access and try again.";
-                args.Cancel = true;
             }
-            finally { deferral.Complete(); }
+            finally
+            {
+                savingDetails = false;
+                _updateConnectionControls?.Invoke();
+            }
+            if ((saved || _closeDialogForNavigation) && !_exiting)
+            {
+                requestedResult = saved ? ContentDialogResult.Primary : ContentDialogResult.None;
+                dialog.Hide();
+            }
         };
-        dialog.SecondaryButtonClick += (_, args) =>
+        removeMachine.Click += (_, _) =>
         {
-            if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || _exiting) args.Cancel = true;
+            if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || savingDetails || _exiting) return;
+            requestedResult = ContentDialogResult.Secondary;
+            dialog.Hide();
         };
+        closeDetails.Click += (_, _) => { if (!savingDetails) dialog.Hide(); };
         try
         {
             ContentDialogResult result;
@@ -937,6 +945,7 @@ internal sealed partial class MainWindow : Window
             while (true)
             {
                 clearRequested = false;
+                requestedResult = ContentDialogResult.None;
                 _activeDialog = dialog;
                 var showing = dialog.ShowAsync();
                 if (clearConfirmed)
@@ -944,7 +953,8 @@ internal sealed partial class MainWindow : Window
                     clearConfirmed = false;
                     await RunConnectionAsync(WindowsAppOperation.Clear);
                 }
-                result = await showing;
+                await showing;
+                result = requestedResult;
                 await connections.CancelAndWaitAsync(id);
                 if (catalogRefreshOwned && _catalog is not null) await _catalog.CancelAndWaitAsync();
                 if (!clearRequested || _exiting || _closeDialogForNavigation) break;
@@ -976,13 +986,13 @@ internal sealed partial class MainWindow : Window
                 {
                     _server?.Transcripts.ClearMachine(id, removed: true);
                     transcriptView?.Dispose();
-                    _mutationTask = _store.RemoveAsync(id);
+                    _mutationTask = RemoveRuntimeMachineAsync(id, _runtime.GetMachine(id).Revision);
                     await _mutationTask;
                     await RefreshAsync();
                 }
             }
         }
-        catch (Exception error) when (error is SqliteException or JsonException or IOException or UnauthorizedAccessException or COMException)
+        catch (Exception error) when (error is SqliteException or JsonException or IOException or UnauthorizedAccessException or COMException or RuntimeCommandException)
         {
             ShowProblem("The machine action could not finish. Check local database access and try again.");
         }
@@ -1125,11 +1135,11 @@ internal sealed partial class MainWindow : Window
             BuildTunnelSettings(sharing, sharingHelp);
             var receive = new ToggleSwitch
             {
-                Header = "Receive detailed conversations", IsOn = _settings.ReceiveDetailedConversations
+                Header = "Receive detailed conversations", IsOn = _runtime.Settings.State.Effective.ReceiveDetailedConversations
             };
             var receiveOutcome = Text("Applies immediately, independently of Save/Cancel. Turning off purges retained text without stopping status.");
             var updatingReceive = false;
-            receive.Toggled += (_, _) =>
+            receive.Toggled += async (_, _) =>
             {
                 if (updatingReceive) return;
                 var enabled = receive.IsOn;
@@ -1137,20 +1147,18 @@ internal sealed partial class MainWindow : Window
                 if (!enabled)
                 {
                     _settings = next;
-                    _server?.Transcripts.SetEnabled(false);
+                    _runtime.DisableDetailedReception();
                 }
                 try
                 {
-                    next.Save();
-                    _settings = next;
-                    _server?.Transcripts.SetEnabled(enabled);
+                    await SaveRuntimeSettingsAsync(next, explicitDetailedReceptionEnable: enabled);
                     receiveOutcome.Text = TranscriptReceiverDescription();
                 }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException)
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or RuntimeCommandException)
                 {
                     receiveOutcome.Text = "The receiver preference could not be saved. Reception remains disabled for this run; restore settings write access and retry.";
                     _settings = _settings with { ReceiveDetailedConversations = false };
-                    _server?.Transcripts.SetEnabled(false);
+                    _runtime.DisableDetailedReception();
                     updatingReceive = true;
                     receive.IsOn = false;
                     updatingReceive = false;
@@ -1201,7 +1209,7 @@ internal sealed partial class MainWindow : Window
                 }
                 finally { deferral.Complete(); }
             };
-            dialog.PrimaryButtonClick += (_, args) =>
+            dialog.PrimaryButtonClick += async (_, args) =>
             {
                 if (_catalog?.State.IsBusy == true || PrerequisiteBusy)
                 {
@@ -1245,6 +1253,7 @@ internal sealed partial class MainWindow : Window
                     args.Cancel = true;
                     return;
                 }
+                var saveDeferral = args.GetDeferral();
                 try
                 {
                     var next = discoverySettings with
@@ -1261,8 +1270,7 @@ internal sealed partial class MainWindow : Window
                         StartupRegistration.SetEnabled(startup.IsOn);
                         startupEnabled = startup.IsOn;
                     }
-                    next.Save();
-                    _settings = next;
+                    await SaveRuntimeSettingsAsync(next);
                     if (_settings.Port != _runningPort || _settings.ConnectionMode != _runningMode ||
                         _settings.DevTunnelCliPath != _runningCliPath)
                     {
@@ -1281,12 +1289,13 @@ internal sealed partial class MainWindow : Window
                         _problem.IsOpen = true;
                     }
                 }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or COMException)
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or COMException or RuntimeCommandException)
                 {
                     outcome.Text = "Some settings could not be saved. Check local application-data and startup-registry " +
                         "permissions, then retry. A sign-in setting already applied may remain changed.";
                     args.Cancel = true;
                 }
+                finally { saveDeferral.Complete(); }
             };
             await dialog.ShowAsync();
         }
@@ -1314,8 +1323,6 @@ internal sealed partial class MainWindow : Window
         _exiting = true;
         _server?.SetTranscriptReadiness(false);
         _transcriptView?.Dispose();
-        var connectionShutdown = _connections?.StopAsync() ?? Task.CompletedTask;
-        var catalogShutdown = _catalog?.StopAsync() ?? Task.CompletedTask;
         var prerequisiteShutdown = CancelPrerequisiteChecksAsync();
         _activeDialog?.Hide();
         CancelTunnelOperations();
@@ -1327,33 +1334,13 @@ internal sealed partial class MainWindow : Window
         var failed = false;
         try
         {
-            await prerequisiteShutdown;
-            if (_initializationTask is not null) await _initializationTask;
-            try { await ShutdownTunnelAsync(); }
-            catch (Exception error) when (error is IOException or Win32Exception or TunnelException or TimeoutException or OperationCanceledException)
-            { failed = true; }
-            await _refreshTask;
-            try { await _mutationTask; }
-            catch (Exception error) when (error is SqliteException or JsonException or IOException or UnauthorizedAccessException)
-            { failed = true; }
-            if (_server is not null)
-            {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                try { await _server.StopAsync(timeout.Token); }
-                catch (OperationCanceledException) when (timeout.IsCancellationRequested) { failed = true; }
-                catch (Exception error) when (error is IOException or SocketException) { failed = true; }
-                try
-                {
-                    await _server.DisposeAsync();
-                }
-                catch (Exception error) when (error is IOException or SocketException) { failed = true; }
-            }
+            failed = !await DashboardStartupController.DrainForShutdownAsync(
+                [prerequisiteShutdown, _initializationTask ?? Task.CompletedTask, _refreshTask, _mutationTask],
+                async () => (await _runtime.ShutdownAsync()).Clean);
         }
         finally
         {
-            await catalogShutdown;
-            await connectionShutdown;
-            _store?.Dispose();
+            _tunnelLifetime.Dispose();
             _windowStateMonitor?.Dispose();
             _tray?.Dispose();
             _running = false;
@@ -1402,6 +1389,7 @@ internal sealed class MachineCard
     private readonly TextBlock _mapping = MainWindow.Text("", 16);
     private readonly TextBlock _footer = MainWindow.Text("", 14);
     public Button Button { get; }
+    public FrameworkElement? HoverPreview { get; }
     public MachineView Machine { get; private set; }
 
     public MachineCard(MachineView machine, Action activate, bool miniature = false)
@@ -1442,14 +1430,7 @@ internal sealed class MachineCard
             var preview = new StackPanel();
             preview.Children.Add(_hoverCard.Button);
             preview.Children.Add(_hoverNote);
-            ToolTipService.SetToolTip(Button, new ToolTip
-            {
-                Content = preview,
-                Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left,
-                Padding = new Thickness(0),
-                BorderThickness = new Thickness(0),
-                MaxWidth = 370
-            });
+            HoverPreview = preview;
         }
         Button.Click += (_, _) => activate();
         Update(machine);

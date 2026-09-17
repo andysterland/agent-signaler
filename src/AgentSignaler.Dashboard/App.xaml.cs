@@ -5,12 +5,14 @@ namespace AgentSignaler.Dashboard;
 public partial class App : Application
 {
     private readonly SingleInstance _instance;
+    private readonly DashboardResourceLease _resourceLease;
     private readonly bool _background;
     private MainWindow? _window;
 
-    internal App(SingleInstance instance, bool background)
+    internal App(SingleInstance instance, DashboardResourceLease resourceLease, bool background)
     {
         _instance = instance;
+        _resourceLease = resourceLease;
         _background = background;
         InitializeComponent();
         UnhandledException += (_, e) =>
@@ -23,7 +25,7 @@ public partial class App : Application
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
+        _window = new MainWindow(_resourceLease);
         _window.Activate();
         _instance.Listen(_window.DispatcherQueue, _window.ShowDashboard,
             async () => await _window.ExitAsync(),

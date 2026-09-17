@@ -13,15 +13,32 @@ public sealed class TranscriptDetailsSourceTests
         foreach (var control in new[] { "name", "note", "current", "sessions", "picker", "mappingSummary",
                      "refreshCatalog", "catalogStatus", "connectionStatus", "refreshed", "connectionUri", "copyConnectionUri" })
             Assert.Contains($"content.Children.Add({control});", source);
-        Assert.Contains("dialog.PrimaryButtonText = settingsSelected ? \"Save details\" : \"\";", source);
-        Assert.Contains("dialog.SecondaryButtonText = settingsSelected ? \"Remove\" : \"\";", source);
-        Assert.Contains("dialog.IsPrimaryButtonEnabled = dialog.IsSecondaryButtonEnabled = SettingsSelected() && machineExists && !busy;", source);
-        Assert.Contains("if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || _exiting)", source);
+        Assert.Contains("saveDetails.Visibility = removeMachine.Visibility = settingsSelected ? Visibility.Visible : Visibility.Collapsed;", source);
+        Assert.Contains("saveDetails.IsEnabled = removeMachine.IsEnabled = SettingsSelected() && machineExists && !busy;", source);
+        Assert.Contains("if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || savingDetails || _exiting)", source);
+        Assert.Contains("if (savingDetails && !_exiting)", source);
+        Assert.Contains("closeDetails.IsEnabled = !savingDetails;", source);
+        Assert.Contains("if ((saved || _closeDialogForNavigation) && !_exiting)", source);
+        Assert.Contains("result = requestedResult;", source);
         Assert.Contains("sharedProgress.Children.Add(progress);", source);
         Assert.Contains("sharedProgress.Children.Add(cancel);", source);
         Assert.Contains("sharedProgress.Children.Add(cancelCatalog);", source);
         Assert.Contains("Content = \"Clear transcript\"", source);
         Assert.Contains("_server?.Transcripts.ClearMachine(id, removed: true);", source);
+    }
+
+    [Fact]
+    public void RemoteButtonRemainsInSharedFooterAndUsesGuardedWindowsAppOpenFlow()
+    {
+        var source = ReadDashboard("MainWindow.cs");
+        Assert.Contains("var remote = new Button { Content = \"Remote\" };", source);
+        Assert.Contains("new[] { saveDetails, removeMachine, remote, closeDetails }", source);
+        Assert.Contains("Grid.SetRow(detailActions, 2);", source);
+        Assert.Contains("detailsLayout.Children.Add(detailActions);", source);
+        Assert.DoesNotContain("content.Children.Add(remote);", source);
+        Assert.Contains("remote.IsEnabled = open.IsEnabled && !_exiting;", source);
+        Assert.Contains("remote.Click += async (_, _) => await RunConnectionAsync(WindowsAppOperation.Open);", source);
+        Assert.Contains("var result = await ExecuteRuntimeConnectionAsync(id, operation, ReadSelection());", source);
     }
 
     [Fact]
@@ -49,7 +66,7 @@ public sealed class TranscriptDetailsSourceTests
     public void TunnelChangesUseCapturedReadinessAndPurgeBeforeAsynchronousTeardown()
     {
         var source = ReadDashboard("MainWindow.Tunneling.cs");
-        Assert.Contains("UpdateTranscriptReadiness(status);", source);
+        Assert.Contains("UpdateTranscriptReadiness(_tunnel?.Status);", source);
         Assert.Matches(@"private async Task StopSharingAsync\(\)\s*\{\s*SuspendTranscriptTransport\(\);", source);
         Assert.Contains("_server?.SetTranscriptReadiness(false);", source);
         Assert.Contains("_transcriptConnectionChanged || _transcriptTransportSuspended", source);

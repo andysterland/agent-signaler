@@ -345,24 +345,21 @@ public sealed class DevBoxCatalogControllerTests
         Assert.DoesNotContain("ReadEndpoints", settings);
         Assert.DoesNotContain("Add Dev Center", settings);
         Assert.DoesNotContain("_settings.DevCenterEndpoints", main);
-        Assert.Contains("await _catalog.RefreshAsync(subscriptionId: next.DevBoxSubscriptionId, devCenterName: next.DevCenterName)", settings);
-        Assert.Contains("await _catalog.RefreshAsync(subscriptionId: _settings.DevBoxSubscriptionId, devCenterName: _settings.DevCenterName)", main);
+        Assert.Contains("await RefreshRuntimeCatalogAsync(next)", settings);
+        Assert.Contains("await RefreshRuntimeCatalogAsync(_settings)", main);
         Assert.Contains("Text = _settings.DevBoxSubscriptionId?.ToString()", settings);
         Assert.Contains("Text = _settings.DevCenterName", settings);
         Assert.Contains("_settings.WithDiscoveryTarget(subscriptionInput.Text, devCenterInput.Text)", settings);
-        Assert.True(settings.IndexOf("next.Save()", StringComparison.Ordinal) <
-            settings.IndexOf("_settings = next", StringComparison.Ordinal));
-        Assert.True(settings.IndexOf("_settings = next", StringComparison.Ordinal) <
-            settings.IndexOf("await _catalog.RefreshAsync", StringComparison.Ordinal));
+        Assert.DoesNotContain("next.Save()", settings);
+        Assert.DoesNotContain("new DevBoxCatalogController", main);
         Assert.Contains("discoverySettings = readDevBoxSettings()", main);
         Assert.Contains("var next = discoverySettings with", main);
         Assert.DoesNotContain("devBoxSettingsRequested", main);
         Assert.Contains("snapshot?.DevCenterEndpoints.Select", settings);
         Assert.Contains("Azure Resource Manager read access", settings);
         Assert.Contains("await _catalog.CancelAndWaitAsync()", main);
-        Assert.Contains("_catalog?.StopAsync()", main);
-        Assert.True(main.IndexOf("await catalogShutdown", StringComparison.Ordinal) <
-            main.IndexOf("_store?.Dispose()", StringComparison.Ordinal));
+        Assert.Contains("await _runtime.ShutdownAsync()", main);
+        Assert.DoesNotContain("_store?.Dispose()", main);
         Assert.Contains("_activeDialog.IsPrimaryButtonEnabled = editingEnabled", settings);
         Assert.Contains("_catalog?.State.IsBusy", cli);
         Assert.Contains("snapshot.AzureAccountUpn", settings);

@@ -15,20 +15,26 @@ internal sealed record MultiTargetIntegrationJournal
     public string StartupName { get; init; } = "";
     public string? StartupBefore { get; init; }
     public string? StartupAfter { get; init; }
+    public IntegrationStartupState? StartupStateBefore { get; init; }
+    public IntegrationStartupState? StartupStateAfter { get; init; }
 }
 
 public sealed partial class MultiTargetIntegrationManager
 {
-    private async Task ExecuteAsync(MultiTargetIntegrationJournal journal, string journalPath,
-        CancellationToken token, bool retainJournal = false, bool stopClient = false)
+    internal async Task ExecuteAsync(MultiTargetIntegrationJournal journal, string journalPath,
+        CancellationToken token, bool retainJournal = false, bool stopClient = false, bool backupUnchangedFiles = false)
     {
         CheckFiles(journal.Changes);
         var journalBytes = Serialize(journal);
         if (journalBytes.Length > 16777216)
             throw new InvalidDataException("Integration transaction exceeds the bounded recovery journal size; no files changed.");
         var suffix = $".agent-signaler.{DateTimeOffset.UtcNow:yyyyMMddTHHmmssfffffffZ}.{Guid.NewGuid():N}.backup";
-        foreach (var change in journal.Changes.Where(c => c.Before is not null && !Equal(c.Before, c.After)))
+        foreach (var change in journal.Changes.Where(c => c.Before is not null &&
+            (backupUnchangedFiles || !Equal(c.Before, c.After))))
             AtomicFile.Write(change.Path + suffix, change.Before!);
+        if (journal.TaskBefore is not null && journal.TaskBefore != journal.TaskAfter)
+            AtomicFile.Write(Path.Combine(Path.GetDirectoryName(journal.ConfigPath)!,
+                "heartbeat-task.xml" + suffix), System.Text.Encoding.UTF8.GetBytes(journal.TaskBefore));
         AtomicFile.Write(journalPath, journalBytes);
         try
         {
@@ -42,6 +48,7 @@ public sealed partial class MultiTargetIntegrationManager
                 if (change.After is null) File.Delete(change.Path);
                 else AtomicFile.Write(change.Path, change.After);
             }
+            token.ThrowIfCancellationRequested();
             if (journal.TaskBefore != journal.TaskAfter)
             {
                 if (scheduler.ReadXml(journal.TaskName) != journal.TaskBefore)
@@ -51,7 +58,16 @@ public sealed partial class MultiTargetIntegrationManager
                 if (scheduler.ReadXml(journal.TaskName) != journal.TaskAfter)
                     throw new InvalidOperationException("Legacy task change failed.");
             }
-            if (journal.StartupBefore != journal.StartupAfter)
+            token.ThrowIfCancellationRequested();
+            if (journal.StartupStateBefore is { } before && journal.StartupStateAfter is { } after)
+            {
+                if (!IntegrationStartup.Equivalent(before, after))
+                {
+                    if (startup is null) throw new InvalidOperationException("Startup servicing is unavailable.");
+                    startup.ReplaceState(journal.StartupName, before, after);
+                }
+            }
+            else if (journal.StartupBefore != journal.StartupAfter)
             {
                 if (startup is null) throw new InvalidOperationException("Startup servicing is unavailable.");
                 startup.Replace(journal.StartupName, journal.StartupBefore, journal.StartupAfter);
@@ -116,11 +132,18 @@ public sealed partial class MultiTargetIntegrationManager
         catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
         try
         {
-            if (journal.StartupBefore != journal.StartupAfter)
+            if (journal.StartupStateBefore is { } before && journal.StartupStateAfter is { } after)
+            {
+                if (!IntegrationStartup.Equivalent(before, after))
+                {
+                    if (startup is null) throw new InvalidOperationException("Startup recovery is unavailable.");
+                    startup.RestoreState(journal.StartupName, before, after);
+                }
+            }
+            else if (journal.StartupBefore != journal.StartupAfter)
             {
                 if (startup is null) throw new InvalidOperationException("Startup recovery is unavailable.");
-                if (startup.Read(journal.StartupName) != journal.StartupBefore)
-                    startup.Replace(journal.StartupName, journal.StartupAfter, journal.StartupBefore);
+                startup.RestoreLegacyState(journal.StartupName, journal.StartupBefore, journal.StartupAfter);
             }
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
@@ -189,7 +212,8 @@ public sealed partial class MultiTargetIntegrationManager
         if (task is not null && !ScheduledTaskDefinition.IsOwned(task, manifest.MachineId, manifest.RelayPath, configPath))
             throw new InvalidDataException("Unrelated legacy task occupies the name; nothing removed.");
         var startupName = manifest.StartupName ?? IntegrationStartup.Name(configPath);
-        var startupValue = startup?.Read(startupName);
+        var startupState = startup?.Capture(startupName);
+        var startupValue = startupState?.Command;
         if (startupValue is not null && startupValue != manifest.StartupCommand)
             throw new InvalidDataException("Unrelated startup occupies the name; nothing removed.");
         var changes = new List<IntegrationFileChange>();
@@ -208,7 +232,9 @@ public sealed partial class MultiTargetIntegrationManager
         var journal = new MultiTargetIntegrationJournal
         {
             ConfigPath = configPath, Removal = true, Changes = changes,
-            TaskName = taskName, TaskBefore = task, StartupName = startupName, StartupBefore = startupValue
+            TaskName = taskName, TaskBefore = task, StartupName = startupName, StartupBefore = startupValue,
+            StartupStateBefore = startupState,
+            StartupStateAfter = startup?.Prepare(startupName, startupState!, null)
         };
         ExecuteAsync(journal, journalPath, CancellationToken.None, prepare, true).GetAwaiter().GetResult();
     }
@@ -259,6 +285,8 @@ public sealed partial class MultiTargetIntegrationManager
             (journal.StartupAfter is not null && !manifests.Any(m => journal.StartupAfter == m.StartupCommand ||
                 journal.StartupAfter == IntegrationStartup.Command(ClientPath(m.RelayPath), configPath))))
             throw new InvalidDataException("Recovery journal ownership mismatch.");
+        IntegrationStartup.ValidateJournalStates(journal.StartupStateBefore, journal.StartupStateAfter,
+            journal.StartupBefore, journal.StartupAfter);
         return journal;
     }
 }

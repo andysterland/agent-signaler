@@ -623,9 +623,20 @@ artifacts without installation or redirected-drive copying with:
 Closing/minimizing the dashboard hides it in the notification area without stopping
 the server. Use its explicit **Exit** action to stop it. Remote reporting does not
 depend on the configurator remaining open. The remote Client's tray menu offers
-**Open Configurator** and **Exit**. Approved setup registers its exact quoted
-command under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: startup is
-at **this user's sign-in**, not pre-login, and requires no service or elevation.
+**Open Configurator** and **Exit**. Configurator's **Start Client at Windows sign-in**
+checkbox controls an owned `AgentSignaler-Client-<configuration identity>.lnk` in
+the current user's Startup programs folder (`shell:startup`). The shortcut targets
+the Client beside the selected Relay with `--background --config` and the exact
+canonical configuration path. Startup is at **this user's sign-in**, not pre-login,
+and requires no service or elevation. Apply previews and saves the choice;
+unchecking removes only the owned registration, without stopping a running Client.
+Repair and servicing preserve an absent registration rather than re-enabling it.
+An exact owned legacy HKCU Run registration is migrated to the shortcut (or removed
+when unchecked), without leaving two launch entries. Conflicting shortcuts/Run
+values are preserved and reported, not overwritten. Windows Startup Apps disabled
+state survives migration, removal and re-enabling; use Windows Startup Apps to
+change that separate preference. Recovery and installer rollback preserve the
+original shortcut bytes, legacy registration and disabled state.
 One reporting owner is enforced per user/data directory across Windows sessions.
 Launching Client again asks the existing owner to open Configurator, providing a
 foreground control window in that owner's Windows sign-in session. If it cannot

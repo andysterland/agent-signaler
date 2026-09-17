@@ -30,10 +30,10 @@ public sealed class PrerequisiteSettingsTests
         Assert.DoesNotContain("BuildAzureCliSettings", devBox);
         Assert.DoesNotContain("winget install", sharing);
         Assert.DoesNotContain("extension add", devBox);
-        Assert.Contains("DevTunnelDiagnostics.CheckAsync(selectedPath, token)", prerequisites);
-        Assert.Contains("AzureCliDiagnostics.CheckAsync(selectedPath, token)", prerequisites);
-        Assert.Contains("AzureCliDiagnostics.CheckDevCenterExtensionAsync(selectedPath, token)", prerequisites);
-        Assert.Contains("WindowsAppDiagnostics.CheckAsync", prerequisites);
+        Assert.Contains("CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.DevTunnel, selectedPath, token)", prerequisites);
+        Assert.Contains("CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.AzureCli, selectedPath, token)", prerequisites);
+        Assert.Contains("CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.DevCenterExtension, selectedPath, token)", prerequisites);
+        Assert.Contains("CheckRuntimePrerequisiteAsync(RuntimePrerequisiteKind.WindowsApp", prerequisites);
         Assert.DoesNotContain("CheckAccountAsync", prerequisites + sharing);
         Assert.DoesNotContain("RunTunnelOperationAsync", prerequisites);
         Assert.DoesNotContain("_tunnel.", prerequisites);

@@ -409,7 +409,9 @@ public sealed class RemoteTests : IDisposable
             failure.GetProperty("args").EnumerateArray().Select(e => e.GetString()));
         Assert.Contains($"REMOVE owned legacy heartbeat task {plan.TaskName} if present", plan.Preview);
         Assert.Contains("No scheduled task is installed", plan.Preview);
-        Assert.Contains("REGISTER HKCU", plan.Preview);
+        Assert.Contains("current-user Startup programs shortcut", plan.Preview);
+        Assert.Contains(plan.StartupName + ".lnk", plan.Preview);
+        Assert.DoesNotContain("REGISTER HKCU", plan.Preview);
         Assert.DoesNotContain("<Task", plan.Preview);
         Assert.False(File.Exists(plan.HookPath));
         Assert.False(File.Exists(ConfigPath));

@@ -49,11 +49,44 @@ jobs:
       - name: Test tunneling
         shell: pwsh
         run: dotnet test tests\AgentSignaler.Tunneling.Tests\AgentSignaler.Tunneling.Tests.csproj --no-build --configuration Release -p:Platform=x64
+      - name: Test Dashboard Core
+        shell: pwsh
+        run: dotnet test tests\AgentSignaler.Dashboard.Core.Tests\AgentSignaler.Dashboard.Core.Tests.csproj --no-build --configuration Release -p:Platform=x64
+      - name: Test RPC host
+        shell: pwsh
+        run: dotnet test tests\AgentSignaler.RpcHost.Tests\AgentSignaler.RpcHost.Tests.csproj --no-build --configuration Release -p:Platform=x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/AgentSignaler.RpcHost.Web.Tests/package-lock.json
+      - name: Test browser and TypeScript contract
+        shell: pwsh
+        working-directory: tests/AgentSignaler.RpcHost.Web.Tests
+        run: |
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run typecheck
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run test:unit
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm audit --omit=optional --audit-level=high
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:AGENT_SIGNALER_RPC_HOST_EXE = Join-Path $env:GITHUB_WORKSPACE 'src\AgentSignaler.RpcHost\bin\x64\Release\net10.0-windows10.0.22621.0\win-x64\AgentSignaler.RpcHost.exe'
+          $env:AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS = '1'
+          npm run test:browser
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Audit dependencies
+        shell: pwsh
+        run: .\scripts\Test-DependencyAudit.ps1
 
   installer-validation:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
+      AGENT_SIGNALER_LIVE_TUNNEL_TEST: "0"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
     steps:
@@ -66,3 +99,12 @@ jobs:
       - name: Build and inspect installers
         shell: powershell
         run: .\scripts\Build-Installers.ps1 -Version 1.0.14
+      - name: Retain unsigned inspected application artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-applications
+          path: |
+            artifacts/msi/AgentSignaler.Dashboard.msi
+            artifacts/msi/AgentSignaler.Remote.msi
+            artifacts/msi/AgentSignaler.RpcHost.msi
+            artifacts/publish/rpchost/AgentSignaler.RpcHost.exe

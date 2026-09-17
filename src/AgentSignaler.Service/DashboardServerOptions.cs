@@ -20,6 +20,7 @@ public sealed record DashboardServerOptions
     public int ConcurrentRequestLimit { get; init; } = 100;
     public bool ReceiveDetailedConversations { get; init; } = true;
     public bool TranscriptTunnelReady { get; init; }
+    internal bool AllowEphemeralPort { get; init; }
 
     internal void Validate()
     {

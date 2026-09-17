@@ -1,0 +1,21 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <TargetFramework>native</TargetFramework>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <SuppressValidation>true</SuppressValidation>
+    <OutputName>AgentSignaler.RpcHost</OutputName>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.14</ProductVersion>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\rpchost</PublishDir>
+    <ActionDir>$(MSBuildThisFileDirectory)..\..\artifacts\rpchost-installer</ActionDir>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);ActionDir=$(ActionDir)</DefineConstants>
+  </PropertyGroup>
+  <Target Name="BuildRpcHostActions" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(PublishDir)\AgentSignaler.RpcHost.exe')" Text="Publish RpcHost with scripts\Build-Installers.ps1 first." />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\Build-RpcHostInstallerActions.ps1&quot;" />
+  </Target>
+  <!-- WiX 4 ties the summary LUA bit to Scope. Keep ALLUSERS absent, but require
+       MSI elevation for the embedded, non-impersonated firewall transaction. -->
+  <Target Name="AuthorRequiredFirewallElevation" AfterTargets="Build">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\Set-RpcHostInstallerPrivileges.ps1&quot; -Path &quot;$(TargetPath)&quot;" />
+  </Target>
+</Project>

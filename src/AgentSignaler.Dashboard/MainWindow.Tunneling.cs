@@ -22,46 +22,11 @@ internal sealed partial class MainWindow
     private Button? _stopSharing;
     private Button? _deleteTunnel;
     private Button? _logoutTunnel;
-    private string? _tunnelSetupError;
+    private string? _tunnelSetupError => _runtime.Status.State.Stage == "sharing" &&
+        _runtime.Status.State.Lifecycle == RuntimeLifecycle.Degraded ? "Sharing is unavailable. Check prerequisites and retry." : null;
     private string? _effectiveTunnelCliPath;
     private int _ownedTunnelPort;
     private bool _transcriptTransportSuspended;
-
-    private static string TunnelStatePath => Path.Combine(DashboardSettings.DataDirectory, "tunnel-state.json");
-
-    private async Task InitializeTunnelAsync(CancellationToken cancellationToken)
-    {
-        if (_runningMode != DashboardConnectionMode.DevTunnel) return;
-        try
-        {
-            var store = new TunnelIdentityStore(TunnelStatePath);
-            var identity = await store.LoadOrCreateAsync(cancellationToken);
-            if (_exiting) return;
-            var cliPath = _runningCliPath ?? CliTunnelController.DefaultCliPath;
-            _effectiveTunnelCliPath = cliPath;
-            _tunnel = new CliTunnelController(new TunnelOptions(cliPath, _runningPort, identity),
-                store.SaveAsync);
-            _ownedTunnelPort = _runningPort;
-            _tunnel.StatusChanged += (_, status) =>
-            {
-                UpdateTranscriptReadiness(status);
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    if (!_exiting)
-                    {
-                        UpdateConnectionPresentation();
-                        ReportStartupProgress(status.Message);
-                    }
-                });
-            };
-        }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or TunnelException)
-        {
-            _tunnelSetupError = "Tunnel settings could not be loaded. Check the CLI path and tunnel-state.json in the dashboard data directory. " +
-                "Do not remove the state file until any saved cloud resource has been cleaned up.";
-            if (!_exiting) ShowProblem(_tunnelSetupError);
-        }
-    }
 
     private ConnectionPresentation GetConnectionPresentation() =>
         ConnectionPresentation.Create(_runningMode, _running, Dns.GetHostName(), _runningPort,
@@ -100,40 +65,6 @@ internal sealed partial class MainWindow
         _server?.SetTranscriptReadiness(false);
     }
 
-    private async Task StartSharingOnStartupAsync()
-    {
-        if (_exiting || !_settings.ShouldStartSharing || _runningMode != DashboardConnectionMode.DevTunnel || _tunnel is null)
-            return;
-        ReportStartupProgress("Starting the shared public endpoint...");
-        await RunTunnelOperationAsync(token => _tunnel.StartAsync(token));
-        if (!_exiting && _settings.ShouldStartSharing && !_tunnel.Status.CanCopy)
-            ShowProblem("Automatic Internet sharing could not start. " + _tunnel.Status.Message +
-                " Resolve the issue and select Enable sharing / Retry. The local receiver remains available.");
-    }
-
-    private bool SaveAutomaticSharing(bool enabled)
-    {
-        var next = _settings with { AutoStartSharing = enabled };
-        if (!enabled)
-        {
-            _settings = next;
-        }
-        try
-        {
-            next.Save();
-            _settings = next;
-            return true;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException)
-        {
-            ShowProblem(enabled
-                ? "Automatic sharing could not be saved. Check dashboard settings write access before enabling sharing."
-                : "Automatic restart could not be disabled on disk. Stopping sharing is still being attempted. " +
-                    "Restore dashboard settings write access and stop sharing again before restarting the application.");
-            return false;
-        }
-    }
-
     private void BuildTunnelSettings(StackPanel panel, StackPanel help)
     {
         panel.Children.Add(Text("Internet sharing", 18));
@@ -146,9 +77,8 @@ internal sealed partial class MainWindow
         _startSharing = new Button { Content = "Enable sharing / Retry" };
         _startSharing.Click += async (_, _) =>
         {
-            if (!SaveAutomaticSharing(true)) return;
             _transcriptTransportSuspended = false;
-            await RunTunnelOperationAsync(token => _tunnel!.StartAsync(token));
+            await RunTunnelOperationAsync(RuntimeSharingOperation.Start);
         };
         panel.Children.Add(_startSharing);
         _stopSharing = new Button { Content = "Stop sharing / Cancel" };
@@ -162,8 +92,7 @@ internal sealed partial class MainWindow
         _deleteTunnel.Click += async (_, _) =>
         {
             SuspendTranscriptTransport();
-            SaveAutomaticSharing(false);
-            await RunTunnelOperationAsync(token => _tunnel!.DeleteAsync(token));
+            await RunTunnelOperationAsync(RuntimeSharingOperation.Delete, _deleteConsent?.IsChecked == true);
         };
         panel.Children.Add(_deleteTunnel);
         _logoutConsent = new CheckBox { Content = "Confirm CLI sign-out: this may affect my other devtunnel sessions." };
@@ -174,8 +103,7 @@ internal sealed partial class MainWindow
         _logoutTunnel.Click += async (_, _) =>
         {
             SuspendTranscriptTransport();
-            SaveAutomaticSharing(false);
-            await RunTunnelOperationAsync(token => _tunnel!.LogoutAsync(token));
+            await RunTunnelOperationAsync(RuntimeSharingOperation.Logout, _logoutConsent?.IsChecked == true);
         };
         panel.Children.Add(_logoutTunnel);
         UpdateTunnelControls();
@@ -196,7 +124,7 @@ internal sealed partial class MainWindow
         if (_logoutTunnel is not null) _logoutTunnel.IsEnabled = ready && !busy && _logoutConsent?.IsChecked == true;
     }
 
-    private async Task RunTunnelOperationAsync(Func<CancellationToken, Task> operation)
+    private async Task RunTunnelOperationAsync(RuntimeSharingOperation operation, bool confirmed = false)
     {
         if (_tunnel is null || _exiting || _tunnelBusy)
         {
@@ -206,14 +134,19 @@ internal sealed partial class MainWindow
         _tunnelBusy = true;
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_tunnelLifetime.Token);
         _tunnelOperationCancellation = cancellation;
-        _tunnelOperation = ExecuteTunnelOperationAsync(operation, cancellation);
+        _tunnelOperation = ExecuteTunnelOperationAsync(operation, confirmed, cancellation);
         UpdateTunnelControls();
         await _tunnelOperation;
     }
 
-    private async Task ExecuteTunnelOperationAsync(Func<CancellationToken, Task> operation, CancellationTokenSource cancellation)
+    private async Task ExecuteTunnelOperationAsync(RuntimeSharingOperation operation, bool confirmed, CancellationTokenSource cancellation)
     {
-        try { await operation(cancellation.Token); }
+        try
+        {
+            var result = await _runtime.SharingAsync(operation, confirmed, cancellation.Token);
+            _settings = _runtime.Settings.State.Saved;
+            if (!_exiting && result.Error is { } error) ShowProblem(RuntimeFailureMessage(error));
+        }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             if (!_exiting) ShowProblem("Sharing operation cancelled. Check sharing status before retrying.");
@@ -235,11 +168,11 @@ internal sealed partial class MainWindow
     private async Task StopSharingAsync()
     {
         SuspendTranscriptTransport();
-        SaveAutomaticSharing(false);
+        _runtime.CancelSharing();
         _tunnelOperationCancellation?.Cancel();
         await _tunnelOperation;
         if (_tunnel is not null && !_exiting)
-            await RunTunnelOperationAsync(token => _tunnel.StopAsync(token));
+            await RunTunnelOperationAsync(RuntimeSharingOperation.Stop);
     }
 
     private void ReleaseTunnelSettings()
@@ -252,16 +185,8 @@ internal sealed partial class MainWindow
     private void CancelTunnelOperations()
     {
         SuspendTranscriptTransport();
+        _runtime.CancelStartup();
+        _runtime.CancelSharing();
         _tunnelLifetime.Cancel();
-    }
-
-    private async Task ShutdownTunnelAsync()
-    {
-        try
-        {
-            await _tunnelOperation;
-            if (_tunnel is not null) await _tunnel.DisposeAsync();
-        }
-        finally { _tunnelLifetime.Dispose(); }
     }
 }

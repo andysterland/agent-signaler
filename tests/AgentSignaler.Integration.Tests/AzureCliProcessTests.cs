@@ -10,7 +10,7 @@ namespace AgentSignaler.Integration.Tests;
 public sealed class AzureCliProcessTests
 {
     [Fact]
-    public async Task DebugLoggingIncludesEveryInvocationAndFullResponseIncludingVersionProbe()
+    public async Task DebugLoggingClassifiesInvocationsWithoutPathsArgumentsOrRawResponses()
     {
         var stdout = new string('x', 2047) + char.ConvertFromUtf32(0x1F600) + "\r\n{\"environmentName\":null}";
         const string stderr = "CLI warning\r\nwith details";
@@ -26,15 +26,13 @@ public sealed class AzureCliProcessTests
         Assert.Equal(7, result.ExitCode);
         var invocations = lines.Where(line => line.Contains("Invoking ", StringComparison.Ordinal)).ToArray();
         Assert.Equal(2, invocations.Length);
-        Assert.Contains("az \"version\"", invocations[0]);
-        Assert.Contains("az \"account\" \"list\" \"--all\"", invocations[1]);
+        Assert.All(invocations, line => Assert.EndsWith("Invoking command", line));
         var prefix = invocations[1][..(invocations[1].IndexOf(']') + 1)];
         var response = lines.Where(line => line.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
         Assert.Contains(response, line => line.Contains("Response: exitCode=7; elapsed=", StringComparison.Ordinal));
-        Assert.Equal(stdout, string.Concat(response.Where(line => line.Contains(" stdout[", StringComparison.Ordinal))
-            .Select(line => JsonSerializer.Deserialize<string>(line[(line.IndexOf(": ", StringComparison.Ordinal) + 2)..]))));
-        Assert.Equal(stderr, string.Concat(response.Where(line => line.Contains(" stderr[", StringComparison.Ordinal))
-            .Select(line => JsonSerializer.Deserialize<string>(line[(line.IndexOf(": ", StringComparison.Ordinal) + 2)..]))));
+        Assert.DoesNotContain(lines, line => line.Contains("environmentName", StringComparison.Ordinal) ||
+            line.Contains("CLI warning", StringComparison.Ordinal) || line.Contains(@"C:\CLI", StringComparison.Ordinal) ||
+            line.Contains("--all", StringComparison.Ordinal));
         Assert.All(lines, line => { Assert.DoesNotContain("\r", line); Assert.DoesNotContain("\n", line); });
     }
 
@@ -265,7 +263,7 @@ public sealed class AzureCliProcessTests
             Assert.Empty(start.Arguments);
             Assert.DoesNotContain("devcenter.azure.com", command.ToString());
         }
-        Assert.Equal(TimeSpan.FromMinutes(10), AzureCliCommand.Login().Timeout);
+        Assert.Equal(TimeSpan.FromMinutes(3), AzureCliCommand.Login().Timeout);
         Assert.Equal(TimeSpan.FromSeconds(15), AzureCliCommand.AccountShow().Timeout);
         Assert.Equal(TimeSpan.FromSeconds(30), AzureCliCommand.RemoteConnection(ConnectionTestData.Mapping).Timeout);
     }
@@ -507,7 +505,7 @@ public sealed class AzureCliProcessTests
         var runner = new FakeRunner(new FakeChild());
         var installation = new FakeInstallation();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new AzureCliProcess(runner, installation)
-            .RunAsync(AzureCliCommand.Login(), TimeSpan.FromMinutes(10), new CancellationToken(true)));
+            .RunAsync(AzureCliCommand.Login(), TimeSpan.FromMinutes(3), new CancellationToken(true)));
         Assert.Equal(0, runner.Starts);
         Assert.Equal(0, installation.Validations);
     }
@@ -519,7 +517,7 @@ public sealed class AzureCliProcessTests
         var child = new FakeChild { StandardOutput = new BlockingStream(), BlockExit = true, KillThrows = true };
         var runner = new FakeRunner(child);
         var installation = new FakeInstallation();
-        var pending = new AzureCliProcess(runner, installation).RunAsync(AzureCliCommand.Login(), TimeSpan.FromMinutes(10), cancellation.Token);
+        var pending = new AzureCliProcess(runner, installation).RunAsync(AzureCliCommand.Login(), TimeSpan.FromMinutes(3), cancellation.Token);
         await runner.Started.Task;
         cancellation.Cancel();
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);

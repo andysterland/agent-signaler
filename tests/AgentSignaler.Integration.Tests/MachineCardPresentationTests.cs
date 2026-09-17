@@ -123,11 +123,31 @@ public sealed class MachineCardPresentationTests
         Assert.Contains("_hoverCard.Button.IsTabStop = false", main);
         Assert.Contains("preview.Children.Add(_hoverCard.Button)", main);
         Assert.Contains("preview.Children.Add(_hoverNote)", main);
-        Assert.Contains("ToolTipService.SetToolTip(Button, new ToolTip", main);
-        Assert.Contains("Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left", main);
+        Assert.Contains("HoverPreview = preview;", main);
         Assert.Contains("_hoverCard.Update(machine)", main);
         Assert.Contains("_hoverNote.Visibility = string.IsNullOrWhiteSpace(machine.Note) ? Visibility.Collapsed : Visibility.Visible", main);
         Assert.Contains("Button.Click += (_, _) => activate()", main);
+    }
+
+    [Fact]
+    public void CompactHoverEscapesNarrowRootWithoutTakingFocusAndClosesWithItsOwner()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "AgentSignaler.slnx")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var source = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "CompactHoverPreview.cs"));
+        var compact = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "CompactWindow.cs"));
+        Assert.Contains("ShouldConstrainToRootBounds = false", source);
+        Assert.Contains("ShowMode = FlyoutShowMode.Transient", source);
+        Assert.Contains("Placement = FlyoutPlacementMode.Left", source);
+        Assert.Contains("target.PointerEntered += OnPointerEntered", source);
+        Assert.Contains("target.Unloaded += OnUnloaded", source);
+        Assert.Contains("_timer.Stop();", source);
+        Assert.Contains("_flyout.Hide();", source);
+        Assert.Contains("new CompactHoverPreview(container, card.HoverPreview", compact);
+        Assert.Contains("_cards[id].Hover.Dispose();", compact);
+        Assert.Contains("foreach (var tile in _cards.Values) tile.Hover.Hide();", compact);
     }
 
     private static MachineView Machine(AgentState state) =>

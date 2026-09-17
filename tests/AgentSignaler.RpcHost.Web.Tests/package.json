@@ -1,0 +1,20 @@
+{
+  "name": "agent-signaler-rpchost-web-contract-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --experimental-strip-types --test unit/*.test.ts",
+    "test:browser": "playwright test",
+    "test": "npm run typecheck && npm run test:unit && npm run test:browser"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.5.1",
+    "typescript": "5.9.3"
+  }
+}

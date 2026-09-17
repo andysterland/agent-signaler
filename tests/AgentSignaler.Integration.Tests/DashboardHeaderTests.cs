@@ -1,3 +1,5 @@
+using AgentSignaler.Dashboard;
+
 namespace AgentSignaler.Integration.Tests;
 
 public sealed class DashboardHeaderTests
@@ -62,23 +64,53 @@ public sealed class DashboardHeaderTests
             main.IndexOf("_startupPanel.Children.Add(_startupStatus)", StringComparison.Ordinal));
         Assert.Contains("_startupPanel.Visibility = _startup.IsLoading ? Visibility.Visible : Visibility.Collapsed;", main);
         Assert.Contains("if (!_exiting && _startup.IsLoading) _startupStatus.Text = message;", main);
-        Assert.True(main.IndexOf("ReportStartupProgress(\"Starting the local receiver...\")", StringComparison.Ordinal) <
-            main.IndexOf("await _server.StartAsync(cancellationToken)", StringComparison.Ordinal));
-        Assert.True(main.IndexOf("ReportStartupProgress(\"Loading computer tiles...\")", StringComparison.Ordinal) <
-            main.IndexOf("_refreshTask = RefreshAsync();", main.IndexOf("private async Task InitializeCoreAsync", StringComparison.Ordinal), StringComparison.Ordinal));
+        Assert.Contains("await _startup.RunAsync(InitializeCoreAsync, _tunnelLifetime.Token)", main);
+        var forwarding = main[main.IndexOf("_runtime.Changed += change =>", StringComparison.Ordinal)..];
+        AssertBefore(forwarding, "var progress = change.Domain switch", "DispatcherQueue.TryEnqueue(() =>");
+        Assert.Contains("DashboardStartupController.ProgressMessage(_runtime.Status.State.Stage,", forwarding);
+        Assert.Contains("\"sharing\" => _runtime.Sharing.State.Message", forwarding);
+        Assert.Contains("if (progress is not null) ReportStartupProgress(progress);", forwarding);
+        AssertBefore(forwarding, "ReportStartupProgress(\"Loading computer tiles...\")", "_refreshTask = RefreshAsync();");
 
-        var tunneling = MainWindowSource("MainWindow.Tunneling.cs");
-        Assert.Contains("ReportStartupProgress(_tunnel.Status.Message);", tunneling);
-        Assert.True(tunneling.IndexOf("ReportStartupProgress(\"Starting the shared public endpoint...\")", StringComparison.Ordinal) <
-            tunneling.IndexOf("await RunTunnelOperationAsync(token => _tunnel.StartAsync(token));", StringComparison.Ordinal));
+        var runtime = MainWindowSource("DashboardRuntime.cs", "AgentSignaler.Dashboard.Core");
+        AssertBefore(runtime, "Stage = \"receiver\"", "await server.StartAsync(token)");
+        AssertBefore(runtime, "Stage = \"machines\"", "await RefreshMachinesAsync(token)");
+        AssertBefore(runtime, "Stage = \"sharing\"", "await SharingAsync(RuntimeSharingOperation.Start, true, token)");
     }
 
-    private static string MainWindowSource(string fileName = "MainWindow.cs")
+    [Theory]
+    [InlineData("storage", false, "Opening local machine history...")]
+    [InlineData("receiver", false, "Starting the local receiver...")]
+    [InlineData("machines", false, "Loading computer tiles...")]
+    [InlineData("sharing", true, "Starting the shared public endpoint...")]
+    [InlineData("sharing", false, "Preparing Internet sharing...")]
+    [InlineData("ready", false, null)]
+    public void RuntimeStartupStagesHaveReadableProgressWithoutClaimingDisabledSharingStarts(
+        string stage, bool startSharing, string? expected) =>
+        Assert.Equal(expected, DashboardStartupController.ProgressMessage(stage, startSharing));
+
+    [Fact]
+    public void ExitUsesFaultTolerantDrainThatAlwaysAwaitsRuntimeShutdown()
+    {
+        var main = MainWindowSource();
+        Assert.Contains("DashboardStartupController.DrainForShutdownAsync(", main);
+        Assert.Contains("async () => (await _runtime.ShutdownAsync()).Clean", main);
+    }
+
+    private static void AssertBefore(string source, string before, string after)
+    {
+        var first = source.IndexOf(before, StringComparison.Ordinal);
+        var second = source.IndexOf(after, StringComparison.Ordinal);
+        Assert.True(first >= 0, $"Missing expected source fragment: {before}");
+        Assert.True(second > first, $"Expected {before} before {after}");
+    }
+
+    private static string MainWindowSource(string fileName = "MainWindow.cs", string project = "AgentSignaler.Dashboard")
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "AgentSignaler.slnx")))
             root = root.Parent;
         Assert.NotNull(root);
-        return File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", fileName));
+        return File.ReadAllText(Path.Combine(root.FullName, "src", project, fileName));
     }
 }

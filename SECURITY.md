@@ -28,6 +28,24 @@ developed on `main` until a versioned support policy is published.
   senders. Anyone able to reach the public URL can spoof machine/source identities,
   inject reports, request transcript purges, and consume bounded capacity.
 - LAN mode is intended only for explicitly trusted private networks or VPNs.
+- RpcHost's separate loopback JSON-RPC control endpoint is **unauthenticated** by
+  an explicitly accepted trusted-desktop policy. Any unrelated localhost page,
+  or native client including another local Windows user supplying an accepted
+  Origin, can read allowed operational metadata and control the process.
+  Executable-path changes/diagnostics can execute code as the host user; machine
+  deletion, CLI sign-out and confirmed destructive tunnel actions are exposed.
+  Origin validation, confirmation fields and the single-controller lease are not
+  authentication. Never describe this as an owning-WebView-only channel.
+- RPC must not be exposed through receiver/LAN/Dev Tunnel ingress. Operational
+  response DTOs intentionally include allowed paths, notes, mapping/account/tenant
+  identities and report URLs, but not credentials, cached Windows App connection
+  URIs, raw CLI streams or arbitrary exceptions. These responses must not be
+  logged. The transcript-content policy below does not create a transcript-read
+  RPC API. See the [RPC threat model](docs/rpc-host-protocol.md#privacy-and-threat-model).
+- RpcHost firewall provisioning is MSI-owned and receiver-only on Private
+  networks. No firewall RPC or runtime elevation helper exists. Standalone copies
+  require explicit manual receiver setup. Servicing must preserve foreign rules
+  and fail rather than silently skip required provisioning or force-stop a host.
 - This detailed-conversation prototype requires externally obtained informed
   permission for content, destination, and retention **before distribution/use**.
   The operator owns that prerequisite; the app neither collects nor verifies it.

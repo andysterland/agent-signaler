@@ -1,0 +1,69 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Agent Signaler RpcHost" Manufacturer="Agent Signaler"
+           Version="$(var.ProductVersion)" UpgradeCode="A8D1F2A9-762B-4B2C-A5A3-451463D743B2"
+           Scope="perUser" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer Agent Signaler RpcHost is installed."
+                  Schedule="afterInstallExecute" />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Property Id="MSIDISABLERMRESTART" Value="1" />
+    <Property Id="RECEIVERPORT" Secure="yes" />
+    <Property Id="RPCUSER" Secure="yes" Hidden="yes" />
+    <Property Id="RPCDIRECTORY" Secure="yes" Hidden="yes" />
+    <Property Id="RPCDATA" Secure="yes" Hidden="yes" />
+    <Property Id="RPCPORT" Secure="yes" />
+    <Property Id="RPCPREPARED" Secure="yes" />
+    <Property Id="RPCPORTMAINTENANCE" Secure="yes" />
+    <Property Id="RPCFIREWALLREQUIRED" Value="1" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="AgentSignalerFolder" Name="AgentSignaler">
+          <Directory Id="INSTALLFOLDER" Name="RpcHost">
+            <Component Id="RpcHostPayload" Guid="501D1AF2-8A68-43C6-AFDC-AF83FDE49671">
+              <File Id="RpcHostExecutable" Source="$(var.PublishDir)\AgentSignaler.RpcHost.exe" />
+              <File Id="RpcHostLicense" Source="$(var.PublishDir)\LICENSE" />
+              <File Id="RpcHostNotices" Source="$(var.PublishDir)\THIRD-PARTY-NOTICES.txt" />
+              <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Installer\RpcHost"
+                             Name="UpgradeCode" Type="string" Value="{A8D1F2A9-762B-4B2C-A5A3-451463D743B2}" KeyPath="yes" />
+              <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Installer\RpcHost"
+                             Name="InstallDirectory" Type="string" Value="[RPCDIRECTORY]" />
+              <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Installer\RpcHost"
+                             Name="ReceiverPort" Type="integer" Value="[RECEIVERPORT]" />
+              <RegistryValue Root="HKCU" Key="Software\AgentSignaler\Installer\RpcHost"
+                             Name="UserSid" Type="string" Value="[RPCUSER]" />
+              <RemoveFolder Id="RemoveRpcHostFolder" On="uninstall" />
+              <RemoveFolder Id="RemoveRpcHostVendorFolder" Directory="AgentSignalerFolder" On="uninstall" />
+              <RemoveFolder Id="RemoveRpcHostProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <Binary Id="RpcHostInstallerActions" SourceFile="$(var.ActionDir)\AgentSignaler.RpcHost.InstallerActions.dll" />
+    <CustomAction Id="CaptureRpcHostUser" BinaryRef="RpcHostInstallerActions" DllEntry="CaptureUser" Execute="immediate" Return="check" />
+    <CustomAction Id="PrepareRpcHostServicing" BinaryRef="RpcHostInstallerActions" DllEntry="PrepareServicing" Execute="immediate" Return="check" />
+    <CustomAction Id="RollbackRpcHostFirewall" BinaryRef="RpcHostInstallerActions" DllEntry="RollbackFirewall"
+                  Execute="rollback" Impersonate="no" Return="check" HideTarget="yes" />
+    <CustomAction Id="ApplyRpcHostFirewall" BinaryRef="RpcHostInstallerActions" DllEntry="ApplyFirewall"
+                  Execute="deferred" Impersonate="no" Return="check" HideTarget="yes" />
+    <CustomAction Id="CommitRpcHostFirewall" BinaryRef="RpcHostInstallerActions" DllEntry="CommitFirewall"
+                  Execute="commit" Impersonate="no" Return="check" HideTarget="yes" />
+    <CustomAction Id="VerifyRpcHostFilesIdle" BinaryRef="RpcHostInstallerActions" DllEntry="VerifyFilesIdle"
+                  Execute="deferred" Impersonate="yes" Return="check" HideTarget="yes" />
+    <InstallUISequence>
+      <Custom Action="CaptureRpcHostUser" Before="CostInitialize" />
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom Action="CaptureRpcHostUser" Before="CostInitialize" />
+      <Custom Action="PrepareRpcHostServicing" Before="InstallInitialize" />
+      <Custom Action="RollbackRpcHostFirewall" Before="ApplyRpcHostFirewall" Condition="NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="ApplyRpcHostFirewall" Before="RemoveFiles" Condition="NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="CommitRpcHostFirewall" After="ApplyRpcHostFirewall" Condition="NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="VerifyRpcHostFilesIdle" After="InstallFiles" Condition="NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+    <Feature Id="Main" Title="Agent Signaler RpcHost">
+      <ComponentRef Id="RpcHostPayload" />
+    </Feature>
+  </Package>
+</Wix>

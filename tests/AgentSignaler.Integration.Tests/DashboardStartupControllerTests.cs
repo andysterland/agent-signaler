@@ -5,6 +5,34 @@ namespace AgentSignaler.Integration.Tests;
 public sealed class DashboardStartupControllerTests
 {
     [Fact]
+    public async Task FailedMutationStillStartsAndAwaitsRuntimeShutdown()
+    {
+        var stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var pending = DashboardStartupController.DrainForShutdownAsync(
+            [Task.FromException(new RuntimeCommandException(new(1003, "operation", true)))], () =>
+            {
+                calls++;
+                return stopped.Task;
+            });
+        Assert.Equal(1, calls);
+        Assert.False(pending.IsCompleted);
+        stopped.SetResult(true);
+        Assert.False(await pending);
+    }
+
+    [Fact]
+    public async Task UnexpectedUiFailureStillAwaitsShutdownWithoutBeingSwallowed()
+    {
+        var stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure = new InvalidOperationException("Synthetic UI failure.");
+        var pending = DashboardStartupController.DrainForShutdownAsync([Task.FromException(failure)], () => stopped.Task);
+        Assert.False(pending.IsCompleted);
+        stopped.SetResult(true);
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => pending));
+    }
+
+    [Fact]
     public void MachinesAreHiddenBeforeInitializationBegins()
     {
         var startup = new DashboardStartupController();

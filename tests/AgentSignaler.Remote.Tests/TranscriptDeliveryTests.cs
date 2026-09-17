@@ -876,10 +876,10 @@ public sealed class TranscriptDeliveryTests
     }
 
     [Theory]
-    [InlineData("http://synthetic.invalid:5000/")]
-    [InlineData("https://synthetic.invalid/path")]
-    [InlineData("https://user:password@synthetic.invalid/")]
-    [InlineData("https://synthetic.invalid/?target=other")]
+    [InlineData("http://example.test:5000/")]
+    [InlineData("https://example.test/path")]
+    [InlineData("https://fixture-user:fixture-password@example.test/")]
+    [InlineData("https://example.test/?target=other")]
     public async Task NetworkTransportRejectsNoncanonicalEndpointsBeforeHandler(string endpoint)
     {
         var handler = new SyntheticHandler(_ => throw new InvalidOperationException("No request allowed."));

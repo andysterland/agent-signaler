@@ -6,6 +6,7 @@ param(
     [switch] $SkipPublish,
     [switch] $NoRestore,
     [switch] $ApplicationMsisOnly,
+    [switch] $SkipRpcHostSmoke,
     [string] $DestinationPath
 )
 
@@ -24,6 +25,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $publishRoot = Join-Path $root 'artifacts\publish'
 $dashboard = Join-Path $publishRoot 'dashboard'
 $remote = Join-Path $publishRoot 'remote'
+$rpcHost = Join-Path $publishRoot 'rpchost'
 $staging = Join-Path $root 'artifacts\installer-staging'
 $msiOutput = Join-Path $root 'artifacts\msi'
 
@@ -67,13 +69,18 @@ function Merge-PublishedApplication {
 }
 
 if (-not $SkipPublish) {
-    foreach ($directory in @($dashboard, $remote, $staging)) {
+    foreach ($directory in @($dashboard, $remote, $rpcHost, $staging)) {
         if (Test-Path -LiteralPath $directory) {
             Remove-Item -LiteralPath $directory -Recurse -Force
         }
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
     Publish-Application 'AgentSignaler.Dashboard' $dashboard
+    Publish-Application 'AgentSignaler.RpcHost' $rpcHost
+    # Optional symbols are separate; the distribution requires only the EXE and notices.
+    Get-ChildItem -LiteralPath $rpcHost -File -Filter '*.pdb' | Remove-Item -Force
+    Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $rpcHost 'LICENSE')
+    & (Join-Path $PSScriptRoot 'Write-RpcHostNotices.ps1') -Configuration $Configuration
     $configuratorStage = Join-Path $staging 'configurator'
     $relayStage = Join-Path $staging 'relay'
     $clientStage = Join-Path $staging 'client'
@@ -87,19 +94,26 @@ if (-not $SkipPublish) {
 }
 
 New-Item -ItemType Directory -Path $msiOutput -Force | Out-Null
-foreach ($name in @('Dashboard', 'Remote')) {
+foreach ($name in @('Dashboard', 'Remote', 'RpcHost')) {
     $project = Join-Path $root "installers\AgentSignaler.$name\AgentSignaler.$name.wixproj"
     if (-not $NoRestore) { Invoke-DotNet @('restore', $project, '-p:Platform=x64') }
     Invoke-DotNet @('build', $project, '--no-restore', '-t:Rebuild', '--configuration', $Configuration,
         '-p:Platform=x64', "-p:ProductVersion=$Version", "-p:OutputPath=$msiOutput")
 }
 & (Join-Path $PSScriptRoot 'Test-Installers.ps1') -Version $Version
+if ($SkipRpcHostSmoke) {
+    Write-Warning 'RpcHost listener-bearing publish smoke was deferred. Run scripts\Test-RpcHostPublish.ps1 separately before accepting these artifacts.'
+}
+else {
+    & (Join-Path $PSScriptRoot 'Test-RpcHostPublish.ps1') -Version $Version
+}
+& (Join-Path $PSScriptRoot 'Test-Updater.ps1')
 
 if ($ApplicationMsisOnly) {
     if (-not [string]::IsNullOrWhiteSpace($DestinationPath)) {
         throw 'DestinationPath cannot be used with ApplicationMsisOnly.'
     }
-    Write-Host 'Built and inspected the Dashboard and Remote x64 MSIs locally. Bundle and prerequisite packaging were skipped.'
+    Write-Host 'Built and inspected Dashboard, Remote and RpcHost x64 MSIs and the standalone RpcHost EXE locally. Bundle and prerequisite packaging were skipped.'
     return
 }
 
@@ -141,7 +155,7 @@ function Get-PackageHash {
 
 $releaseDirectory = [IO.Path]::GetFullPath($DestinationPath)
 New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
-foreach ($name in @('Dashboard', 'Remote')) {
+foreach ($name in @('Dashboard', 'Remote', 'RpcHost')) {
     $source = Join-Path $msiOutput "AgentSignaler.$name.msi"
     $destination = Join-Path $releaseDirectory "AgentSignaler.$name.msi"
     Write-Host "Copying $source to $destination..."
@@ -156,4 +170,13 @@ $bundle = Join-Path $bundleOutput 'AgentSignaler.Dashboard.Setup.exe'
 $bundleDestination = Join-Path $releaseDirectory 'AgentSignaler.Dashboard.Setup.exe'
 Copy-Item -LiteralPath $bundle -Destination $bundleDestination -Force
 if ((Get-PackageHash $bundle) -ne (Get-PackageHash $bundleDestination)) { throw 'Copied bundle verification failed.' }
-Write-Host "Built both per-user x64 MSIs and the Dashboard bundle, validated and copied them to $releaseDirectory. No products or integrations were installed."
+$exeDestination = Join-Path $releaseDirectory 'AgentSignaler.RpcHost.exe'
+Copy-Item -LiteralPath (Join-Path $rpcHost 'AgentSignaler.RpcHost.exe') -Destination $exeDestination -Force
+if ((Get-PackageHash (Join-Path $rpcHost 'AgentSignaler.RpcHost.exe')) -ne (Get-PackageHash $exeDestination)) {
+    throw 'Copied RpcHost EXE verification failed.'
+}
+$notices = Join-Path $rpcHost 'THIRD-PARTY-NOTICES.txt'
+$noticesDestination = Join-Path $releaseDirectory 'AgentSignaler.RpcHost.NOTICES.txt'
+Copy-Item -LiteralPath $notices -Destination $noticesDestination -Force
+if ((Get-PackageHash $notices) -ne (Get-PackageHash $noticesDestination)) { throw 'Copied notices verification failed.' }
+Write-Host "Built three per-user x64 MSIs, the RpcHost EXE and Dashboard bundle, validated and copied them to $releaseDirectory. No products or integrations were installed."

@@ -7,6 +7,8 @@ using System.Security;
 using System.Text;
 using System.Text.Json;
 using AgentSignaler.Service;
+using AgentSignaler.Tunneling;
+using System.Collections.Concurrent;
 
 namespace AgentSignaler.Dashboard;
 
@@ -24,7 +26,7 @@ internal sealed class AzureCliCommand
     {
         if (tenantId == Guid.Empty) throw new WindowsAppConnectionException(WindowsAppFailure.InvalidMapping);
         return new(tenantId is { } tenant ? ["login", "--tenant", tenant.ToString("D")] : ["login"],
-            TimeSpan.FromMinutes(10));
+            TimeSpan.FromMinutes(3));
     }
 
     public static AzureCliCommand AccountShow() => new(["account", "show", "--output", "json"], TimeSpan.FromSeconds(15));
@@ -32,7 +34,6 @@ internal sealed class AzureCliCommand
     public static AzureCliCommand Version() => new(["version", "--output", "json"], TimeSpan.FromSeconds(30));
     public static AzureCliCommand ListExtensions() => new(["extension", "list", "--output", "json"], TimeSpan.FromSeconds(30));
     internal bool IsVersion => arguments[0] == "version";
-    internal string DebugCommand => "az " + string.Join(" ", arguments.Select(argument => JsonSerializer.Serialize(argument)));
 
     internal const string DevCenterArmApiVersion = "2025-02-01";
     private static readonly Uri ArmEndpoint = new("https://management.azure.com/");
@@ -253,7 +254,7 @@ internal sealed class AzureCliProcess : IAzureCliProcess
         var completedSuccessfully = false;
         var invocationId = Interlocked.Increment(ref nextInvocationId);
         var started = Stopwatch.GetTimestamp();
-        WriteDebug(invocationId, $"Invoking {command.DebugCommand}; executable={JsonSerializer.Serialize(executablePath)}; timeout={timeout.TotalSeconds:F1}s");
+        WriteDebug(invocationId, "Invoking command");
         try
         {
             verifiedFile = installation.Validate();
@@ -275,8 +276,6 @@ internal sealed class AzureCliProcess : IAzureCliProcess
             linked.Token.ThrowIfCancellationRequested();
             var result = new AzureCliResult(child.ExitCode, await stdout.ConfigureAwait(false), await stderr.ConfigureAwait(false));
             WriteDebug(invocationId, $"Response: exitCode={result.ExitCode}; elapsed={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0}ms; stdoutChars={result.StandardOutput.Length}; stderrChars={result.StandardError.Length}");
-            WriteDebugStream(invocationId, "stdout", result.StandardOutput);
-            WriteDebugStream(invocationId, "stderr", result.StandardError);
             completedSuccessfully = true;
             return result;
         }
@@ -346,22 +345,6 @@ internal sealed class AzureCliProcess : IAzureCliProcess
         else Debug.WriteLine(line);
     }
 
-    private void WriteDebugStream(long invocationId, string stream, string output)
-    {
-        if (!DebugOutputEnabled) return;
-        // Bound individual debugger messages and escape control characters without losing response data.
-        const int chunkSize = 2048;
-        if (output.Length == 0) WriteDebug(invocationId, $"{stream}: \"\"");
-        for (var offset = 0; offset < output.Length;)
-        {
-            var length = Math.Min(chunkSize, output.Length - offset);
-            if (offset + length < output.Length && char.IsHighSurrogate(output[offset + length - 1]) &&
-                char.IsLowSurrogate(output[offset + length])) length--;
-            WriteDebug(invocationId, $"{stream}[{offset}..{offset + length}]: {JsonSerializer.Serialize(output.Substring(offset, length))}");
-            offset += length;
-        }
-    }
-
     private static void DisposeOwned(IDisposable? resource, bool completedSuccessfully)
     {
         try { resource?.Dispose(); }
@@ -388,35 +371,36 @@ internal sealed class AzureCliProcess : IAzureCliProcess
 
 internal sealed class AzureCliProcessRunner : IAzureCliProcessRunner
 {
+    private static readonly ConcurrentDictionary<Child, byte> owned = new();
+    internal static void StopOwnedChildren()
+    {
+        foreach (var child in owned.Keys) child.KillTree();
+    }
     public IAzureCliChildProcess Start(ProcessStartInfo startInfo)
     {
-        var process = new Process { StartInfo = startInfo };
-        var started = false;
         try
         {
-            if (!process.Start()) throw new Win32Exception();
-            started = true;
-            return new Child(process);
+            var process = NativeChild.Start(startInfo.FileName, startInfo.ArgumentList.ToArray(), null, null, null,
+                AzureCliProcess.MaximumOutputBytes, verifyTrust: false, rawStreams: true, environment: startInfo.Environment);
+            var child = new Child(process);
+            owned.TryAdd(child, 0);
+            return child;
         }
-        finally
-        {
-            if (!started) process.Dispose();
-        }
+        catch (TunnelException) { throw new WindowsAppConnectionException(WindowsAppFailure.CliUnavailable); }
     }
 
-    private sealed class Child(Process process) : IAzureCliChildProcess
+    private sealed class Child(NativeChild process) : IAzureCliChildProcess
     {
-        public Stream StandardOutput => process.StandardOutput.BaseStream;
-        public Stream StandardError => process.StandardError.BaseStream;
-        public int ExitCode => process.ExitCode;
-        public Task WaitForExitAsync(CancellationToken cancellationToken) => process.WaitForExitAsync(cancellationToken);
-        public void KillTree()
+        public Stream StandardOutput => process.StandardOutput;
+        public Stream StandardError => process.StandardError;
+        public int ExitCode => process.Completion.GetAwaiter().GetResult();
+        public Task WaitForExitAsync(CancellationToken cancellationToken) => process.Completion.WaitAsync(cancellationToken);
+        public void KillTree() => process.Kill();
+        public void Dispose()
         {
-            try { process.Kill(entireProcessTree: true); }
-            catch (InvalidOperationException) when (process.HasExited)
-            { /* The owned process may exit between observing a failure and killing it. */ }
+            try { process.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+            finally { owned.TryRemove(this, out _); }
         }
-        public void Dispose() => process.Dispose();
     }
 }
 

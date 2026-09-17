@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 $tracked = @()
 if (Test-Path -LiteralPath (Join-Path $root '.git')) {
-    $tracked = @(& git -C $root ls-files)
+    $tracked = @(& git -C $root ls-files --cached --others --exclude-standard)
     if ($LASTEXITCODE) { throw 'Unable to enumerate tracked repository files.' }
 }
 $files = if ($tracked.Count -gt 0) {
@@ -17,7 +17,7 @@ else {
     @(
         Get-ChildItem -LiteralPath $root -File -Recurse -Force |
             Where-Object {
-                $_.FullName -notmatch '[\\/](?:\.git|\.vs|artifacts|bin|obj|TestResults)[\\/]' -and
+                $_.FullName -notmatch '[\\/](?:\.git|\.vs|artifacts|bin|obj|TestResults|node_modules|playwright-report|test-results|dist)[\\/]' -and
                 $_.Name -notlike 'UpgradeLog*.htm' -and
                 $_.FullName -ne (Join-Path $root 'docs\public-github-repository-migration-plan.md')
             } |
@@ -38,11 +38,11 @@ if ($invalidFiles.Count -gt 0) {
 $textExtensions = @('.cs', '.csproj', '.props', '.targets', '.slnx', '.wixproj',
     '.wxs', '.cpp', '.h', '.xaml', '.xml', '.xslt', '.ps1', '.cmd', '.bat',
     '.md', '.yml', '.yaml', '.json', '.http', '.manifest', '.svg', '.gitignore',
-    '.gitattributes')
+    '.gitattributes', '.ts', '.js', '.mjs', '.cjs')
 $privatePatterns = @(
     '(?i)\\\\' + 'tsclient\\',
     '(?i)Q:' + '\\src\\agent-signaler',
-    '(?i)C:\\Users\\' + 'andster(?:\\|$)'
+    '(?i)[A-Z]:[\\/]+Users[\\/]+[^\\/\s"''<>|:*?]+'
 )
 $secretPatterns = @(
     '(?i)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',

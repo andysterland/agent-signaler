@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\AgentSignaler.Dashboard.Core\AgentSignaler.Dashboard.Core.csproj" />
+    <ProjectReference Include="ProcessFixture\AgentSignaler.Dashboard.Core.Tests.ProcessFixture.csproj" ReferenceOutputAssembly="false" />
+    <Compile Remove="ProcessFixture\**\*.cs" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <Target Name="RecordProcessFixture" AfterTargets="Build">
+    <MSBuild Projects="ProcessFixture\AgentSignaler.Dashboard.Core.Tests.ProcessFixture.csproj" Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="ProcessFixtureTarget" />
+    </MSBuild>
+    <WriteLinesToFile File="$(OutDir)process-fixture-path.txt" Lines="@(ProcessFixtureTarget->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>
