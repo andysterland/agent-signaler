@@ -9,6 +9,7 @@ using AgentSignaler.Contracts;
 using AgentSignaler.Dashboard;
 using AgentSignaler.Remote;
 using AgentSignaler.Service;
+using static AgentSignaler.Tests.CurrentUserOwnedTranscriptFixture;
 
 namespace AgentSignaler.Integration.Tests;
 
@@ -42,7 +43,7 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(HostRoot);
+        CreateOwnedDirectory(HostRoot);
         _relay = Path.ChangeExtension((await File.ReadAllTextAsync(
             Path.Combine(AppContext.BaseDirectory, "relay-path.txt"))).Trim(), ".exe");
         Assert.True(File.Exists(_relay));
@@ -75,7 +76,7 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
             ]
         };
         _adapter = new(HostRoot, Source);
-        await File.WriteAllTextAsync(HostFile, _adapter.Frame(Session, "historical", Historical), new UTF8Encoding(false));
+        WriteTranscriptFile(HostFile, _adapter.Frame(Session, "historical", Historical));
     }
 
     [Fact]

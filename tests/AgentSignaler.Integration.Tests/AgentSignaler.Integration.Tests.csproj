@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\src\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
     <ProjectReference Include="..\..\src\AgentSignaler.Relay\AgentSignaler.Relay.csproj" ReferenceOutputAssembly="false" />
     <Using Include="Xunit" />
+    <Compile Include="..\Shared\CurrentUserOwnedTranscriptFixture.cs" Link="CurrentUserOwnedTranscriptFixture.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DashboardStartupController.cs" Link="DashboardStartupController.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardAppearance.cs" Link="MachineCardAppearance.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardPresentation.cs" Link="MachineCardPresentation.cs" />
