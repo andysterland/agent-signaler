@@ -2,7 +2,7 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string] $Configuration = 'Release',
-    [string] $Version = '1.0.19',
+    [string] $Version = '1.0.20',
     [switch] $SkipPublish,
     [switch] $NoRestore,
     [switch] $ApplicationMsisOnly,

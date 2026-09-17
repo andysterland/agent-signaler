@@ -4,7 +4,7 @@
     <TargetFramework>native</TargetFramework>
     <InstallerPlatform>x64</InstallerPlatform>
     <OutputName>AgentSignaler.Dashboard</OutputName>
-    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.19</ProductVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.20</ProductVersion>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\dashboard</PublishDir>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);InstallerProduct=Dashboard;AzureCliProductCode=$(AzureCliProductCode);AzureCliVersion=$(AzureCliVersion);DevTunnelsFileVersion=$(DevTunnelsFileVersion);WindowsAppMinimumVersion=$(WindowsAppMinimumVersion)</DefineConstants>
     <HarvestDirectoryAutogenerateGuids>true</HarvestDirectoryAutogenerateGuids>
