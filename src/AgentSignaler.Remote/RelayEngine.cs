@@ -184,7 +184,15 @@ public sealed class RelayEngine(HttpClient? client = null)
             catch (HttpRequestException ex) when (attempt == 0 &&
                 ex.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.ResponseEnded) { }
             if (delay >= TimeSpan.FromMilliseconds(2200) - elapsed.Elapsed) return false;
-            await Task.Delay(delay, budget.Token);
+            var retryStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            var remaining = delay;
+            do
+            {
+                // Windows timers can complete early; Retry-After is a minimum, not an approximate delay.
+                await Task.Delay(remaining < TimeSpan.FromMilliseconds(1)
+                    ? TimeSpan.FromMilliseconds(1) : remaining, budget.Token);
+                remaining = delay - System.Diagnostics.Stopwatch.GetElapsedTime(retryStarted);
+            } while (remaining > TimeSpan.Zero);
         }
         return false;
     }
