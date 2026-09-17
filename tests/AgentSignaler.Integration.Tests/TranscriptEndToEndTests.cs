@@ -13,6 +13,11 @@ using static AgentSignaler.Tests.CurrentUserOwnedTranscriptFixture;
 
 namespace AgentSignaler.Integration.Tests;
 
+[CollectionDefinition("Transcript relay deadlines", DisableParallelization = true)]
+public sealed class TranscriptRelayDeadlineCollection { }
+
+// Each fresh Relay has a best-effort 200 ms detail budget; unrelated test load must not consume it.
+[Collection("Transcript relay deadlines")]
 public sealed class TranscriptEndToEndTests : IAsyncLifetime
 {
     internal const string ForbiddenArguments = "SYNTHETIC-FORBIDDEN-TOOL-ARGUMENTS";
@@ -27,6 +32,8 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
     private static readonly SourceDescriptor Source = new("copilot-cli", "test-only-transcript-scope", "test-only-v1");
     private readonly string _root = Path.Combine(Directory.GetCurrentDirectory(), "transcript-e2e", Guid.NewGuid().ToString("N"));
     private readonly ConcurrentQueue<(string Path, byte[] Body)> _wire = new();
+    private readonly ConcurrentQueue<(string Command, bool Accepted)> _ipcResponses = new();
+    private Func<ClientIpcRequest, CancellationToken, Task>? _beforeIpc;
     private string ConfigPath => Path.Combine(_root, "remote.json");
     private string HostRoot => Path.Combine(_root, "host-input-fixtures");
     private string HostFile => Path.Combine(HostRoot, Session + ".synthetic-jsonl");
@@ -262,6 +269,51 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
         await AssertPersistentPrivacyAsync();
     }
 
+    [Fact]
+    public async Task RelayDetailDeadlineDropsDelayedNegotiationWithoutBlockingStatusOrReplayingText()
+    {
+        await StartAsync(useTestAdapter: false);
+        await WaitForNegotiationAsync(true);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var negotiations = _ipcResponses.Count(value => value.Command == "transcript-negotiate");
+        _beforeIpc = async (request, token) =>
+        {
+            if (request.Command != "transcript-negotiate") return;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+        };
+        var hook = HookAsync("userPromptSubmitted", Prompt);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Keep negotiation blocked until the actual Relay exits on its unchanged detail deadline.
+            await hook.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForMachineAsync(AgentEvent.UserPromptSubmitted);
+        }
+        finally
+        {
+            release.TrySetResult();
+            _beforeIpc = null;
+            await hook;
+        }
+        await WaitUntilAsync(() => Task.FromResult(
+            _ipcResponses.Count(value => value.Command == "transcript-negotiate") == negotiations + 1));
+        Assert.DoesNotContain(_ipcResponses, value => value.Command is "transcript-hook" or "transcript-read");
+        Assert.Equal(0, DetailEventRequests);
+        Assert.Equal(0, _dashboard.Transcripts.RetainedEventCount);
+        Assert.Equal(0, _adapter.ParsedRecords);
+
+        await WaitForNegotiationAsync(true);
+        await HookAsync("userPromptSubmitted", Prompt);
+        var events = await WaitForEventsAsync(values => values.Any(value => value.Payload is TranscriptMessage));
+        Assert.Equal(Prompt, Assert.IsType<TranscriptMessage>(
+            Assert.Single(events, value => value.Payload is TranscriptMessage).Payload).Text);
+        Assert.Single(_ipcResponses, value => value is ("transcript-hook", true));
+        AssertWirePrivacy();
+        await AssertPersistentPrivacyAsync();
+    }
+
     [Theory]
     [InlineData("opt-out")]
     [InlineData("legacy")]
@@ -366,7 +418,13 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
             transportFactory: config => new PresenceTransport(config, _presenceClient),
             transcriptTransport: new TranscriptTransport(new WireObserver(_wire, detailHandler)),
             transcriptFileAdapters: useTestAdapter ? _adapter : null);
-        _ipc = new ClientIpcServer(ConfigPath, _client.HandleAsync, _client.TranscriptScratch);
+        _ipc = new ClientIpcServer(ConfigPath, async (request, token) =>
+        {
+            if (_beforeIpc is { } before) await before(request, token);
+            var response = await _client.HandleAsync(request, token);
+            _ipcResponses.Enqueue((request.Command, response.Accepted));
+            return response;
+        }, _client.TranscriptScratch);
         _client.Start();
         await WaitUntilAsync(async () => (await _machines.GetMachinesAsync()).Any(machine =>
             machine.MachineId == _configuration.MachineId && machine.PresenceMode == PresenceMode.Managed));
@@ -394,14 +452,24 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
     private async Task<TranscriptEvent[]> WaitForEventsAsync(Func<TranscriptEvent[], bool> predicate)
     {
         TranscriptEvent[] result = [];
-        await WaitUntilAsync(async () =>
+        try
         {
-            var sessions = await _dashboard.Transcripts.ListSessionsAsync(_configuration.MachineId);
-            var selection = sessions.Sessions.SingleOrDefault(session => session.Selection.SessionId == Session)?.Selection;
-            result = selection is null ? [] :
-                (await _dashboard.Transcripts.ReadEventsAsync(selection)).Events.Select(value => value.Event).ToArray();
-            return predicate(result);
-        });
+            await WaitUntilAsync(async () =>
+            {
+                var sessions = await _dashboard.Transcripts.ListSessionsAsync(_configuration.MachineId);
+                var selection = sessions.Sessions.SingleOrDefault(session => session.Selection.SessionId == Session)?.Selection;
+                result = selection is null ? [] :
+                    (await _dashboard.Transcripts.ReadEventsAsync(selection)).Events.Select(value => value.Event).ToArray();
+                return predicate(result);
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            Assert.Fail($"Transcript wait expired: availability={_client?.TranscriptAvailability}; " +
+                $"accepted-hooks={_ipcResponses.Count(value => value is ("transcript-hook", true))}; " +
+                $"accepted-reads={_ipcResponses.Count(value => value is ("transcript-read", true))}; " +
+                $"event-requests={DetailEventRequests}; retained-events={result.Length}.");
+        }
         return result;
     }
 
