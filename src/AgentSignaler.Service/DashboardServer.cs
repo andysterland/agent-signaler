@@ -18,6 +18,12 @@ public sealed class DashboardServer : IAsyncDisposable
 
     public DashboardServer(MachineStore store, int port, Action? onConfiguratorTestConnection = null,
         DashboardServerOptions? options = null)
+        : this(store, port, onConfiguratorTestConnection, options, null)
+    {
+    }
+
+    internal DashboardServer(MachineStore store, int port, Action? onConfiguratorTestConnection,
+        DashboardServerOptions? options, Func<TokenBucketRateLimiterOptions, RateLimiter>? tokenBucketLimiterFactory)
     {
         options ??= new DashboardServerOptions();
         if ((port != 0 || !options.AllowEphemeralPort) && port is < 1024 or > 65535)
@@ -48,21 +54,26 @@ public sealed class DashboardServer : IAsyncDisposable
         {
             builder.Services.AddRateLimiter(limits =>
             {
+                var tokenBucketOptions = new TokenBucketRateLimiterOptions
+                {
+                    TokenLimit = options.RequestBurstLimit,
+                    TokensPerPeriod = options.RequestsPerSecond,
+                    ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+                    AutoReplenishment = true,
+                    QueueLimit = 0
+                };
+                var tokenBucketPartition = RateLimitPartition.GetTokenBucketLimiter("global", _ => tokenBucketOptions);
+                // Allow tests to control replenishment without replacing global partitioning or the limiter chain.
+                if (tokenBucketLimiterFactory is not null)
+                    tokenBucketPartition = RateLimitPartition.Get(tokenBucketPartition.PartitionKey,
+                        _ => tokenBucketLimiterFactory(tokenBucketOptions));
                 limits.GlobalLimiter = PartitionedRateLimiter.CreateChained(
                     PartitionedRateLimiter.Create<HttpContext, string>(_ =>
                         RateLimitPartition.GetConcurrencyLimiter("global", _ => new ConcurrencyLimiterOptions
                         {
                             PermitLimit = options.ConcurrentRequestLimit, QueueLimit = 0
                         })),
-                    PartitionedRateLimiter.Create<HttpContext, string>(_ =>
-                        RateLimitPartition.GetTokenBucketLimiter("global", _ => new TokenBucketRateLimiterOptions
-                        {
-                            TokenLimit = options.RequestBurstLimit,
-                            TokensPerPeriod = options.RequestsPerSecond,
-                            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-                            AutoReplenishment = true,
-                            QueueLimit = 0
-                        })));
+                    PartitionedRateLimiter.Create<HttpContext, string>(_ => tokenBucketPartition));
                 limits.OnRejected = async (rejected, _) =>
                 {
                     rejected.HttpContext.Response.Headers.RetryAfter = "1";
