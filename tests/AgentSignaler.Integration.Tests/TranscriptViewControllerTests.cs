@@ -14,6 +14,80 @@ public sealed class TranscriptViewControllerTests
     private static readonly SourceDescriptor Source = new("copilot-cli", "synthetic-scope", "test");
 
     [Fact]
+    public async Task ExplicitDrillInFiltersSourceSessionAndNeverReadsAnotherCopilot()
+    {
+        var reader = new Reader();
+        var other = reader.Add(Machine, new("vscode", "synthetic-scope"), "same", "other product");
+        reader.Add(Machine, new("copilot-cli", "other-scope"), "same", "other scope");
+        reader.Add(Machine, Source, "other-session", "other session");
+        var selected = reader.Add(Machine, Source, "same", "requested stream");
+        var nextStream = reader.Add(Machine, Source with { Version = "2" }, "same", "second stream");
+        using var controller = new TranscriptViewController(reader, reader.Clock);
+        await controller.ShowAsync(selected, false);
+        Assert.Equal("requested stream", Assert.Single(controller.State.Entries).Text);
+        Assert.Equal(2, controller.State.Sessions.Length);
+        await controller.SelectAsync(other);
+        Assert.Equal(selected.StreamId, controller.State.Selection!.StreamId);
+        await controller.SelectAsync(nextStream);
+        Assert.Equal("second stream", Assert.Single(controller.State.Entries).Text);
+        reader.Remove(nextStream);
+        await controller.RefreshAsync();
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.Selection);
+        Assert.Empty(controller.State.Entries);
+        Assert.Single(controller.State.Sessions);
+    }
+
+    [Fact]
+    public async Task ExplicitDrillInFindsItsStreamOnSecondMetadataPage()
+    {
+        var reader = new Reader();
+        for (var i = 0; i < 16; i++) reader.Add(Machine, Source, $"other-{i}", "not selected");
+        var selected = reader.Add(Machine, Source, "selected", "requested");
+        using var controller = new TranscriptViewController(reader, reader.Clock);
+        await controller.ShowAsync(selected, false);
+        Assert.Single(controller.State.Sessions);
+        Assert.Equal("requested", Assert.Single(controller.State.Entries).Text);
+        Assert.Equal(2, reader.SessionReads);
+        Assert.Equal(1, reader.EventReads);
+    }
+
+    [Fact]
+    public async Task SessionWithoutRetainedHistoryNeverSubstitutesAnotherSessionOrClaimsCapture()
+    {
+        var reader = new Reader();
+        reader.Add(Machine, Source, "other", "not requested");
+        using var controller = new TranscriptViewController(reader, reader.Clock);
+        await controller.ShowAsync(new TranscriptSelection(Machine, Source, "missing", Guid.Empty), false);
+        await controller.RefreshAsync();
+        Assert.Empty(controller.State.Sessions);
+        Assert.Empty(controller.State.Entries);
+        Assert.Contains("No retained events for this Copilot", controller.State.Message);
+        Assert.Equal(0, reader.EventReads);
+    }
+
+    [Fact]
+    public async Task BackThenAnotherDrillInReleasesTextAndCancelsOldRead()
+    {
+        var reader = new Reader();
+        var first = reader.Add(Machine, Source, "first", "first private text");
+        var second = reader.Add(Machine, Source, "second", "second private text");
+        using var controller = new TranscriptViewController(reader, reader.Clock);
+        await controller.ShowAsync(first, false);
+        reader.HoldNext();
+        var pending = controller.RefreshAsync();
+        await reader.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        controller.Hide();
+        Assert.True(reader.HeldToken.IsCancellationRequested);
+        Assert.Empty(controller.State.Entries);
+        var next = controller.ShowAsync(second, false);
+        reader.Release();
+        await Task.WhenAll(pending, next);
+        Assert.Equal(second.StreamId, controller.State.Selection!.StreamId);
+        Assert.Equal("second private text", Assert.Single(controller.State.Entries).Text);
+    }
+
+    [Fact]
     public async Task OpensOnlyRetainedSelectedMachineAndIncludesEndedSessions()
     {
         var reader = new Reader();
@@ -337,15 +411,17 @@ public sealed class TranscriptViewControllerTests
         controller.State.Entries.Select(entry => new WeakReference<TranscriptEntry>(entry)).ToArray();
 
     [Fact]
-    public async Task SessionSelectorIsBoundedToTwoPages()
+    public async Task SessionSelectorRejectsExcessMetadataWithoutUnboundedPagingOrBodyReads()
     {
         var reader = new Reader();
         for (var index = 0; index < 33; index++)
             reader.Add(Machine, Source, $"session-{index}", "synthetic");
         using var controller = new TranscriptViewController(reader, reader.Clock);
         await controller.ShowAsync(Machine, false);
-        Assert.Equal(32, controller.State.Sessions.Length);
+        Assert.Empty(controller.State.Sessions);
         Assert.Equal(2, reader.SessionReads);
+        Assert.Equal(0, reader.EventReads);
+        Assert.Contains("read failed", controller.State.Message);
     }
 
     [Fact]

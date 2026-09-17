@@ -67,6 +67,10 @@ int main() {
         many += L"}"; Reject([&] { SettingsJson(many).Read(); });
         Plan plan{L"S-1-5-21-1-2-3-1001", L"C:\\Users\\Fixture\\AppData\\Local\\Programs\\AgentSignaler\\RpcHost",
             L"C:\\Users\\Fixture\\AppData\\Local\\AgentSignaler"};
+        Require(plan.Description(51820).find(L'|') == std::wstring::npos);
+        Require(plan.Description(51820) == std::wstring(Upgrade) + L";" + plan.sid +
+            L";" + plan.Exe() + L";51820;Private;TCP;receiver");
+        Require(plan.Owner() == std::wstring(Upgrade) + L"|" + plan.sid);
         auto entraUser = plan; entraUser.sid = L"S-1-12-1-111-222-333-444"; entraUser.Validate();
         RuleSnapshot rule{plan.RuleName(), Upgrade, plan.Description(51820), plan.Exe(), L"", L"51820",
             L"*", L"*", L"*", L"All"};

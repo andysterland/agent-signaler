@@ -157,7 +157,7 @@ public sealed class SourcePresenceTests : IDisposable
         Assert.Equal(AgentState.Waiting, before.State);
         await _store.AcceptAsync(Report(6) with
         {
-            Sessions = before.Sessions.Select(s => s with
+            Sessions = before.Sessions.Select(s => PresenceProtocol.ProjectSession(s, PresenceProtocol.SourceVersion) with
             {
                 UpdatedAtUtc = s.UpdatedAtUtc.AddSeconds(-1), UnderlyingState = AgentState.Idle
             }).ToArray()
@@ -187,14 +187,14 @@ public sealed class SourcePresenceTests : IDisposable
     public async Task FutureClockInAnotherSourceDoesNotBlockRetiringItsIdleSessionsAtCapacity()
     {
         var future = _clock.Now.AddYears(1);
-        var sessions = Enumerable.Range(0, Protocol.MaxSessions).Select(i => new SessionSnapshot
+        var sessions = EnrichedPresenceTests.BoundedSnapshot(Enumerable.Range(0, Protocol.MaxSessions).Select(i => new SessionSnapshot
         {
             Source = Studio, SessionId = $"future-{i}", UnderlyingState = AgentState.Idle, UpdatedAtUtc = future
-        }).ToArray();
+        }));
         await _store.AcceptAsync(Report() with { ReportedAtUtc = future, Sessions = sessions });
         await _store.AcceptAsync(Hook(Code, AgentEvent.PreToolUse, 2));
         var machine = Assert.Single(await _store.GetMachinesAsync());
-        Assert.Equal(Protocol.MaxSessions, machine.Sessions.Count);
+        Assert.Equal(sessions.Length, machine.Sessions.Count);
         Assert.Equal(AgentState.Executing, Assert.Single(machine.Sessions, s => s.Source == Code).UnderlyingState);
         using var reopened = new MachineStore(Database, _clock);
         var late = Hook(Studio, AgentEvent.PreToolUse, 3, future);
@@ -216,7 +216,7 @@ public sealed class SourcePresenceTests : IDisposable
             "ms-cloudpc:connect?cpcid=11111111-2222-3333-4444-555555555555&username=test%40example.com&environment=public&version=2&source=dashboard",
             _clock.Now);
         await _store.SetWindowsAppConnectionAsync(_machine, mapping);
-        var session = Assert.Single(Assert.Single(await _store.GetMachinesAsync()).Sessions);
+        var session = PresenceProtocol.ProjectSession(Assert.Single(Assert.Single(await _store.GetMachinesAsync()).Sessions), PresenceProtocol.Version);
         await _store.AcceptAsync(PresenceTests.Started(_machine, _clock.Now) with { Generation = 7, Sessions = [session] });
         using (var connection = new SqliteConnection($"Data Source={Database};Pooling=False"))
         {

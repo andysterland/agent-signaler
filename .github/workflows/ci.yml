@@ -98,7 +98,7 @@ jobs:
           global-json-file: global.json
       - name: Build and inspect installers
         shell: powershell
-        run: .\scripts\Build-Installers.ps1 -Version 1.0.14
+        run: .\scripts\Build-Installers.ps1 -Version 1.0.19
       - name: Retain unsigned inspected application artifacts
         uses: actions/upload-artifact@v4
         with:

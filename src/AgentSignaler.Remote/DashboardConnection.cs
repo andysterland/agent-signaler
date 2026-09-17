@@ -26,10 +26,36 @@ public static class DashboardConnection
     }
 
     public static async Task TestAsync(RemoteConfiguration config, HttpClient client, CancellationToken token)
+        => _ = await NegotiateAsync(config, client, token);
+
+    public static async Task<int> NegotiateAsync(RemoteConfiguration config, HttpClient client, CancellationToken token)
+    {
+        if (config.Version < 3)
+        {
+            await TestVersionAsync(config, client, Protocol.Version, token);
+            return Protocol.Version;
+        }
+        try
+        {
+            await TestVersionAsync(config, client, PresenceProtocol.EnrichedVersion, token);
+            return PresenceProtocol.EnrichedVersion;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            var legacy = config.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version;
+            try { await TestVersionAsync(config, client, legacy, token); }
+            catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                throw new InvalidDataException($"Upgrade the dashboard receiver first. This configuration requires protocol v{legacy} or newer; source identity cannot be removed.", error);
+            }
+            return legacy;
+        }
+    }
+
+    private static async Task TestVersionAsync(RemoteConfiguration config, HttpClient client, int expectedVersion, CancellationToken token)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get,
-            config.Version >= 4 ? new Uri(config.BaseUri, "/api/v3/health") :
-            config.Version >= 3 ? config.PresenceHealthEndpoint : config.HealthEndpoint);
+            expectedVersion == Protocol.Version ? config.HealthEndpoint : new Uri(config.BaseUri, $"/api/v{expectedVersion}/health"));
         request.Headers.Accept.Add(new("application/json"));
         request.Headers.Add(Protocol.ConnectionTestHeader, "1");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
@@ -70,8 +96,6 @@ public static class DashboardConnection
         {
             throw new InvalidDataException("The endpoint returned malformed JSON instead of an Agent Signaler health response.", ex);
         }
-        var expectedVersion = config.Version >= 4 ? PresenceProtocol.SourceVersion :
-            config.Version >= 3 ? PresenceProtocol.Version : Protocol.Version;
         if (protocolVersion != expectedVersion || status != "ok")
             throw new InvalidDataException($"The endpoint is not a compatible Agent Signaler dashboard. Required protocol v{expectedVersion}.");
     }

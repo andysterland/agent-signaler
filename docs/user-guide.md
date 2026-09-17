@@ -106,18 +106,38 @@ notes, and transcripts. A saved display name does not change its local role.
 Hostname recognition is a navigation convenience, not authentication; reporting
 computers should have distinct hostnames.
 
-### Computer details: Settings and Transcript
+### Computer details: Settings and Copilots
 
-Computer details has fixed **Settings** and **Transcript** tabs. Settings opens
-first and preserves display name/note, status/sessions, and Dev Box mapping,
+Computer details has fixed **Settings** and **Copilots** tabs. Settings opens
+first and preserves display name/note, machine status, and Dev Box mapping,
 sign-in, refresh, launch, copy-URI, and cancellation workflows. Tab switches retain
 unsaved edits without saving or starting connection work. Save details/Remove
 belong only to Settings; Close and ongoing connection cancellation remain reachable
 from either tab.
 
-Transcript selects one reported machine/source/scope/session and stream, including
-ended sessions whose content has not expired. Identity labels are not authenticated
-identities. Text is inert, wrapped plain text with role/time/source and delivery
+Copilots lists each observed conversation independently, including concurrent
+conversations in the same integration. Each row shows product, scope/session,
+effective status, and the latest accepted status event with its reporting
+timestamp. This is not a prompt, answer, raw hook payload, or transcript excerpt.
+Older snapshots show **Last event unavailable** rather than borrowing another
+session's event. Status rows work with detailed conversations disabled.
+
+Connected means observed and not ended while the reporting Client is online,
+not verified host-process liveness. Hook silence never expires a waiting row.
+Hosts without a session-end signal can remain observed indefinitely. Offline
+rows are last-known observations, not connected Copilots. The machine summary
+shows the waiting count; another Copilot's activity cannot clear a wait.
+
+**View transcript** opens only that row's source/scope/session inside Copilots.
+**Back to Copilots** restores the list. Retained-only/ended rows keep access to
+unexpired history without contributing to connected counts. Multiple retained
+streams remain separate choices scoped to that session; the viewer never switches
+to another Copilot. Identity labels are not authenticated identities.
+**Include retained/ended history (not connected)** controls the retained-only
+rows and is initially checked. Metadata reads remain bounded to 32 retained
+selections per machine, automatically read in two pages of 16. The drill-in's
+**Retained stream for this Copilot** selector never spans other sessions.
+Text is inert, wrapped plain text with role/time/source and delivery
 order; missing host IDs mean arrival order, not invented causal correlation.
 Capabilities and availability distinguish disabled, HTTPS/receiver required,
 partial/unverified format, baseline, waiting for stop, file unavailable, budget
@@ -129,7 +149,7 @@ There is no composer, Send, approval, agent-action retry, tool execution,
 transcript clipboard/export, active links, or remote images. Opening the tab does
 not enable reporting, start Client, or read a host file. It reads only the
 in-process volatile API; no browser/network-facing transcript reader exists.
-Returning to Settings or closing releases transcript text; expiry, eviction,
+Back to Copilots, returning to Settings, or closing releases transcript text; expiry, eviction,
 clear/disable, removal, and reset invalidate visible content as well as caches.
 Refreshes are cancelled on selection/tab changes and stale completions rejected.
 
@@ -337,6 +357,13 @@ computer appears automatically while minimized. Closing to tray and background
 startup do not show the compact window. Disable the setting to retain minimize-to-tray
 behavior. The receiver and status refresh continue in either mode.
 
+Each compact tile has one 4 x 4 logical-pixel status square per connected Copilot,
+in the same source/scope/session order as the list. Squares are indicators, not
+tiny buttons; the accessible card summary and Copilots list provide text labels.
+Ten fit per row with 1-pixel spacing in a 50-pixel region. All 64 sessions fit in
+seven rows; tile width remains 64 pixels and height grows as needed. Scrolling
+and work-area bounds still apply. Offline/zero-session tiles show no squares.
+
 ### Windows App and Dev Box connections
 
 Requires Windows 11 x64, Windows App **2.0.804.0** or later with `ms-cloudpc`
@@ -528,8 +555,9 @@ Approved multi-target Apply explicitly migrates to v5 with `integrations`,
 (default **300**). **Heartbeat interval (minutes)** accepts whole numbers **1–60**;
 zero does not disable reporting. UUID and metadata are retained.
 Upgrade **Dashboard first**, then **Client, Configurator, and Relay together**.
-New multi-target integration requires the `/api/v3/health` capabilities check; an older
-dashboard is rejected rather than silently falling back to v1 reporting.
+New multi-target integration prefers `/api/v4/health`, with source-aware v3
+fallback only when v4 returns 404. Older dashboards without source-aware support
+are rejected rather than silently falling back to v1 reporting.
 Old Clients cannot read v5. Explicit downgrade requires stopping the exact owned
 Client, clearing volatile detail, transactionally writing validated status-only
 v4, and servicing compatible binaries; normal MSIs block older versions. A later
@@ -615,7 +643,7 @@ point, `AgentSignaler.Dashboard.Setup.exe`. Build and inspect local installer
 artifacts without installation or redirected-drive copying with:
 
 ```powershell
-.\scripts\Build-Installers.ps1 -Version 1.0.14
+.\scripts\Build-Installers.ps1 -Version 1.0.19
 ```
 
 ## Use
@@ -694,8 +722,9 @@ session status. If the dashboard is hidden, open it to see the message; no Windo
 notification is sent. Ordinary health checks and relay reports do not show it.
 
 Relay `test --config <path>` uses `DashboardConnection.TestAsync` for read-only
-`GET /api/v3/health` with multi-target v4/v5 configuration,
-`GET /api/v2/health` with managed v3 configuration, or `GET /health` with legacy
+`GET /api/v4/health` with managed configuration (source-aware v3 fallback for
+configuration v4/v5, or v2 fallback for configuration v3, only on v4 HTTP 404),
+or `GET /health` with legacy
 v1/v2 configuration. It does not post status, register a machine, change
 session state, or refresh machine liveness. Like Configurator's test, it includes
 the connection-test header and shows the dashboard's **Test connection** message.
@@ -877,13 +906,26 @@ can submit or spoof status reports. Use it only on a trusted LAN or VPN.**
 ## Protocol and state
 
 `GET /health` retains its strict legacy v1 version/status response.
-Configuration v4/v5 verifies `GET /api/v3/health`, returning exactly
-`{"protocolVersion":3,"status":"ok"}`, and uses `POST /api/v3/reports`.
+Managed configurations prefer `GET /api/v4/health`, returning exactly
+`{"protocolVersion":4,"status":"ok"}`, and `POST /api/v4/reports`.
+V4 snapshots carry nullable per-session `latestEvent` and `latestEventAtUtc`.
+The timestamp is the accepted reporting time, not heartbeat receipt or result
+expiry. Unknown legacy metadata remains unknown. Nested source-aware hook
+requests remain v3; no hook IPC or transcript identity change is required.
 Sessions carry source kind, integration scope and opaque host session identity;
 reporter identity/heartbeat remains machine-wide. Identical session IDs across
 CLI, IDEs and profiles do not share state. Dashboard displays per-session sources.
-Older managed configuration v3 verifies `GET /api/v2/health`, returning exactly
-`{"protocolVersion":2,"status":"ok"}`. `POST /api/v2/reports` accepts managed `started`, `heartbeat`, `hook`,
+Only when v4 health returns 404, configuration v4/v5 falls back to source-aware
+v3 health/reports, while legacy managed configuration v3 falls back to v2
+health/reports. V2/v3 snapshots use explicit legacy projections without the new
+fields; source-aware mode never falls back below v3 or strips source identity.
+For a pending permission request, a legacy wire projection omits any result
+overlay that would hide Waiting. This does not create a pending `ask_user` flag:
+canonical persistence retains the original result and absolute expiry, and
+subsequent resume snapshots can present it again until that expiry.
+Unknown or duplicate JSON properties remain rejected. Other health failures
+remain actionable errors rather than triggering downgrade.
+`POST /api/v2/reports` accepts managed `started`, `heartbeat`, `hook`,
 and terminal `offline` envelopes; these are not extra Copilot hook events.
 Started/heartbeat snapshots carry bounded sanitized sessions and the interval.
 Generation/sequence ordering is persisted with acceptance; only an acknowledged
@@ -936,7 +978,8 @@ hook configuration already covers these events; no new hook is required.
 Upgrade Dashboard before the remote package: older receivers reject the new metadata.
 
 On `/api/v1/status`, only hook events are accepted; `heartbeat` and legacy snapshot
-fields `state` and `sessions` are rejected. Managed snapshots belong only to v2.
+fields `state` and `sessions` are rejected. Managed snapshots belong only to the
+versioned presence endpoints (v2/v3/v4).
 `relayVersion` identifies the reporting relay without
 replacing the discovered CLI version. At most **25 computers** and
 **64 tracked sessions per computer** are accepted.
@@ -945,15 +988,28 @@ Ended sessions remain as ordering tombstones until capacity is needed. A hook fo
 a new session can evict the oldest ended entry whose result hold has expired;
 active sessions and unexpired results are never evicted. A persisted retired-through
 timestamp prevents stale hooks from resurrecting evicted sessions, including after restart.
+Count and serialized-byte admission limits both apply. Required bounded metadata
+growth, including mutable product-version text, is reserved for admitted sessions.
+This reservation and long/escaped identifiers can reach the byte limit before
+64 sessions; 64 is a count ceiling, not a guarantee that every set fits the byte
+budget. At capacity, a new session is rejected
+with a sanitized capacity diagnostic instead of silently discarding a live session.
 
 Each session tracks an underlying Waiting, Executing, or Idle state and a 60-second
 Succeeded/Failed overlay. Subsequent ordinary hooks update the underlying state
 without cancelling that overlay. A new result replaces the preceding result for
-that session. Pending `ask_user` input takes precedence over a Succeeded overlay,
-but not a Failed overlay; overlay expiration times are unchanged.
+that session. Explicit input waits, including permission requests and pending
+`ask_user` questions, take precedence over both Succeeded and Failed overlays;
+result information remains in the row and absolute expiry times are unchanged.
 Concurrent session priority is:
 
-**Failed > Waiting > Executing > Succeeded > Idle > Offline**.
+**Waiting > Failed > Executing > Succeeded > Idle**.
+
+Connectivity is separate: Offline overrides online aggregation. With no active
+sessions the online state is Idle. A resume or result changes only its owning
+session, and all waiters must resume or end before the last wait disappears.
+Neither a heartbeat, expired result, nor elapsed hook silence answers a question.
+Turn completion is not session end.
 
 Managed Offline overrides the aggregate immediately on accepted terminal offline,
 or at **last accepted report receipt + two heartbeat intervals + one minute**
@@ -980,6 +1036,38 @@ remain harmless. Explicit local computer removal releases its receipts and reset
 its replay protection; old reports for that removed computer can be accepted again.
 Existing over-limit databases are preserved but cannot accept new event IDs.
 SQLite reuses freed pages; removal does not promise to shrink the database file.
+
+### Multi-session upgrade and rollback
+
+Upgrade the receiver (Dashboard or RpcHost) first, then deploy matching
+Client/Relay/Configurator binaries. Presence protocol versions are independent
+of configuration, transcript, RPC and local IPC versions. Enriched status
+snapshots carry only event enums and UTC timestamps, not conversation text.
+Source-aware v3 and legacy v2 receivers use explicit legacy projections;
+source identity is never stripped to make a multi-source setup appear
+compatible. Unsupported receivers require an upgrade, not merged CLI sessions.
+
+The local primary state remains rollback-readable format v2 with event metadata
+omitted. A hash-bound `.events-v1` sidecar carries enriched format v3 state;
+`.events-v1.previous` preserves the prior matching enrichment during interrupted
+publication. SQLite likewise keeps legacy schema-v2 snapshots and stores
+enrichment in a transactional `SessionMetadataV1` table bound to the snapshot
+hash. Older binaries continue reading the base session set. If an older writer
+changes the base, unmatched enrichment is ignored rather than treating those
+sessions/settings as corrupt. Missing metadata displays as unavailable; it is
+not reconstructed from a machine-wide event.
+
+Before the first upgraded launch, stop Dashboard/RpcHost and Client and take
+a consistent backup of their owned data directories plus matching configuration
+and integration backups. Do not copy a live SQLite database/WAL independently.
+Keep the compatible binaries with the backup. To roll back, stop the upgraded
+processes, restore the matching stopped backup and old binaries/configuration
+together, including the local primary and both sidecars, then explicitly start
+the desired reporter. Never substitute a sidecar for the rollback-readable
+primary state file. Changes after the
+backup are not part of rollback; preserve later display names, notes and mappings
+separately if needed. Do not overwrite an explicit transcript opt-out with a
+backed-up opt-in or automatically restart a previously stopped Client.
 
 Settings and state live under `%LOCALAPPDATA%\AgentSignaler`. Keep this directory
 private to the Windows user. Back up the SQLite database only while the dashboard is

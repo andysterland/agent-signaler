@@ -13,6 +13,10 @@ public sealed record SessionSnapshot
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool AwaitingUserInput { get; init; }
     public DateTimeOffset UpdatedAtUtc { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentEvent? LatestEvent { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LatestEventAtUtc { get; init; }
 }
 
 public static class StateReducer
@@ -56,20 +60,23 @@ public static class StateReducer
         {
             SessionId = sessionId, Source = source ?? previous?.Source, UnderlyingState = underlying,
             AwaitingUserInput = awaitingUserInput,
-            ResultState = result, ResultUntilUtc = until, UpdatedAtUtc = reportedAtUtc
+            ResultState = result, ResultUntilUtc = until, UpdatedAtUtc = reportedAtUtc,
+            LatestEvent = kind, LatestEventAtUtc = reportedAtUtc
         };
     }
 
     public static AgentState Effective(SessionSnapshot session, DateTimeOffset now) =>
+        session.AwaitingUserInput || session.LatestEvent == AgentEvent.PermissionRequest ? AgentState.Waiting :
         session.ResultState is { } result && session.ResultUntilUtc > now &&
-        (result == AgentState.Failed || !session.AwaitingUserInput) ? result : session.UnderlyingState;
+        !session.AwaitingUserInput ? result : session.UnderlyingState;
 
     public static AgentState Aggregate(IEnumerable<SessionSnapshot> sessions, DateTimeOffset now) =>
-        sessions.Select(s => Effective(s, now)).DefaultIfEmpty(AgentState.Idle).MaxBy(Priority);
+        sessions.Where(s => s.UnderlyingState != AgentState.Idle).Select(s => Effective(s, now))
+            .DefaultIfEmpty(AgentState.Idle).MaxBy(Priority);
 
     public static int Priority(AgentState state) => state switch
     {
-        AgentState.Failed => 5, AgentState.Waiting => 4, AgentState.Executing => 3,
+        AgentState.Waiting => 5, AgentState.Failed => 4, AgentState.Executing => 3,
         AgentState.Succeeded => 2, AgentState.Idle => 1, _ => 0
     };
 }

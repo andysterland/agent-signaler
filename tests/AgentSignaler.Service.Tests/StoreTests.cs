@@ -617,7 +617,9 @@ public sealed class StoreTests : IDisposable
         };
         await _store.AcceptAsync(followup);
         _clock.Advance(TimeSpan.FromSeconds(39));
-        Assert.Equal(AgentState.Succeeded, Assert.Single(await _store.GetMachinesAsync()).State);
+        var waiting = Assert.Single(await _store.GetMachinesAsync());
+        Assert.Equal(AgentState.Waiting, waiting.State);
+        Assert.Equal(hook.ReportedAtUtc + Protocol.ResultDuration, Assert.Single(waiting.Sessions).ResultUntilUtc);
         _clock.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(AgentState.Waiting, Assert.Single(await _store.GetMachinesAsync()).State);
     }
@@ -655,7 +657,9 @@ public sealed class StoreTests : IDisposable
     public async Task EndedSessionsFreeCapacityAndRetiredHooksStayRetiredAfterRestart()
     {
         var hook = StateTests.Request(AgentEvent.SessionEnd, timestamp: _clock.Now);
-        for (var i = 0; i < Protocol.MaxSessions; i++)
+        var capacity = EnrichedPresenceTests.BoundedSnapshot(Enumerable.Range(0, Protocol.MaxSessions)
+            .Select(i => new SessionSnapshot { SessionId = $"ended-{i}" })).Length;
+        for (var i = 0; i < capacity; i++)
             await _store.AcceptAsync(hook with { EventId = Guid.NewGuid(), SessionId = $"ended-{i}" });
         _clock.Advance(TimeSpan.FromSeconds(61));
         await _store.AcceptAsync(hook with
@@ -668,7 +672,7 @@ public sealed class StoreTests : IDisposable
             EventId = Guid.NewGuid(), SessionId = "ended-0", Event = AgentEvent.PermissionRequest
         });
         var machine = Assert.Single(await reopened.GetMachinesAsync());
-        Assert.Equal(Protocol.MaxSessions, machine.Sessions.Count);
+        Assert.Equal(capacity, machine.Sessions.Count);
         Assert.DoesNotContain(machine.Sessions, s => s.SessionId == "ended-0");
         Assert.Equal(AgentState.Executing, machine.State);
     }
@@ -713,10 +717,12 @@ public sealed class StoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ActiveSessionsAndUnexpiredResultsAreNotEvictedAtCapacity()
+    public async Task ActiveSessionsAreNotEvictedButEndedResultsCanReleaseCapacity()
     {
         var request = StateTests.Request(AgentEvent.PreToolUse, timestamp: _clock.Now);
-        for (var i = 0; i < Protocol.MaxSessions; i++)
+        var capacity = EnrichedPresenceTests.BoundedSnapshot(Enumerable.Range(0, Protocol.MaxSessions)
+            .Select(i => new SessionSnapshot { SessionId = $"session-{i}" })).Length;
+        for (var i = 0; i < capacity; i++)
             await _store.AcceptAsync(request with { EventId = Guid.NewGuid(), SessionId = $"session-{i}" });
         _clock.Advance(TimeSpan.FromSeconds(1));
         var next = request with { EventId = Guid.NewGuid(), SessionId = "new", ReportedAtUtc = _clock.Now };
@@ -731,10 +737,8 @@ public sealed class StoreTests : IDisposable
             EventId = Guid.NewGuid(), SessionId = "session-0", Event = AgentEvent.SessionEnd, ReportedAtUtc = _clock.Now
         });
         next = next with { ReportedAtUtc = _clock.Now.AddSeconds(1) };
-        await Assert.ThrowsAsync<CapacityException>(() => _store.AcceptAsync(next));
-        _clock.Advance(Protocol.ResultDuration);
         Assert.False((await _store.AcceptAsync(next)).Duplicate);
-        Assert.Equal(Protocol.MaxSessions, Assert.Single(await _store.GetMachinesAsync()).Sessions.Count);
+        Assert.Equal(capacity, Assert.Single(await _store.GetMachinesAsync()).Sessions.Count);
     }
 
     [Fact]

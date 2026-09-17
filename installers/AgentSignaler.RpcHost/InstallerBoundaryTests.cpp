@@ -48,6 +48,16 @@ int wmain(int argc, wchar_t** argv) {
             return WaitForSingleObject(release.value, 15000) == WAIT_OBJECT_0 ? 0 : 1;
         }
         Require(argc == 2);
+        servicingStage = L"firewall-rule-add";
+        auto message = FailureMessage(std::runtime_error("private fixture content"));
+        Require(message.find(L"firewall-rule-add") != std::wstring::npos &&
+            message.find(L"private fixture content") == std::wstring::npos &&
+            message.find(L"RECEIVERPORT") == std::wstring::npos);
+        message = FailureMessage(NativeFailure(E_ACCESSDENIED));
+        Require(message.find(L"0x80070005") != std::wstring::npos);
+        servicingStage = L"port-configuration";
+        Require(FailureMessage(std::runtime_error("servicing-policy")).find(L"RECEIVERPORT=1024..65535") != std::wstring::npos);
+        Require(FailureMessage(std::runtime_error("in-use")).find(L"RpcHost is in use") != std::wstring::npos);
         std::wstring fixture = argv[1];
         Require(fixture.find(L"artifacts\\rpchost-installer\\") != std::wstring::npos);
         wchar_t self[32768]{};

@@ -166,7 +166,10 @@ public sealed class PresenceTests : IDisposable
         for (var sequence = 3; sequence <= 100; sequence++)
         {
             _clock.Advance(TimeSpan.FromSeconds(1));
-            await _store.AcceptAsync(Report(PresenceKind.Heartbeat, sequence) with { Sessions = original.Sessions });
+            await _store.AcceptAsync(Report(PresenceKind.Heartbeat, sequence) with
+            {
+                Sessions = original.Sessions.Select(s => PresenceProtocol.ProjectSession(s, PresenceProtocol.Version)).ToArray()
+            });
         }
         var machine = Assert.Single(await _store.GetMachinesAsync());
         Assert.Equal(AgentState.Waiting, machine.State);
@@ -226,10 +229,10 @@ public sealed class PresenceTests : IDisposable
     [Fact]
     public async Task SessionCapacityFailureDoesNotCommitAndSnapshotCanRepairIt()
     {
-        var full = Enumerable.Range(0, Protocol.MaxSessions).Select(i => new SessionSnapshot
+        var full = EnrichedPresenceTests.BoundedSnapshot(Enumerable.Range(0, Protocol.MaxSessions).Select(i => new SessionSnapshot
         {
             SessionId = $"session-{i}", UnderlyingState = AgentState.Executing, UpdatedAtUtc = _clock.Now
-        }).ToArray();
+        }));
         await _store.AcceptAsync(Report(PresenceKind.Started, 1) with { Sessions = full });
         _clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.ThrowsAsync<CapacityException>(() => _store.AcceptAsync(Hook(AgentEvent.PreToolUse, 3, "overflow")));

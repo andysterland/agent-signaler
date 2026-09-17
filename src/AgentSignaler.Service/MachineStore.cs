@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Text;
 using AgentSignaler.Contracts;
 using Microsoft.Data.Sqlite;
 
@@ -56,6 +58,9 @@ public sealed class MachineStore : IDisposable
             PRAGMA journal_mode=WAL;
             BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS Machines (Id TEXT PRIMARY KEY, Snapshot TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS SessionMetadataV1 (
+                MachineId TEXT PRIMARY KEY, SnapshotHash TEXT NOT NULL, Sessions TEXT NOT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS Receipts (
                 EventId TEXT PRIMARY KEY, MachineId TEXT NOT NULL,
                 FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE);
@@ -184,7 +189,7 @@ public sealed class MachineStore : IDisposable
             if (report.Kind is PresenceKind.Started or PresenceKind.Heartbeat)
             {
                 machine.HeartbeatIntervalSeconds = report.HeartbeatIntervalSeconds;
-                ReconcileSessions(machine, report.Sessions!, now);
+                ReconcileSessions(machine, report.Sessions!, now, report.ProtocolVersion == PresenceProtocol.EnrichedVersion);
             }
             else if (report.Kind == PresenceKind.Hook)
             {
@@ -194,7 +199,7 @@ public sealed class MachineStore : IDisposable
                     machine.LatestReportUtc = hook.ReportedAtUtc;
                     machine.LatestEvent = hook.Event;
                 }
-                ApplyHook(machine, hook, now);
+                ApplyHook(machine, hook, now, report.ProtocolVersion == PresenceProtocol.EnrichedVersion);
             }
             else machine.ExplicitOffline = true;
             Save(connection, transaction, machine);
@@ -205,28 +210,32 @@ public sealed class MachineStore : IDisposable
         finally { _gate.Release(); }
     }
 
-    private static void ApplyHook(StoredMachine machine, StatusRequest request, DateTimeOffset now)
+    private static void ApplyHook(StoredMachine machine, StatusRequest request, DateTimeOffset now, bool enriched = false)
     {
         var key = SourceIdentity.SessionKey(request.Source, request.SessionId!);
         var index = machine.Sessions.FindIndex(s => SessionKey(s) == key);
         if (index < 0 && IsRetired(machine, request.Source, request.ReportedAtUtc)) return;
-        if (index < 0 && machine.Sessions.Count >= Protocol.MaxSessions)
+        var previous = index < 0 ? null : machine.Sessions[index];
+        var next = StateReducer.Apply(previous, request.SessionId!, request.Event,
+            request.ReportedAtUtc, enriched ? request.ReportedAtUtc : now,
+            request.ToolFailed, request.ToolRequiresUserInput, request.Source);
+        if (!enriched && next.ResultUntilUtc > now + Protocol.ResultDuration)
+            next = next with { ResultUntilUtc = now + Protocol.ResultDuration };
+        if (index < 0) machine.Sessions.Add(next);
+        else machine.Sessions[index] = next;
+        while (machine.Sessions.Count > Protocol.MaxSessions || !PresenceProtocol.FitsSnapshot(machine.Sessions))
         {
             var incomingScope = SourceIdentity.SessionKey(request.Source, "");
             var retired = machine.Sessions.Where(s => s.UnderlyingState == AgentState.Idle &&
-                (s.ResultUntilUtc is null || s.ResultUntilUtc <= now) &&
+                (request.Event == AgentEvent.SessionEnd || SessionKey(s) != key) &&
                 (SourceIdentity.SessionKey(s.Source, "") != incomingScope ||
-                 s.UpdatedAtUtc < request.ReportedAtUtc)).MinBy(s => s.UpdatedAtUtc);
+                 s.UpdatedAtUtc < request.ReportedAtUtc ||
+                 request.Event == AgentEvent.SessionEnd && SessionKey(s) == key)).MinBy(s => s.UpdatedAtUtc);
             if (retired is null)
                 throw new CapacityException("Maximum tracked sessions reached; end an active session before starting another.");
             machine.Sessions.Remove(retired);
             Retire(machine, retired.Source, retired.UpdatedAtUtc);
         }
-        var previous = index < 0 ? null : machine.Sessions[index];
-        var next = StateReducer.Apply(previous, request.SessionId!, request.Event,
-            request.ReportedAtUtc, now, request.ToolFailed, request.ToolRequiresUserInput, request.Source);
-        if (index < 0) machine.Sessions.Add(next);
-        else machine.Sessions[index] = next;
     }
 
     private static string SessionKey(SessionSnapshot session) =>
@@ -248,8 +257,10 @@ public sealed class MachineStore : IDisposable
         else if (timestamp > watermark) machine.RetiredSources[scope] = timestamp;
     }
 
-    private static void ReconcileSessions(StoredMachine machine, IReadOnlyList<SessionSnapshot> snapshot, DateTimeOffset now)
+    private static void ReconcileSessions(StoredMachine machine, IReadOnlyList<SessionSnapshot> snapshot, DateTimeOffset now, bool enriched)
     {
+        if (!PresenceProtocol.FitsSnapshot(snapshot))
+            throw new CapacityException("Session snapshot exceeds capacity reserved for status metadata. End an active session before retrying.");
         var ids = snapshot.Select(SessionKey).ToHashSet(StringComparer.Ordinal);
         foreach (var removed in machine.Sessions.Where(s => !ids.Contains(SessionKey(s))))
             Retire(machine, removed.Source, removed.UpdatedAtUtc);
@@ -265,11 +276,10 @@ public sealed class MachineStore : IDisposable
             if (existing is null && IsRetired(machine, incoming.Source, incoming.UpdatedAtUtc)) continue;
             // Expiry is absolute: repeated snapshots cannot renew a result overlay.
             var until = incoming.ResultUntilUtc;
-            if (until > now + Protocol.ResultDuration) until = now + Protocol.ResultDuration;
+            if (!enriched && until > now + Protocol.ResultDuration) until = now + Protocol.ResultDuration;
             machine.Sessions.Add(incoming with
             {
-                ResultUntilUtc = until > now ? until : null,
-                ResultState = until > now ? incoming.ResultState : null
+                ResultUntilUtc = until
             });
         }
     }
@@ -281,13 +291,16 @@ public sealed class MachineStore : IDisposable
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT Snapshot FROM Machines";
+            command.CommandText = """
+                SELECT m.Snapshot, e.SnapshotHash, e.Sessions
+                FROM Machines m LEFT JOIN SessionMetadataV1 e ON e.MachineId=m.Id
+                """;
             using var reader = command.ExecuteReader();
             var now = _timeProvider.GetUtcNow();
             var machines = new List<MachineView>();
             while (reader.Read())
             {
-                var machine = Deserialize(reader.GetString(0));
+                var machine = Deserialize(reader);
                 var timeout = machine.PresenceMode == PresenceMode.Managed
                     ? PresenceProtocol.OfflineAfter(machine.HeartbeatIntervalSeconds!.Value) : Protocol.OfflineAfter;
                 var deadline = machine.LastContactUtc + timeout;
@@ -390,15 +403,20 @@ public sealed class MachineStore : IDisposable
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT Snapshot FROM Machines WHERE Id=$id";
+        command.CommandText = """
+            SELECT m.Snapshot, e.SnapshotHash, e.Sessions
+            FROM Machines m LEFT JOIN SessionMetadataV1 e ON e.MachineId=m.Id WHERE m.Id=$id
+            """;
         command.Parameters.AddWithValue("$id", id.ToString());
-        return command.ExecuteScalar() is string json ? Deserialize(json) : null;
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? Deserialize(reader) : null;
     }
 
-    private static StoredMachine Deserialize(string json)
+    private static StoredMachine Deserialize(SqliteDataReader reader)
     {
         try
         {
+            var json = reader.GetString(0);
             var snapshot = JsonNode.Parse(json)?.AsObject() ??
                 throw new InvalidDataException("The machine database contains an invalid snapshot.");
             // Upgrade persisted snapshots without discarding identity, sessions, or ordering history.
@@ -408,10 +426,19 @@ public sealed class MachineStore : IDisposable
                 snapshot["latestEvent"] = null;
             var machine = snapshot.Deserialize<StoredMachine>(Protocol.Json) ??
                 throw new InvalidDataException("The machine database contains an invalid snapshot.");
+            if (!reader.IsDBNull(1) && reader.GetString(1) == SnapshotHash(json))
+            {
+                var sessions = JsonSerializer.Deserialize<List<SessionSnapshot>>(reader.GetString(2), Protocol.Json);
+                if (sessions is null || sessions.Count > Protocol.MaxSessions || sessions.Any(s => s is null) ||
+                    JsonSerializer.Serialize(sessions.Select(PresenceProtocol.ProjectStoredSession), Protocol.Json) !=
+                    JsonSerializer.Serialize(machine.Sessions, Protocol.Json))
+                    throw new InvalidDataException("The machine database contains inconsistent session metadata. Restore a compatible database backup.");
+                machine.Sessions = sessions;
+            }
             if (machine.SchemaVersion is < 1 or > 2 || machine.Sessions is null ||
                 machine.Sessions.Count > Protocol.MaxSessions || machine.RetiredSources is null ||
                 machine.RetiredSources.Count > Protocol.MaxSessions ||
-                machine.Sessions.Any(s => s is null || s.Source is { IsValid: false } ||
+                machine.Sessions.Any(s => s is null || !PresenceProtocol.ValidLatestEvent(s) || s.Source is { IsValid: false } ||
                     string.IsNullOrWhiteSpace(s.SessionId) || s.SessionId.Length > 128 || s.SessionId.Any(char.IsControl)) ||
                 machine.Sessions.Select(SessionKey).Distinct(StringComparer.Ordinal).Count() != machine.Sessions.Count)
                 throw new InvalidDataException("The machine database contains invalid source identity metadata.");
@@ -445,9 +472,25 @@ public sealed class MachineStore : IDisposable
             ON CONFLICT(Id) DO UPDATE SET Snapshot=excluded.Snapshot
             """;
         command.Parameters.AddWithValue("$id", machine.MachineId.ToString());
-        command.Parameters.AddWithValue("$snapshot", JsonSerializer.Serialize(machine with { SchemaVersion = 2 }, Protocol.Json));
+        var legacy = JsonSerializer.Serialize(machine with
+        {
+            SchemaVersion = 2,
+            Sessions = machine.Sessions.Select(PresenceProtocol.ProjectStoredSession).ToList()
+        }, Protocol.Json);
+        command.Parameters.AddWithValue("$snapshot", legacy);
+        command.ExecuteNonQuery();
+        command.Parameters.Clear();
+        command.CommandText = """
+            INSERT INTO SessionMetadataV1(MachineId, SnapshotHash, Sessions) VALUES ($id,$hash,$sessions)
+            ON CONFLICT(MachineId) DO UPDATE SET SnapshotHash=excluded.SnapshotHash, Sessions=excluded.Sessions
+            """;
+        command.Parameters.AddWithValue("$id", machine.MachineId.ToString());
+        command.Parameters.AddWithValue("$hash", SnapshotHash(legacy));
+        command.Parameters.AddWithValue("$sessions", JsonSerializer.Serialize(machine.Sessions, Protocol.Json));
         command.ExecuteNonQuery();
     }
+
+    private static string SnapshotHash(string json) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
 
     public void Dispose() => _gate.Dispose();
 }

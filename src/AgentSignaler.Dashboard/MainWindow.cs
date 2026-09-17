@@ -91,7 +91,7 @@ internal sealed partial class MainWindow : Window
     private string? _effectiveAzureCliPath;
     private Guid? _detailsId;
     private Action<MachineView?>? _updateDetails;
-    private TranscriptDetailsView? _transcriptView;
+    private CopilotsDetailsView? _copilotsView;
     private bool _transcriptConnectionChanged;
     private static string AppVersion =>
         typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
@@ -588,8 +588,6 @@ internal sealed partial class MainWindow : Window
         var detailsRevision = _runtime.GetMachine(id).Revision;
         var current = Text("");
         current.IsTextSelectionEnabled = true;
-        var sessions = Text("");
-        sessions.IsTextSelectionEnabled = true;
         var validation = Text("");
         var picker = new ComboBox
         {
@@ -650,8 +648,6 @@ internal sealed partial class MainWindow : Window
         content.Children.Add(name);
         content.Children.Add(note);
         content.Children.Add(current);
-        content.Children.Add(Text("Sessions", 18));
-        content.Children.Add(sessions);
         content.Children.Add(validation);
         var connectionStart = content.Children.Count;
         content.Children.Add(Text("Windows App connection", 18));
@@ -696,16 +692,15 @@ internal sealed partial class MainWindow : Window
             Header = "Settings", IsClosable = false,
             Content = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }
         };
-        var transcriptView = _server is null ? null : new TranscriptDetailsView(_server.Transcripts, DispatcherQueue, id,
-            card.Machine.State == AgentState.Offline);
-        _transcriptView = transcriptView;
-        var transcriptTab = new TabViewItem
+        var copilotsView = new CopilotsDetailsView(_server?.Transcripts, DispatcherQueue, card.Machine);
+        _copilotsView = copilotsView;
+        var copilotsTab = new TabViewItem
         {
-            Header = "Transcript", IsClosable = false,
-            Content = (object?)transcriptView?.Root ?? Text("The compatible receiver is unavailable. Restart Dashboard to retry.")
+            Header = "Copilots", IsClosable = false,
+            Content = copilotsView.Root
         };
         tabs.TabItems.Add(settingsTab);
-        tabs.TabItems.Add(transcriptTab);
+        tabs.TabItems.Add(copilotsTab);
         tabs.SelectedItem = settingsTab;
         var detailsLayout = new Grid { Height = Math.Clamp(_root.ActualHeight - 190, 320, 520), MinWidth = 280, RowSpacing = 8 };
         detailsLayout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -806,7 +801,7 @@ internal sealed partial class MainWindow : Window
             var settingsSelected = SettingsSelected();
             saveDetails.Visibility = removeMachine.Visibility = settingsSelected ? Visibility.Visible : Visibility.Collapsed;
             _updateConnectionControls?.Invoke();
-            if (transcriptView is not null) await transcriptView.SetVisibleAsync(!settingsSelected && machineExists);
+            await copilotsView.SetVisibleAsync(!settingsSelected && machineExists);
         };
         clearTranscript.Click += (_, _) =>
         {
@@ -888,11 +883,12 @@ internal sealed partial class MainWindow : Window
                 return;
             }
             _runtime.CancelWindowsApp(id);
-            if (transcriptView is not null) _ = transcriptView.SetVisibleAsync(false);
+            _ = copilotsView.SetVisibleAsync(false);
             if (catalogRefreshOwned) _runtime.CancelCatalog();
         };
         dialog.Opened += (_, _) =>
         {
+            _ = copilotsView.SetVisibleAsync(!SettingsSelected() && machineExists);
             if (!local && (connections.State(id).Mapping is null || connectionMessage is not null))
             {
                 picker.StartBringIntoView();
@@ -904,26 +900,22 @@ internal sealed partial class MainWindow : Window
         {
             if (machine is null && machineExists) _server?.Transcripts.ClearMachine(id, removed: true);
             machineExists = machine is not null;
-            transcriptView?.SetMachine(machine);
+            copilotsView.SetMachine(machine);
             _updateConnectionControls?.Invoke();
             if (machine is null)
             {
                 current.Text = "This machine was removed.";
-                sessions.Text = "";
                 return;
             }
             current.Text = $"Hostname: {machine.MachineName}\nReporter: {machine.Client} {machine.ClientVersion}\n" +
                 $"Session sources: {SessionSourcePresentation.Summary(machine.Sessions)}\n" +
+                $"Waiting Copilots: {SessionPresentation.Project(machine, DateTimeOffset.UtcNow).Count(session => session.IsConnected && session.State == AgentState.Waiting)}\n" +
                 $"Status: {MachineCard.StatusText(machine.State)}\nLatest event: {machine.LatestEvent?.ToString() ?? "No hook received"}\n" +
                 $"Latest event time: {machine.LatestEventUtc?.ToLocalTime().ToString("G") ?? "None"}\n" +
                 $"Server last contact: {machine.LastContactUtc.ToLocalTime():G}\n" +
                 $"Reporting: {(machine.PresenceMode == PresenceMode.Managed ? $"Managed, every {machine.HeartbeatIntervalSeconds / 60} minute(s)" : "Legacy, five-minute timeout")}\n" +
                 $"Offline: {(machine.State != AgentState.Offline ? "No" : machine.ExplicitOffline ? "Reported by client" : "Contact timeout")}\n" +
                 $"Machine ID: {machine.MachineId}";
-            sessions.Text = machine.Sessions.Count == 0 ? "No active sessions." :
-                string.Join("\n\n", machine.Sessions.Select(s =>
-                    $"{SessionSourcePresentation.Describe(s.Source)}\n{s.SessionId}\n{MachineCard.StatusText(StateReducer.Effective(s, DateTimeOffset.UtcNow))}" +
-                    $" · last observed {s.UpdatedAtUtc.ToLocalTime():G}"));
         };
         _updateDetails(card.Machine);
         saveDetails.Click += async (_, _) =>
@@ -984,6 +976,7 @@ internal sealed partial class MainWindow : Window
                     await RunConnectionAsync(WindowsAppOperation.Clear);
                 }
                 await showing;
+                await copilotsView.SetVisibleAsync(false);
                 result = requestedResult;
                 await connections.CancelAndWaitAsync(id);
                 if (catalogRefreshOwned && _catalog is not null) await _catalog.CancelAndWaitAsync();
@@ -1015,7 +1008,7 @@ internal sealed partial class MainWindow : Window
                 if (await confirm.ShowAsync() == ContentDialogResult.Primary && !_exiting && !_closeDialogForNavigation)
                 {
                     _server?.Transcripts.ClearMachine(id, removed: true);
-                    transcriptView?.Dispose();
+                    copilotsView.Dispose();
                     _mutationTask = RemoveRuntimeMachineAsync(id, _runtime.GetMachine(id).Revision);
                     await _mutationTask;
                     await RefreshAsync();
@@ -1028,8 +1021,8 @@ internal sealed partial class MainWindow : Window
         }
         finally
         {
-            transcriptView?.Dispose();
-            _transcriptView = null;
+            copilotsView.Dispose();
+            _copilotsView = null;
             await connections.CancelAndWaitAsync(id);
             if (catalogRefreshOwned && _catalog is not null) await _catalog.CancelAndWaitAsync();
             _detailsId = null;
@@ -1353,7 +1346,7 @@ internal sealed partial class MainWindow : Window
     {
         _exiting = true;
         _server?.SetTranscriptReadiness(false);
-        _transcriptView?.Dispose();
+        _copilotsView?.Dispose();
         var prerequisiteShutdown = CancelPrerequisiteChecksAsync();
         _activeDialog?.Hide();
         CancelTunnelOperations();
@@ -1419,6 +1412,11 @@ internal sealed class MachineCard
     private readonly TextBlock _activity = MainWindow.Text("", 16);
     private readonly TextBlock _mapping = MainWindow.Text("", 16);
     private readonly TextBlock _footer = MainWindow.Text("", 14);
+    private readonly Canvas _sessionIndicators = new()
+    {
+        Width = CompactSessionPresentation.RegionWidth, HorizontalAlignment = HorizontalAlignment.Center,
+        IsHitTestVisible = false, Visibility = Visibility.Collapsed
+    };
     public Button Button { get; }
     public FrameworkElement? HoverPreview { get; }
     public MachineView Machine { get; private set; }
@@ -1460,7 +1458,7 @@ internal sealed class MachineCard
             _hoverNote.Margin = new Thickness(12);
             var preview = new StackPanel();
             preview.Children.Add(_hoverCard.Button);
-            preview.Children.Add(_hoverNote);
+            preview.Children.Add(new ScrollViewer { Content = _hoverNote, MaxHeight = 200 });
             HoverPreview = preview;
         }
         Button.Click += (_, _) => activate();
@@ -1476,9 +1474,12 @@ internal sealed class MachineCard
         var content = new Grid { RowSpacing = 2 };
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         content.Children.Add(_name);
         Grid.SetRow(_icon, 1);
         content.Children.Add(_icon);
+        Grid.SetRow(_sessionIndicators, 2);
+        content.Children.Add(_sessionIndicators);
         return content;
     }
 
@@ -1526,6 +1527,25 @@ internal sealed class MachineCard
         _mapping.Text = local ? "Return to local - minimize Windows App sessions" :
             DevBoxMappingPresentation.TileText(machine.WindowsAppConnection);
         var now = DateTimeOffset.UtcNow;
+        var sessionLayout = CompactSessionPresentation.Project(machine, now);
+        if (_miniature)
+        {
+            _sessionIndicators.Children.Clear();
+            _sessionIndicators.Height = sessionLayout.IndicatorHeight;
+            _sessionIndicators.Visibility = sessionLayout.Indicators.IsEmpty ? Visibility.Collapsed : Visibility.Visible;
+            Button.Height = sessionLayout.TileHeight;
+            foreach (var indicator in sessionLayout.Indicators)
+            {
+                var square = new Border
+                {
+                    Width = CompactSessionPresentation.SquareSize, Height = CompactSessionPresentation.SquareSize,
+                    Background = new SolidColorBrush(OpaqueColor(MachineCardAppearance.For(indicator.State).Icon))
+                };
+                Canvas.SetLeft(square, indicator.Left);
+                Canvas.SetTop(square, indicator.Top);
+                _sessionIndicators.Children.Add(square);
+            }
+        }
         _activity.Text = MachineCardPresentation.Activity(machine, now);
         _footer.Text = MachineCardPresentation.Footer(machine, now);
         var online = machine.State != AgentState.Offline;
@@ -1533,7 +1553,10 @@ internal sealed class MachineCard
         ApplyStateAppearance(machine.State);
         AutomationProperties.SetName(_connectionIcon, connectionStatus);
         ToolTipService.SetToolTip(_connectionIcon, connectionStatus);
-        var summary = online ? $"{connectionStatus}, {StatusText(machine.State)}" : connectionStatus;
+        var summary = (online ? $"{connectionStatus}, {StatusText(machine.State)}" : connectionStatus) +
+            $", {sessionLayout.Indicators.Count(indicator => indicator.State == AgentState.Waiting)} Copilots waiting for input";
+        var sessionSummary = string.Join("\n", sessionLayout.Indicators.Select(indicator => indicator.Label));
+        AutomationProperties.SetHelpText(Button, sessionSummary);
         AutomationProperties.SetName(Button, local ? $"local, {summary}. Minimize Windows App sessions only."
             : _miniature ? $"{WindowsAppConnectionController.LaunchLabel(name)}, {summary}"
             : $"{name}, {summary}. {_activity.Text}. {_mapping.Text}. {_footer.Text}. Open machine details.");
@@ -1541,7 +1564,8 @@ internal sealed class MachineCard
         {
             _hoverCard.Update(machine);
             _hoverNote.Text = string.IsNullOrWhiteSpace(machine.Note) ? "" : $"Note: {machine.Note}";
-            _hoverNote.Visibility = string.IsNullOrWhiteSpace(machine.Note) ? Visibility.Collapsed : Visibility.Visible;
+            if (sessionSummary.Length > 0) _hoverNote.Text += $"\nCopilots:\n{sessionSummary}";
+            _hoverNote.Visibility = _hoverNote.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         }
         else
         {

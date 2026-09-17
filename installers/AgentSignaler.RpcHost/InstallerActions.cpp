@@ -12,6 +12,25 @@ using namespace rpcinstaller;
 using Microsoft::WRL::ComPtr;
 namespace {
 std::wstring Encode(const Plan& p);
+thread_local const wchar_t* servicingStage = L"initialize-com";
+struct NativeFailure : std::runtime_error {
+    HRESULT code;
+    explicit NativeFailure(HRESULT value) : std::runtime_error("windows-api"), code(value) {}
+};
+std::wstring FailureMessage(const std::exception& error) {
+    if (strcmp(error.what(), "in-use") == 0)
+        return L"Agent Signaler RpcHost is in use. Explicitly stop the exact installed host in every Windows session and retry; servicing never shuts it down.";
+    auto message = std::wstring(L"Agent Signaler RpcHost servicing failed at ") + servicingStage;
+    if (auto native = dynamic_cast<const NativeFailure*>(&error)) {
+        wchar_t code[16]{};
+        swprintf_s(code, L" (0x%08lX)", static_cast<unsigned long>(native->code));
+        message += code;
+    }
+    message += L". No firewall success is assumed. See the verbose MSI log.";
+    if (wcscmp(servicingStage, L"port-configuration") == 0)
+        message += L" Supply RECEIVERPORT=1024..65535 when default settings are malformed; it must differ from RpcPort.";
+    return message;
+}
 struct Handle {
     HANDLE value = INVALID_HANDLE_VALUE;
     explicit Handle(HANDLE h) : value(h) {}
@@ -29,7 +48,7 @@ struct Bstr {
     ~Bstr() { SysFreeString(value); }
     std::wstring Text() const { return value ? std::wstring(value, SysStringLen(value)) : L""; }
 };
-void Hr(HRESULT value) { Require(SUCCEEDED(value)); }
+void Hr(HRESULT value) { if (FAILED(value)) throw NativeFailure(value); }
 std::wstring Get(MSIHANDLE install, const wchar_t* name) {
     DWORD length = 0;
     wchar_t empty = 0;
@@ -201,6 +220,7 @@ class Firewall {
         return found;
     }
     int Verify(const Plan& plan, INetFwRule* rule) {
+        servicingStage = L"firewall-rule-verification";
         Bstr name, group, description, application, service, localPorts, remotePorts, localAddresses, remoteAddresses, interfaces;
         Hr(rule->get_Name(&name.value)); Hr(rule->get_Grouping(&group.value));
         Hr(rule->get_Description(&description.value)); Hr(rule->get_ApplicationName(&application.value));
@@ -232,6 +252,7 @@ class Firewall {
     }
 public:
     Firewall() {
+        servicingStage = L"firewall-connect";
         ComPtr<INetFwPolicy2> policy;
         Hr(CoCreateInstance(__uuidof(NetFwPolicy2), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&policy)));
         Hr(policy->get_Rules(&rules));
@@ -240,6 +261,7 @@ public:
         return L"Software\\AgentSignaler\\Installer\\RpcHostTransactions\\" + plan.sid + L"\\" + plan.transaction;
     }
     void BeginTransaction(const Plan& plan) {
+        servicingStage = L"firewall-transaction-create";
         Key key; DWORD disposition = 0;
         Require(RegCreateKeyExW(HKEY_LOCAL_MACHINE, JournalKey(plan).c_str(), 0, nullptr, 0,
             KEY_WRITE | KEY_WOW64_64KEY, nullptr, &key.value, &disposition) == ERROR_SUCCESS &&
@@ -254,6 +276,7 @@ public:
         Require(status == ERROR_SUCCESS);
     }
     bool HasTransaction(const Plan& plan) {
+        servicingStage = L"firewall-transaction-read";
         Key key;
         auto status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, JournalKey(plan).c_str(), 0, KEY_READ | KEY_WOW64_64KEY, &key.value);
         if (status == ERROR_FILE_NOT_FOUND) return false;
@@ -265,15 +288,18 @@ public:
     }
     void EndTransaction(const Plan& plan) {
         Require(HasTransaction(plan));
+        servicingStage = L"firewall-transaction-delete";
         Require(RegDeleteKeyExW(HKEY_LOCAL_MACHINE, JournalKey(plan).c_str(), KEY_WOW64_64KEY, 0) == ERROR_SUCCESS);
     }
     State Read(const Plan& plan) {
+        servicingStage = L"firewall-ownership-read";
         State state = ReadMetadata(plan);
         auto rule = Find(plan);
         if (rule) { Require(state.metadata && Verify(plan, rule.Get()) == state.port); state.rule = true; }
         return state;
     }
     State ReadForRollback(const Plan& plan) {
+        servicingStage = L"firewall-rollback-read";
         State state = ReadMetadata(plan);
         Require(!state.metadata || state.port == plan.port || (plan.before.metadata && state.port == plan.before.port));
         auto rule = Find(plan);
@@ -284,13 +310,17 @@ public:
         }
         return state;
     }
-    void AssertNotInUse(const Plan& plan) { ::AssertNotInUse(plan); }
+    void AssertNotInUse(const Plan& plan) {
+        servicingStage = L"installed-host-check";
+        ::AssertNotInUse(plan);
+    }
     void RemoveRule(const Plan& plan, int port) {
         auto rule = Find(plan); Require(rule && Verify(plan, rule.Get()) == port);
         Bstr name(plan.RuleName()); Hr(rules->Remove(name.value));
         Require(!Find(plan));
     }
     void AddRule(const Plan& plan, int port) {
+        servicingStage = L"firewall-rule-create";
         Require(!Find(plan));
         ComPtr<INetFwRule> rule;
         Hr(CoCreateInstance(__uuidof(NetFwRule), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&rule)));
@@ -303,10 +333,13 @@ public:
         Hr(rule->put_RemoteAddresses(any.value)); Hr(rule->put_InterfaceTypes(interfaces.value));
         Hr(rule->put_Profiles(NET_FW_PROFILE2_PRIVATE)); Hr(rule->put_Direction(NET_FW_RULE_DIR_IN));
         Hr(rule->put_Action(NET_FW_ACTION_ALLOW)); Hr(rule->put_EdgeTraversal(VARIANT_FALSE));
-        Hr(rule->put_Enabled(VARIANT_TRUE)); Hr(rules->Add(rule.Get()));
+        Hr(rule->put_Enabled(VARIANT_TRUE));
+        servicingStage = L"firewall-rule-add";
+        Hr(rules->Add(rule.Get()));
         auto actual = Find(plan); Require(actual && Verify(plan, actual.Get()) == port);
     }
     void WriteMetadata(const Plan& plan, const State& state) {
+        servicingStage = L"firewall-ownership-write";
         auto path = std::wstring(MetadataRoot) + plan.sid;
         if (!state.metadata) {
             auto existing = ReadMetadata(plan);
@@ -348,6 +381,7 @@ Plan Decode(const std::wstring& text) {
     ValidatePaths(plan); return plan;
 }
 template<class Action> UINT Guard(MSIHANDLE install, Action action) {
+    servicingStage = L"initialize-com";
     HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         Require(SUCCEEDED(com) || com == RPC_E_CHANGED_MODE);
@@ -356,24 +390,28 @@ template<class Action> UINT Guard(MSIHANDLE install, Action action) {
         return ERROR_SUCCESS;
     } catch (const std::exception& error) {
         MSIHANDLE record = MsiCreateRecord(1);
-        const wchar_t* message = strcmp(error.what(), "in-use") == 0
-            ? L"Agent Signaler RpcHost is in use. Explicitly stop the exact installed host in every Windows session and retry; servicing never shuts it down."
-            : L"Agent Signaler RpcHost servicing failed. Use the original installing user, approve MSI elevation, stop the installed host, and verify unmodified owned firewall metadata. Supply RECEIVERPORT=1024..65535 when default settings are malformed; it must differ from RpcPort. No firewall success is assumed.";
-        MsiRecordSetStringW(record, 0, message);
+        auto message = FailureMessage(error);
+        MsiRecordSetStringW(record, 0, message.c_str());
         MsiProcessMessage(install, INSTALLMESSAGE_ERROR, record); MsiCloseHandle(record);
         if (SUCCEEDED(com)) CoUninitialize();
         return ERROR_INSTALL_FAILURE;
     }
 }
 void Deferred(MSIHANDLE install, int mode) {
+    servicingStage = L"deferred-plan-validation";
     Plan plan = Decode(Get(install, L"CustomActionData"));
+    servicingStage = L"firewall-token-query";
     BOOL member = FALSE; SID_IDENTIFIER_AUTHORITY authority = SECURITY_NT_AUTHORITY; PSID administrators = nullptr;
     Require(AllocateAndInitializeSid(&authority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
         0, 0, 0, 0, 0, 0, &administrators));
     BOOL checked = CheckTokenMembership(nullptr, administrators, &member);
     FreeSid(administrators);
-    AuthorizeFirewall(checked && member, Get(install, L"UserSID") == plan.sid);
+    servicingStage = L"installer-user-query";
+    bool intendedUserMatches = Get(install, L"UserSID") == plan.sid;
+    servicingStage = checked && member ? L"original-user-authorization" : L"firewall-elevation";
+    AuthorizeFirewall(checked && member, intendedUserMatches);
     // Serialize this product/user's machine firewall operation across sessions.
+    servicingStage = L"firewall-transaction-lock";
     auto name = L"Global\\AgentSignaler.RpcHost.Msi." + plan.sid;
     Handle mutex(CreateMutexW(nullptr, FALSE, name.c_str()));
     Require(mutex.value != nullptr);
@@ -390,6 +428,7 @@ void Deferred(MSIHANDLE install, int mode) {
 }
 extern "C" __declspec(dllexport) UINT __stdcall CaptureUser(MSIHANDLE install) {
     return Guard(install, [&] {
+        servicingStage = L"capture-original-user";
         Require(Get(install, L"ALLUSERS").empty());
         std::wstring sid = Get(install, L"UserSID");
         Require(!sid.empty());
@@ -411,6 +450,7 @@ extern "C" __declspec(dllexport) UINT __stdcall CaptureUser(MSIHANDLE install) {
             bool settingsValid = true;
             try { settings = ReadSettings(plan); }
             catch (const std::runtime_error&) { settingsValid = false; }
+            servicingStage = L"port-configuration";
             auto ports = SelectPorts(explicitPort, metadata, settings, settingsValid);
             plan.port = ports.first; plan.rpcPort = ports.second;
             plan.Validate();
@@ -418,6 +458,7 @@ extern "C" __declspec(dllexport) UINT __stdcall CaptureUser(MSIHANDLE install) {
             Set(install, L"RPCPORT", std::to_wstring(plan.rpcPort));
             Set(install, L"RPCPREPARED", L"1");
         }
+        servicingStage = L"validate-captured-user";
         Require(Get(install, L"RPCUSER") == sid && Same(Get(install, L"RPCDIRECTORY"), plan.directory) &&
             Same(Get(install, L"RPCDATA"), plan.dataDirectory));
         plan.port = Port(Get(install, L"RECEIVERPORT")); plan.rpcPort = Port(Get(install, L"RPCPORT"));
@@ -437,6 +478,7 @@ extern "C" __declspec(dllexport) UINT __stdcall CaptureUser(MSIHANDLE install) {
 }
 extern "C" __declspec(dllexport) UINT __stdcall PrepareServicing(MSIHANDLE install) {
     return Guard(install, [&] {
+        servicingStage = L"prepare-servicing";
         Plan plan;
         plan.sid = Get(install, L"RPCUSER"); plan.directory = Get(install, L"RPCDIRECTORY");
         plan.dataDirectory = Get(install, L"RPCDATA"); plan.port = Port(Get(install, L"RECEIVERPORT"));

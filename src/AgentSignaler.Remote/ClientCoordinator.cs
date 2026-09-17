@@ -154,6 +154,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                 return Response(false, "IDE integration changed or is no longer verified. Repeat hook verification.");
             var now = _clock.GetUtcNow();
             var local = _sessions.UpdateReport(kind, hook with { Timestamp = hook.Timestamp > now ? now : hook.Timestamp }, now);
+            if (local.CapacityExceeded) return Response(false, "Session capacity reached. End an active session before retrying.");
             if (!local.Accepted) return Response(true);
             _hooks.Enqueue(new StatusRequest
             {
@@ -200,9 +201,9 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         var local = kind is PresenceKind.Started or PresenceKind.Heartbeat
             ? _sessions.UpdateReport(null, null, _clock.GetUtcNow()) : null;
         var verifiedScopes = new Dictionary<string, bool>(StringComparer.Ordinal);
-        return new PresenceReport
+        return PresenceProtocol.Project(new PresenceReport
         {
-            ProtocolVersion = _configuration.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version,
+            ProtocolVersion = PresenceProtocol.EnrichedVersion,
             Client = _configuration.Version >= 4 ? "agent-signaler" : "copilot-cli",
             Kind = kind, EventId = hook?.EventId ?? Guid.NewGuid(), MachineId = _configuration.MachineId,
             MachineName = _configuration.MachineName,
@@ -210,10 +211,9 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             Generation = _generation, Sequence = checked(++_sequence),
             ReportedAtUtc = hook?.ReportedAtUtc ?? local?.ReportedAtUtc ?? _clock.GetUtcNow(),
             HeartbeatIntervalSeconds = local is null ? null : _configuration.HeartbeatIntervalSeconds,
-            Sessions = local?.Sessions.Where(s => IsSessionAllowed(s.Source, verifiedScopes))
-                .Select(s => _configuration.Version >= 4 ? s : s with { Source = null }).ToList(),
+            Sessions = local?.Sessions.Where(s => IsSessionAllowed(s.Source, verifiedScopes)).ToList(),
             Hook = hook
-        };
+        }, PresenceProtocol.EnrichedVersion);
     }
 
     private bool IsSessionAllowed(SourceDescriptor? source, Dictionary<string, bool> verifiedScopes)
@@ -399,7 +399,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         }
         catch (InvalidDataException)
         {
-            lock (_sync) _deliveryError = $"Dashboard is incompatible. Upgrade Dashboard to presence protocol v{(_configuration.Version >= 4 ? 3 : 2)}.";
+            lock (_sync) _deliveryError = "Dashboard is incompatible. Upgrade the Dashboard receiver first to presence protocol v4. Source identity cannot be removed for compatibility.";
             return false;
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException) { return false; }

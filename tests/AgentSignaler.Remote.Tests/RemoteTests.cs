@@ -167,7 +167,10 @@ public sealed class RemoteTests : IDisposable
                 new SessionStore(path, log).Update(AgentEvent.PreToolUse, new HookData($"{current}-{i}", now, false), now))));
         }
         var sessions = new SessionStore(path, log).Update(null, null, now);
-        Assert.Equal(Protocol.MaxSessions, sessions.Count);
+        Assert.InRange(sessions.Count, 1, Protocol.MaxSessions);
+        Assert.True(PresenceProtocol.FitsSnapshot(sessions));
+        Assert.False(PresenceProtocol.FitsSnapshot(sessions.Append(sessions[0] with { SessionId = "overflow" })));
+        Assert.Contains(sessions, s => s.SessionId == "0-0");
         Assert.Equal(sessions.Count, sessions.Select(s => s.SessionId).Distinct().Count());
     }
 
@@ -208,17 +211,18 @@ public sealed class RemoteTests : IDisposable
     }
 
     [Fact]
-    public void EndedSessionsRetainResultsThenRetireAndRejectOlderHooks()
+    public void EndedSessionsRetainMetadataWithoutAggregatingAndRejectOlderHooks()
     {
         var store = new SessionStore(Path.Combine(root, "sessions.json"), new DiagnosticLog(Path.Combine(root, "relay.log")));
         store.UpdateReport(AgentEvent.AgentStop, new HookData("a", now, false), now);
         var ended = store.UpdateReport(AgentEvent.SessionEnd, new HookData("a", now.AddSeconds(1), false), now.AddSeconds(1));
-        Assert.Equal(AgentState.Succeeded, StateReducer.Aggregate(ended.Sessions, ended.ReportedAtUtc));
+        Assert.Equal(AgentState.Idle, StateReducer.Aggregate(ended.Sessions, ended.ReportedAtUtc));
+        Assert.Equal(AgentEvent.SessionEnd, Assert.Single(ended.Sessions).LatestEvent);
         var expired = store.UpdateReport(null, null, now.AddSeconds(61));
-        Assert.Empty(expired.Sessions);
+        Assert.Equal(ended.Sessions, expired.Sessions);
         var late = store.UpdateReport(AgentEvent.PreToolUse, new HookData("a", now.AddSeconds(-1), false), now.AddSeconds(62));
         Assert.False(late.Accepted);
-        Assert.Empty(late.Sessions);
+        Assert.Equal(ended.Sessions, late.Sessions);
     }
 
     [Fact]

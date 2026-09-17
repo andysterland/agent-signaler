@@ -75,8 +75,8 @@ public class StateTests
 
     [Theory]
     [InlineData(AgentEvent.AgentStop, AgentState.Waiting)]
-    [InlineData(AgentEvent.ErrorOccurred, AgentState.Failed)]
-    public void UserInputWaitTakesPriorityOverSuccessButNotFailure(AgentEvent result, AgentState expected)
+    [InlineData(AgentEvent.ErrorOccurred, AgentState.Waiting)]
+    public void UserInputWaitTakesPriorityOverResults(AgentEvent result, AgentState expected)
     {
         var previous = StateReducer.Apply(null, "session", result, Now, Now);
         var pending = StateReducer.Apply(previous, "session", AgentEvent.PreToolUse, Now.AddSeconds(1),
@@ -142,11 +142,37 @@ public class StateTests
             StateReducer.Apply(null, "waiting", AgentEvent.PermissionRequest, Now, Now),
             StateReducer.Apply(null, "failed", AgentEvent.ErrorOccurred, Now, Now)
         };
-        Assert.Equal(AgentState.Failed, StateReducer.Aggregate(sessions, Now));
+        Assert.Equal(AgentState.Waiting, StateReducer.Aggregate(sessions, Now));
         Assert.Equal(AgentState.Waiting, StateReducer.Aggregate(sessions.Take(3), Now));
         Assert.Equal(AgentState.Executing, StateReducer.Aggregate(sessions.Take(2), Now));
         Assert.Equal(AgentState.Succeeded, StateReducer.Aggregate(sessions.Take(1), Now));
         Assert.Equal(AgentState.Idle, StateReducer.Aggregate([], Now));
+    }
+
+    [Theory]
+    [InlineData(AgentEvent.AgentStop)]
+    [InlineData(AgentEvent.ErrorOccurred)]
+    public void PermissionWaitOverridesResultWithoutRenewingIt(AgentEvent result)
+    {
+        var previous = StateReducer.Apply(null, "a", result, Now, Now);
+        var pending = StateReducer.Apply(previous, "a", AgentEvent.PermissionRequest, Now.AddSeconds(1), Now.AddSeconds(1));
+        Assert.Equal(AgentState.Waiting, StateReducer.Effective(pending, Now.AddSeconds(2)));
+        Assert.Equal(previous.ResultUntilUtc, pending.ResultUntilUtc);
+        Assert.Equal(AgentState.Waiting, StateReducer.Effective(pending, Now.AddDays(1)));
+    }
+
+    [Fact]
+    public void IndependentWaitsOnlyResumeTheirOwnerAndEndedResultsDoNotAggregate()
+    {
+        var a = StateReducer.Apply(null, "a", AgentEvent.PreToolUse, Now, Now, toolRequiresUserInput: true);
+        var b = StateReducer.Apply(null, "b", AgentEvent.PermissionRequest, Now, Now);
+        b = StateReducer.Apply(b, "b", AgentEvent.UserPromptSubmitted, Now.AddSeconds(1), Now.AddSeconds(1));
+        Assert.Equal(AgentState.Waiting, StateReducer.Aggregate([a, b], Now.AddSeconds(1)));
+        a = StateReducer.Apply(a, "a", AgentEvent.PostToolUse, Now.AddSeconds(2), Now.AddSeconds(2), toolRequiresUserInput: true);
+        Assert.Equal(AgentState.Executing, StateReducer.Aggregate([a, b], Now.AddSeconds(2)));
+        var ended = StateReducer.Apply(null, "ended", AgentEvent.ErrorOccurred, Now, Now);
+        ended = StateReducer.Apply(ended, "ended", AgentEvent.SessionEnd, Now.AddSeconds(1), Now.AddSeconds(1));
+        Assert.Equal(AgentState.Idle, StateReducer.Aggregate([ended], Now.AddSeconds(2)));
     }
 
     [Fact]

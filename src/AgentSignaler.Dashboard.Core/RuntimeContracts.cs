@@ -22,7 +22,22 @@ public sealed record RuntimeStatus(RuntimeLifecycle Lifecycle, string Stage, boo
     bool StorageAvailable, bool ReceiverAvailable, bool SharingAvailable);
 public sealed record RuntimeShutdownResult(bool Clean);
 public sealed record RuntimePage<T>(IReadOnlyList<T> Items, int Total, int? NextOffset);
-public sealed record RuntimeSession(SessionSnapshot Snapshot, AgentState State);
+public sealed record RuntimeSession(SessionSnapshot Snapshot, AgentState State)
+{
+    public Guid MachineId { get; init; }
+    public SourceDescriptor Source => Snapshot.Source ?? SourceDescriptor.LegacyCli;
+    public string SessionKey => SourceIdentity.SessionKey(Source, Snapshot.SessionId);
+    public string SessionId => Snapshot.SessionId;
+    public string SourceLabel => SessionPresentation.SourceLabel(Source.Kind);
+    public AgentEvent? LatestEvent => Snapshot.LatestEvent;
+    public DateTimeOffset? LatestEventAtUtc => Snapshot.LatestEventAtUtc;
+    // The reducer's Idle snapshots are session-end tombstones, including legacy ones without event metadata.
+    public bool IsEnded => Snapshot.LatestEvent == AgentEvent.SessionEnd || Snapshot.UnderlyingState == AgentState.Idle;
+    public bool IsConnected { get; init; }
+    public bool IsOffline { get; init; }
+    public string LifecycleLabel => IsEnded ? "Ended (retained status)" :
+        IsOffline ? "Offline (last known)" : "Connected (observed)";
+}
 public sealed record RuntimeMachine(MachineView Machine, IReadOnlyList<RuntimeSession> Sessions);
 public sealed record RuntimeNote(string Text, int TotalLength, int? NextOffset);
 internal sealed record RuntimeSettings(DashboardSettings Saved, DashboardSettings Effective,

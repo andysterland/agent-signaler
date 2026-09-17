@@ -20,6 +20,8 @@
     <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardPresentation.cs" Link="MachineCardPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\SessionSourcePresentation.cs" Link="SessionSourcePresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\TranscriptViewController.cs" Link="TranscriptViewController.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\CopilotsController.cs" Link="CopilotsController.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\CompactSessionPresentation.cs" Link="CompactSessionPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\NativeWindow.cs" Link="NativeWindow.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppConnectionActions.cs" Link="WindowsAppConnectionActions.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorSettings.cs" Link="ConfiguratorSettings.cs" />

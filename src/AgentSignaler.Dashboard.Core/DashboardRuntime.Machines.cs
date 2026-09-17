@@ -42,47 +42,50 @@ public sealed partial class DashboardRuntime
         {
             var observed = await (options.ReadMachinesAsync?.Invoke(store, linked.Token) ??
                 store.GetMachinesAsync(linked.Token)).ConfigureAwait(false);
-            var now = options.TimeProvider.GetUtcNow();
-            var items = observed.OrderBy(m => m.MachineId).Select(machine => new RuntimeMachine(
-                machine with { Sessions = Array.AsReadOnly(machine.Sessions.ToArray()) },
-                Array.AsReadOnly(machine.Sessions.OrderBy(s => s.Source?.ToString(), StringComparer.Ordinal)
-                    .ThenBy(s => s.SessionId, StringComparer.Ordinal)
-                    .Select(s => new RuntimeSession(s, StateReducer.Effective(s, now))).ToArray()))).ToArray();
-            var changes = new List<RuntimeInvalidation>();
-            lock (machineSync)
-            {
-                foreach (var item in items)
-                {
-                    var before = machines.State.FirstOrDefault(m => m.Machine.MachineId == item.Machine.MachineId);
-                    if (before is null || !SameMachine(before, item))
-                    {
-                        var revision = machineRevisions[item.Machine.MachineId] = checked(++nextMachineRevision);
-                        changes.Add(new(HostInstanceId, "machines", revision, item.Machine.MachineId));
-                    }
-                }
-                foreach (var removed in machineRevisions.Keys.Except(items.Select(m => m.Machine.MachineId)).ToArray())
-                {
-                    machineRevisions.Remove(removed);
-                    changes.Add(new(HostInstanceId, "machines", checked(++nextMachineRevision), removed));
-                }
-                if (changes.Count > 0 || machines.IsStale)
-                {
-                    machines = new(HostInstanceId, "machines", checked(machines.Revision + 1), Array.AsReadOnly(items));
-                    changes.Add(new(HostInstanceId, "machines", machines.Revision));
-                }
-            }
-            foreach (var item in items)
-            {
-                connections?.Observe(item.Machine.MachineId, item.Machine.WindowsAppConnection);
-                UpdateWindowsState(item.Machine.MachineId);
-            }
-            connections?.ForgetExcept(items.Select(item => item.Machine.MachineId).ToHashSet());
-            lock (windowsSync)
-                foreach (var removed in windowsDomains.Keys.Except(items.Select(m => m.Machine.MachineId)).ToArray())
-                    windowsDomains.Remove(removed);
-            foreach (var change in changes) Publish(change);
+            PublishMachines(observed);
         }
         finally { machineRefresh.Release(); }
+    }
+
+    internal void PublishMachines(IReadOnlyList<MachineView> observed)
+    {
+        var now = options.TimeProvider.GetUtcNow();
+        var items = observed.OrderBy(m => m.MachineId).Select(machine => new RuntimeMachine(
+            machine with { Sessions = Array.AsReadOnly(machine.Sessions.ToArray()) },
+            SessionPresentation.Project(machine, now))).ToArray();
+        var changes = new List<RuntimeInvalidation>();
+        lock (machineSync)
+        {
+            foreach (var item in items)
+            {
+                var before = machines.State.FirstOrDefault(m => m.Machine.MachineId == item.Machine.MachineId);
+                if (before is null || !SameMachine(before, item))
+                {
+                    var revision = machineRevisions[item.Machine.MachineId] = checked(++nextMachineRevision);
+                    changes.Add(new(HostInstanceId, "machines", revision, item.Machine.MachineId));
+                }
+            }
+            foreach (var removed in machineRevisions.Keys.Except(items.Select(m => m.Machine.MachineId)).ToArray())
+            {
+                machineRevisions.Remove(removed);
+                changes.Add(new(HostInstanceId, "machines", checked(++nextMachineRevision), removed));
+            }
+            if (changes.Count > 0 || machines.IsStale)
+            {
+                machines = new(HostInstanceId, "machines", checked(machines.Revision + 1), Array.AsReadOnly(items));
+                changes.Add(new(HostInstanceId, "machines", machines.Revision));
+            }
+        }
+        foreach (var item in items)
+        {
+            connections?.Observe(item.Machine.MachineId, item.Machine.WindowsAppConnection);
+            UpdateWindowsState(item.Machine.MachineId);
+        }
+        connections?.ForgetExcept(items.Select(item => item.Machine.MachineId).ToHashSet());
+        lock (windowsSync)
+            foreach (var removed in windowsDomains.Keys.Except(items.Select(m => m.Machine.MachineId)).ToArray())
+                windowsDomains.Remove(removed);
+        foreach (var change in changes) Publish(change);
     }
 
     private static bool SameMachine(RuntimeMachine left, RuntimeMachine right) =>

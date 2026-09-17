@@ -7,10 +7,12 @@ public sealed class TranscriptDetailsSourceTests
     {
         var source = ReadDashboard("MainWindow.cs");
         Assert.Contains("Header = \"Settings\", IsClosable = false", source);
-        Assert.Contains("Header = \"Transcript\", IsClosable = false", source);
+        Assert.Contains("Header = \"Copilots\", IsClosable = false", source);
+        Assert.DoesNotContain("Header = \"Transcript\", IsClosable = false", source);
+        Assert.DoesNotContain("content.Children.Add(sessions);", source);
         Assert.Contains("tabs.SelectedItem = settingsTab;", source);
         Assert.Contains("Content = detailsLayout,", source);
-        foreach (var control in new[] { "name", "note", "current", "sessions", "picker", "mappingSummary",
+        foreach (var control in new[] { "name", "note", "current", "picker", "mappingSummary",
                      "refreshCatalog", "catalogStatus", "connectionStatus", "refreshed", "connectionUri", "copyConnectionUri" })
             Assert.Contains($"content.Children.Add({control});", source);
         Assert.Contains("saveDetails.Visibility = removeMachine.Visibility = settingsSelected ? Visibility.Visible : Visibility.Collapsed;", source);
@@ -61,6 +63,27 @@ public sealed class TranscriptDetailsSourceTests
         Assert.DoesNotContain("HttpClient", source);
         Assert.DoesNotContain("File.Read", source);
         Assert.DoesNotContain("Content = _entries", source);
+    }
+
+    [Fact]
+    public void CopilotsPreservesKeyedVirtualizedRowsAndScopesDrillInWithoutLoadingBodies()
+    {
+        var source = ReadDashboard("CopilotsDetailsView.cs");
+        Assert.Contains("private readonly ListView _list", source);
+        Assert.Contains("ObservableCollection<Row>", source);
+        Assert.Contains("_rows.Move(index, i)", source);
+        Assert.Contains("row.Value.Key == state.SelectedKey", source);
+        Assert.Contains("Content=\"View transcript\"", source);
+        Assert.Contains("Content = \"Back to Copilots\"", source);
+        Assert.Contains("_controller.Select(current.Key)", source);
+        Assert.Contains("_transcript?.Dispose()", source);
+        Assert.Contains("TranscriptSelection(current.MachineId, current.Source, current.SessionId, Guid.Empty)", source);
+        Assert.DoesNotContain("Content = _list,", source);
+        Assert.DoesNotContain("ReadLatestEventsAsync", ReadDashboard("CopilotsController.cs"));
+        Assert.DoesNotContain("ReadEventsAsync", ReadDashboard("CopilotsController.cs"));
+        var viewer = ReadDashboard("TranscriptDetailsView.cs");
+        Assert.Contains("_controller.ShowAsync(_selection, _offline)", viewer);
+        Assert.Contains("Header = \"Retained stream for this Copilot\"", viewer);
     }
 
     [Fact]

@@ -80,7 +80,7 @@ public sealed class DashboardServer : IAsyncDisposable
                 onConfiguratorTestConnection?.Invoke();
             return Results.Json(new HealthResponse(Protocol.Version, "ok"), Protocol.Json);
         });
-        foreach (var version in new[] { PresenceProtocol.Version, PresenceProtocol.SourceVersion })
+        foreach (var version in new[] { PresenceProtocol.Version, PresenceProtocol.SourceVersion, PresenceProtocol.EnrichedVersion })
         {
         _application.MapGet($"/api/v{version}/health", (HttpContext context, CancellationToken cancellationToken) =>
         {

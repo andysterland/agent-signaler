@@ -10,6 +10,58 @@ For local testing without a second computer, follow
 [the single-machine manual test plan](MANUAL-TEST-PLAN.md). Record its results
 separately; loopback tests do not establish LAN/VPN or remote firewall behavior.
 
+## Multi-Copilot session release gates
+
+Implementation uses the existing sole current-user Client and source/session
+identity. The following manual gates are **Not run**, not claims established by
+offline tests. Use MC01-MC09 in `MANUAL-TEST-PLAN.md`:
+
+- Interleave two CLI conversations in one scope with Visual Studio and VS Code;
+  waiting wins over other sessions' resumes, success and failure. Leave a question
+  quiet beyond the heartbeat deadline while Client remains online.
+- Verify session-specific accepted event/timestamp labels and unknown legacy
+  metadata, with no prompt/response content in status persistence or RPC v1.
+- Verify source/session/stream transcript drill-in, retained-ended access, stable
+  list selection, Back, tab hiding and immediate text invalidation.
+- Inspect 0/1/10/11/64 compact indicators at supported DPI and small work areas;
+  all 4 x 4 logical-pixel squares remain visible through wrapping/scrolling.
+- Verify receiver-first matching-binary deployment and the documented stopped
+  backup/restore rollback procedure in a disposable environment.
+
+Network/listener, actual host, interactive WinUI, tunnel and installed servicing
+coverage is deliberately excluded from the current offline-only validation.
+
+The focused offline UI/runtime validation includes:
+
+- `SessionPresentationTests`: identity/order, accepted event timestamps, legacy
+  unknown metadata, offline/ended indicators, and session-only revision changes.
+- `RpcSessionProjectionTests` and `RpcProtocolTests`: direct in-process RPC
+  execution, strict existing DTO allowlist, waiting and stale pagination.
+- `CopilotsControllerTests`, `CompactSessionPresentationTests`,
+  `TranscriptViewControllerTests`, `TranscriptDetailsSourceTests`,
+  `MachineCardPresentationTests`, and `MachineCardAppearanceTests`: metadata-only
+  rows, retained streams, cancellation/invalidation and complete indicator layout.
+
+Run only these inspected offline selectors rather than entire runtime/RPC or
+integration suites that initialize real listeners. Native rendering and
+production host capture remain separate release gates even when these pass.
+
+### Offline implementation verification (September 17, 2026)
+
+- Release/x64 solution and Visual Studio builds passed. Dashboard XBF and PRI
+  generation passed. The existing `PrerequisiteSettingsTests` xUnit2013 analyzer
+  warning remains; no compiler errors were reported.
+- Service: 374 selected tests passed; Remote: 45 selected tests passed.
+- Dashboard.Core: 6 session projection/revision tests passed.
+- RpcHost: 43 in-process protocol/projection tests passed.
+- Integration: 111 selected Copilots, transcript-controller and compact-card
+  tests passed, including unrelated-stream/partial-expiry selection regressions.
+- No network listeners, external-service tests, live tunnel tests, application
+  launches or installer executions were run for this validation. Full suites
+  containing those behaviors were intentionally not selected.
+- Legacy Idle tombstones and enriched session-end observations are excluded
+  from connected indicators. No silence-based session expiry was introduced.
+
 ## RpcHost release acceptance
 
 The [RPC protocol](rpc-host-protocol.md) separates required deterministic
@@ -87,8 +139,9 @@ execution acceptance is claimed here; all remain **Not run** for this feature.
   host input files are distinguished from output and unchanged by every lifecycle
   operation. Memory-only does not promise absence from host history, OS
   paging/hibernation, or external crash capture.
-- Settings opens first and retains all editing/Dev Box actions/drafts. Transcript
-  uses bounded selection/paging/visible text and only in-process reads. Verify
+- Settings opens first and retains all editing/Dev Box actions/drafts. Copilots
+  opens session-specific transcripts with bounded selection/paging/visible text
+  and only in-process reads. Verify
   partial/empty/loading/error/expiry/reset states, inert rendering, no
   copy/export/actions, correct scroll intent and accessibility. Clear, disable,
   expiry, eviction, removal, restart, close and Exit invalidate visible/cached
@@ -144,9 +197,10 @@ authorized disposable machine before release.
 
 ## Multi-target IDE release gate — not verified by implementation
 
-New Configurator previews write configuration v5 and require source-aware Dashboard
-`GET /api/v3/health` returning exactly `{"protocolVersion":3,"status":"ok"}` and
-`POST /api/v3/reports`. Retain the v1/v3 configuration tests below as compatibility checks; they do not certify
+New Configurator previews write configuration v5 and prefer enriched Dashboard
+`GET /api/v4/health` returning exactly `{"protocolVersion":4,"status":"ok"}` and
+`POST /api/v4/reports`, with source-aware v3 fallback only on v4 HTTP 404.
+Retain the v1/v3 configuration tests below as compatibility checks; they do not certify
 native Visual Studio or VS Code hooks. Upgrade Dashboard first and deploy matching
 Client/Relay/Configurator binaries together.
 
@@ -335,14 +389,14 @@ Long-duration credentials and independent-network/MSI acceptance remain outstand
 
 - `sessionStart` -> Waiting; prompt/pre-tool/successful post-tool -> Executing;
   permission request -> Waiting; agent stop -> Succeeded; error/tool failure -> Failed;
-  session end -> Idle after any result hold.
+  session end -> no active contribution, even during a result hold.
 - For `toolName: "ask_user"`, pre-tool -> Waiting until the matching post-tool
   resumes Executing (or tool failure -> Failed). Unrelated tools must not clear
   the wait. Verify with a real CLI question left unanswered, then answer it.
-  Verify Waiting survives dashboard restart and supersedes a prior Succeeded
-  overlay. Heartbeats preserve the wait without extending result-hold expiry.
+  Verify Waiting survives dashboard restart and supersedes prior Succeeded and
+  Failed overlays. Heartbeats preserve the wait without extending result-hold expiry.
 - Verify Succeeded and Failed at 59 seconds and underlying state at 60 seconds.
-- Run concurrent sessions and verify Failed > Waiting > Executing > Succeeded > Idle.
+- Run concurrent sessions and verify Waiting > Failed > Executing > Succeeded > Idle.
 - End one session without affecting the other.
 - At 64 tracked sessions, preserve active sessions and unexpired result holds.
   A new-session hook can evict only the oldest ended entry with an expired hold.
@@ -351,7 +405,8 @@ Long-duration credentials and independent-network/MSI acceptance remain outstand
 - Load a legacy database with heartbeat as its latest event: show **No hook received**
   for that null migrated event while preserving machine identities and sessions.
 - Leave Client running without Copilot activity beyond eleven minutes: five-minute
-  heartbeats keep it online/Idle. Disconnect B or kill only its exact test Client PID:
+  heartbeats keep it online and preserve observed waits (Idle only with no active
+  sessions). Disconnect B or kill only its exact test Client PID:
   online at 659 seconds and Offline at 660 since last accepted contact by default.
   Validate two intervals plus one minute at other supported intervals.
 - With Client alive during a network outage, send hooks and reconnect without more

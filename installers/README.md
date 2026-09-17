@@ -6,7 +6,7 @@ Run from the repository root on Windows x64 with the .NET 10 SDK, Windows SDK,
 and Visual Studio x64 C++ tools installed:
 
 ```powershell
-.\scripts\Build-Installers.ps1 -Version 1.0.14
+.\scripts\Build-Installers.ps1 -Version 1.0.19
 ```
 
 The script restores tools, publishes self-contained applications, and builds and
@@ -26,15 +26,15 @@ Useful options:
 
 ```powershell
 # Build all three application MSIs and the RpcHost EXE (no bundle or prerequisites).
-.\scripts\Build-Installers.ps1 -Version 1.0.14 -ApplicationMsisOnly
+.\scripts\Build-Installers.ps1 -Version 1.0.19 -ApplicationMsisOnly
 
 # Stage build/read-only/pure gates before a separately scheduled listener test.
 # This does not waive the required EXE smoke gate.
-.\scripts\Build-Installers.ps1 -Version 1.0.14 -ApplicationMsisOnly -SkipRpcHostSmoke
-.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.14
+.\scripts\Build-Installers.ps1 -Version 1.0.19 -ApplicationMsisOnly -SkipRpcHostSmoke
+.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
 
 # Also copy validated application MSIs and the bundle to a trusted release folder.
-.\scripts\Build-Installers.ps1 -Version 1.0.14 -DestinationPath C:\Releases\AgentSignaler
+.\scripts\Build-Installers.ps1 -Version 1.0.19 -DestinationPath C:\Releases\AgentSignaler
 ```
 
 Use `-SkipPublish` only when the existing publish output already matches the
@@ -92,6 +92,12 @@ are written. For an authorized maintenance operation in a disposable environment
 msiexec.exe /i AgentSignaler.RpcHost.msi RECEIVERPORT=51822
 ```
 
+Servicing errors identify a fixed diagnostic stage and, for failed Windows COM
+calls, the HRESULT. Port guidance is shown only for `port-configuration` failures;
+do not change valid ports in response to an unrelated servicing failure. Preserve
+the verbose MSI log (`/L*v "<log path>"`). Diagnostics do not include raw exception
+text, user identities, paths, settings contents, or custom-action data.
+
 Capture of SID, default settings/data directory and installation path precedes
 elevation. Redirected LocalAppData and reparse-point installation paths are
 rejected rather than guessing an administrator's or aliased profile. Custom data
@@ -115,6 +121,8 @@ native action implements rule validation and compensating rollback together
 instead of layering unchecked extension writes over it. The rule identity includes the
 product and user SID, with exact path/port/profile ownership. Protected HKLM
 metadata and a bounded transaction journal authorize replacement/removal;
+the firewall description uses semicolons because Windows rejects `|` in that
+field. Protected metadata and journal serialization retain their existing format.
 HKCU `Software\AgentSignaler\Installer\RpcHost` mirrors `UpgradeCode`,
 `InstallDirectory`, `UserSid`, and DWORD `ReceiverPort` for runtime diagnostics.
 Unexpected edits or duplicate/foreign rule names fail closed without overwriting
@@ -274,12 +282,12 @@ The build runs read-only installer validation; it never executes the installers.
 To rerun checks:
 
 ```powershell
-.\scripts\Test-Installers.ps1 -Version 1.0.14
-.\scripts\Test-DashboardBundle.ps1 -Version 1.0.14
+.\scripts\Test-Installers.ps1 -Version 1.0.19
+.\scripts\Test-DashboardBundle.ps1 -Version 1.0.19
 .\scripts\Test-PrerequisiteSecurity.ps1
 .\scripts\Build-RpcHostInstallerActions.ps1
-.\scripts\Test-RpcHostInstaller.ps1 -Version 1.0.14
-.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.14
+.\scripts\Test-RpcHostInstaller.ps1 -Version 1.0.19
+.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
 .\scripts\Test-Updater.ps1
 ```
 

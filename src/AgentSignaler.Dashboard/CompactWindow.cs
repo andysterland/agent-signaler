@@ -112,7 +112,7 @@ internal sealed class CompactWindow : Window
         var frameHeight = AppWindow.Size.Height - AppWindow.ClientSize.Height;
         var topOffset = Math.Min((int)Math.Round(TopOffset * scale),
             Math.Max(0, workArea.Height - frameHeight - 1));
-        var height = Math.Min((int)Math.Round(ordered.Length * TileSize * scale),
+        var height = Math.Min(Math.Max(1, (int)Math.Round(_cards.Values.Sum(tile => tile.Card.Button.Height) * scale)),
             Math.Max(1, workArea.Height - frameHeight - topOffset));
         var size = new SizeInt32(width, height);
         if (AppWindow.ClientSize != size) AppWindow.ResizeClient(size);

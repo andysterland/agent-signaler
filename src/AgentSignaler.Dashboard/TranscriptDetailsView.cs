@@ -14,10 +14,10 @@ internal sealed class TranscriptDetailsView : IDisposable
 {
     private readonly TranscriptViewController _controller;
     private readonly DispatcherQueue _dispatcher;
-    private readonly Guid _machineId;
+    private readonly TranscriptSelection _selection;
     private readonly ComboBox _sessions = new()
     {
-        Header = "Source / retained session", PlaceholderText = "No retained sessions",
+        Header = "Retained stream for this Copilot", PlaceholderText = "No retained streams",
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
     private readonly TextBlock _status = MainWindow.Text("");
@@ -34,11 +34,11 @@ internal sealed class TranscriptDetailsView : IDisposable
     private bool _updating, _disposed, _visible, _offline;
     private int _queued;
 
-    public TranscriptDetailsView(ITranscriptReader reader, DispatcherQueue dispatcher, Guid machineId, bool offline)
+    public TranscriptDetailsView(ITranscriptReader reader, DispatcherQueue dispatcher, TranscriptSelection selection, bool offline)
     {
         _controller = new(reader);
         _dispatcher = dispatcher;
-        _machineId = machineId;
+        _selection = selection;
         _offline = offline;
         Root = new Grid { RowSpacing = 8, Padding = new Thickness(0, 12, 0, 0) };
         Root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -98,7 +98,7 @@ internal sealed class TranscriptDetailsView : IDisposable
     {
         if (_disposed || _visible == visible) return;
         _visible = visible;
-        if (visible) await _controller.ShowAsync(_machineId, _offline);
+        if (visible) await _controller.ShowAsync(_selection, _offline);
         else
         {
             _controller.Hide();

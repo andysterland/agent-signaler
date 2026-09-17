@@ -437,20 +437,21 @@ same UUID create these states, inspecting after each step:
 
 | Steps | Expected aggregate |
 | --- | --- |
-| Session `a`: `agentStop`, then immediately `sessionEnd`; other sessions Idle | Succeeded (underlying Idle) |
+| Session `a`: `agentStop`; other sessions Idle | Succeeded |
 | Session `b`: `preToolUse` while `a` still Succeeded | Executing |
 | Session `c`: `permissionRequest` | Waiting for input |
-| Session `d`: `errorOccurred` | Failed |
+| Session `d`: `errorOccurred` | Waiting for input from `c`; `d` retains its Failed result |
 | End `d`, then wait for its hold to expire | Waiting for input from `c` |
 | End `c` | Executing from `b` |
 | End `b` and `a`; wait out any remaining holds | Idle |
 
 Details list distinct sessions; ending one does not end others. Priority is
-**Failed > Waiting > Executing > Succeeded > Idle**; Offline overrides all when
+**Waiting > Failed > Executing > Succeeded > Idle**; Offline overrides all when
 contact expires. Ended entries remain as ordering tombstones until capacity is
 needed. New-session hooks can evict the oldest ended entry only after its result
 hold expires; active sessions and unexpired results are never evicted. There is
-no periodic snapshot retirement.
+no periodic snapshot retirement. Session end removes only that session from
+aggregation immediately, even when terminal result metadata remains retained.
 
 ### B04: duplicate and out-of-order requests
 
@@ -787,6 +788,24 @@ switch. Mark that release-acceptance item **Not run/Blocked** unless an approved
 fixture is available. Configurator rollback in E09 is not proof of MSI rollback.
 Do not terminate arbitrary installer processes or corrupt installed binaries to
 simulate rollback.
+
+## Multi-Copilot session acceptance
+
+These cases require a separately authorized disposable environment. They are
+**Not run** during offline-only automated validation; do not enable
+`AGENT_SIGNALER_LIVE_TUNNEL_TEST` to execute them.
+
+| ID | Steps | Expected result |
+| --- | --- | --- |
+| MC01 | Observe two CLI conversations in one scope plus verified VS and VS Code conversations. Reuse host session IDs across different scopes/products; change only a product version. | One row per machine/source/scope/session, no collision, and no new identity solely for a version change. Missing stable IDs produce only sanitized diagnostics. |
+| MC02 | Leave A asking for input. Repeatedly resume B, succeed B and fail B. Then make B wait, resume only A, and finally resume B. Include unrelated tools in A while its question is pending. | Waiting remains until the last pending input resumes or ends. Other activity does not answer A's question. Failure/result information remains visible without hiding the wait. |
+| MC03 | Leave a waiter silent for at least 15 minutes with Client online; interrupt/recover the network within the same run. End B only, then Exit Client; restart explicitly. | Silence and retry retain A and its event timestamp. End affects B only. Exit/deadline shows last-known rows Offline and no connected squares. A new run does not resurrect prior waits. |
+| MC04 | Open details with transcripts disabled; switch Settings/Copilots while editing settings. Interleave events from different rows, duplicate one and resend an older event. | Settings opens first and drafts/actions remain. Copilots works status-only; each row keeps only its own latest accepted event/time. Duplicate/stale/heartbeat traffic cannot replace it. Unknown legacy metadata is explicitly unavailable. Waiting count stays accurate. |
+| MC05 | Retain synthetic history for several source/session identities and multiple streams of one session. Open View transcript on each, choose a stream, Back, and reopen. Include an ended/retained-only session. | No body reads for list rows. Read-only drill-in stays inside Copilots and never selects a different session. Streams remain separate, ended history remains accessible, Back restores selection/scroll. |
+| MC06 | While a transcript read is pending, Back, hide tab, clear, disable, remove machine, close dialog, or let history expire. | Pending reads cancel; rendered text and cached entries release immediately; stale completions never restore text. Disabled/unavailable/expired/empty states are explicit. |
+| MC07 | Observe 0, 1, 10, 11 and 64 connected sessions. Resize/work at 100%, 150% and 200% DPI on small and multiple monitors. | Exact indicator count; 4 x 4 logical pixels, 1-pixel spacing, deterministic row-major order. At 64, seven rows/34-pixel indicator height with no clipping. Tile stays 64 pixels wide, grows in height, and compact window scrolls within work-area bounds. |
+| MC08 | Navigate compact and full cards/list with keyboard and screen reader; exercise hover and existing connection action. | Aggregate icon/action preserved; text summary exposes session labels/statuses and wait count. Squares are not tiny interactive hit targets. Hover preview remains correctly placed. |
+| MC09 | On a stopped backup checkpoint, upgrade receiver first then matching producer binaries; exercise legacy/enriched traffic, 65th session and worst-case identifiers. Restore backups with matching old binaries as documented. | Strict versions reject unsupported fields without source merging. Capacity rejection is explicit and never evicts a quiet live waiter. Settings/mappings survive upgrade. Supported rollback restores the backed-up session set instead of treating enriched state as corrupt. |
 
 ## Cleanup
 

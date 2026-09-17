@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string] $Version = '1.0.14')
+param([string] $Version = '1.0.19')
 . (Join-Path $PSScriptRoot 'PrerequisiteSecurity.ps1')
 $root = Split-Path -Parent $PSScriptRoot
 $metadata = Get-PrerequisiteMetadata

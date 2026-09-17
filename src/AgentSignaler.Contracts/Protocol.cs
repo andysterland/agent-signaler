@@ -57,6 +57,7 @@ public static class Protocol
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            AllowDuplicateProperties = false,
             MaxDepth = 12
         };
         options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));

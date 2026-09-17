@@ -178,7 +178,9 @@ struct Plan {
     std::wstring RuleName() const { return L"Agent Signaler RpcHost " + sid; }
     std::wstring Owner() const { return std::wstring(Upgrade) + L"|" + sid; }
     std::wstring Description(int rulePort) const {
-        return Owner() + L"|" + Exe() + L"|" + std::to_wstring(rulePort) + L"|Private|TCP|receiver";
+        // INetFwRule descriptions forbid '|'; protected metadata keeps its existing format.
+        return std::wstring(Upgrade) + L";" + sid + L";" + Exe() + L";" +
+            std::to_wstring(rulePort) + L";Private;TCP;receiver";
     }
     void Validate() const {
         Require(sid.rfind(L"S-1-", 0) == 0 && sid.size() < 185);

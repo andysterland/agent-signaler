@@ -18,50 +18,21 @@ internal static class MachineCardPresentation
     public static string Activity(MachineView machine, DateTimeOffset now)
     {
         if (machine.State == AgentState.Offline)
-            return $"Last seen {RelativeTime(machine.LastContactUtc, now)}";
+            return $"Last seen {SessionPresentation.RelativeTime(machine.LastContactUtc, now)}";
         if (machine.State == AgentState.Idle) return "Client connected";
         var source = machine.Sessions.MaxBy(session => session.UpdatedAtUtc)?.Source?.Kind ?? machine.Client;
-        var activity = machine.LatestEvent switch
-        {
-            AgentEvent.SessionStart => "session started",
-            AgentEvent.UserPromptSubmitted => "prompt submitted",
-            AgentEvent.PreToolUse => "preToolUse",
-            AgentEvent.PostToolUse => "postToolUse",
-            AgentEvent.PermissionRequest => "permission request",
-            AgentEvent.AgentStop or AgentEvent.SessionEnd => "session complete",
-            AgentEvent.ErrorOccurred or AgentEvent.PostToolUseFailure => "tool failure",
-            AgentEvent.ExecutionStopped => "execution stopped",
-            _ => "Awaiting hook activity"
-        };
+        var activity = SessionPresentation.EventLabel(machine.LatestEvent);
         return $"{SessionSourcePresentation.Name(source)} \u00B7 {activity}";
     }
 
     public static string Footer(MachineView machine, DateTimeOffset now) => machine.State switch
     {
-        AgentState.Waiting => "Needs user input",
+        AgentState.Waiting => $"Needs user input · {SessionPresentation.Project(machine, now).Count(session => session.IsConnected && session.State == AgentState.Waiting)} Copilots waiting",
         AgentState.Succeeded => $"Result visible for {Protocol.ResultDuration.TotalSeconds:0} seconds",
         AgentState.Failed => "No prompt or response content stored",
         AgentState.Idle => "Ready for the next session",
         AgentState.Offline when machine.ExplicitOffline => "Client disconnected",
         AgentState.Offline => "Heartbeat deadline exceeded",
-        _ => $"Updated {RelativeTime(machine.LatestEventUtc ?? machine.LastContactUtc, now)}"
+        _ => $"Updated {SessionPresentation.RelativeTime(machine.LatestEventUtc ?? machine.LastContactUtc, now)}"
     };
-
-    private static string RelativeTime(DateTimeOffset timestamp, DateTimeOffset now)
-    {
-        var elapsed = now - timestamp;
-        if (elapsed < TimeSpan.FromMinutes(1)) return "moments ago";
-        if (elapsed < TimeSpan.FromHours(1))
-        {
-            var minutes = (int)elapsed.TotalMinutes;
-            return $"{minutes} minute{(minutes == 1 ? "" : "s")} ago";
-        }
-        if (elapsed < TimeSpan.FromDays(1))
-        {
-            var hours = (int)elapsed.TotalHours;
-            return $"{hours} hour{(hours == 1 ? "" : "s")} ago";
-        }
-        var days = (int)elapsed.TotalDays;
-        return $"{days} day{(days == 1 ? "" : "s")} ago";
-    }
 }

@@ -23,11 +23,11 @@ public sealed class MachineCardPresentationTests
     }
 
     [Theory]
-    [InlineData(AgentEvent.PreToolUse, "preToolUse")]
-    [InlineData(AgentEvent.PermissionRequest, "permission request")]
-    [InlineData(AgentEvent.AgentStop, "session complete")]
-    [InlineData(AgentEvent.PostToolUseFailure, "tool failure")]
-    [InlineData(AgentEvent.ExecutionStopped, "execution stopped")]
+    [InlineData(AgentEvent.PreToolUse, "Tool started")]
+    [InlineData(AgentEvent.PermissionRequest, "Permission requested")]
+    [InlineData(AgentEvent.AgentStop, "Turn completed")]
+    [InlineData(AgentEvent.PostToolUseFailure, "Tool failed")]
+    [InlineData(AgentEvent.ExecutionStopped, "Execution stopped")]
     public void ActivityUsesLatestSessionSourceAndActualEvent(AgentEvent latestEvent, string activity)
     {
         var machine = Machine(AgentState.Executing) with
@@ -45,7 +45,7 @@ public sealed class MachineCardPresentationTests
     [Fact]
     public void ActivityWithoutSessionsUsesMachineClientWithoutInventingAnEvent()
     {
-        Assert.Equal("Copilot CLI \u00B7 Awaiting hook activity",
+        Assert.Equal("Copilot CLI \u00B7 Last event unavailable",
             MachineCardPresentation.Activity(Machine(AgentState.Waiting), Now));
         Assert.Equal("Client connected", MachineCardPresentation.Activity(Machine(AgentState.Idle), Now));
     }
@@ -73,7 +73,7 @@ public sealed class MachineCardPresentationTests
     }
 
     [Theory]
-    [InlineData(AgentState.Waiting, "Needs user input")]
+    [InlineData(AgentState.Waiting, "Needs user input · 0 Copilots waiting")]
     [InlineData(AgentState.Succeeded, "Result visible for 60 seconds")]
     [InlineData(AgentState.Failed, "No prompt or response content stored")]
     [InlineData(AgentState.Idle, "Ready for the next session")]
@@ -135,10 +135,10 @@ public sealed class MachineCardPresentationTests
         Assert.Contains("_hoverCard.Button.IsHitTestVisible = false", main);
         Assert.Contains("_hoverCard.Button.IsTabStop = false", main);
         Assert.Contains("preview.Children.Add(_hoverCard.Button)", main);
-        Assert.Contains("preview.Children.Add(_hoverNote)", main);
+        Assert.Contains("Content = _hoverNote, MaxHeight = 200", main);
         Assert.Contains("HoverPreview = preview;", main);
         Assert.Contains("_hoverCard.Update(machine)", main);
-        Assert.Contains("_hoverNote.Visibility = string.IsNullOrWhiteSpace(machine.Note) ? Visibility.Collapsed : Visibility.Visible", main);
+        Assert.Contains("_hoverNote.Visibility = _hoverNote.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible", main);
         Assert.Contains("Button.Click += (_, _) => activate()", main);
     }
 
@@ -155,6 +155,13 @@ public sealed class MachineCardPresentationTests
         Assert.Contains("Math.Max(0, workArea.Height - frameHeight - 1)", compact);
         Assert.Contains("Math.Max(1, workArea.Height - frameHeight - topOffset)", compact);
         Assert.Contains("workArea.Y + topOffset", compact);
+        Assert.Contains("_cards.Values.Sum(tile => tile.Card.Button.Height)", compact);
+        Assert.DoesNotContain("ordered.Length * TileSize", compact);
+        var main = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "MainWindow.cs"));
+        Assert.Contains("Button.Height = sessionLayout.TileHeight", main);
+        Assert.Contains("Grid.SetRow(_sessionIndicators, 2)", main);
+        Assert.Contains("MachineCardAppearance.For(indicator.State).Icon", main);
+        Assert.Contains("AutomationProperties.SetHelpText(Button, sessionSummary)", main);
     }
 
     [Fact]

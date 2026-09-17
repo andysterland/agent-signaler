@@ -444,7 +444,7 @@ With native installer build tools available:
 
 ```powershell
 # Example local package version, not a claim about the latest release.
-.\scripts\Build-Installers.ps1 -Version 1.0.14 -ApplicationMsisOnly
+.\scripts\Build-Installers.ps1 -Version 1.0.19 -ApplicationMsisOnly
 ```
 
 This publishes apps, builds and inspects the three MSIs, and runs packaging

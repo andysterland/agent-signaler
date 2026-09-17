@@ -4,7 +4,7 @@
     <InstallerPlatform>x64</InstallerPlatform>
     <SuppressValidation>true</SuppressValidation>
     <OutputName>AgentSignaler.RpcHost</OutputName>
-    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.14</ProductVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.19</ProductVersion>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\publish\rpchost</PublishDir>
     <ActionDir>$(MSBuildThisFileDirectory)..\..\artifacts\rpchost-installer</ActionDir>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);ActionDir=$(ActionDir)</DefineConstants>

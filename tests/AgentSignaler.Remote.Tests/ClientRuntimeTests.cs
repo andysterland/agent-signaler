@@ -54,7 +54,7 @@ public sealed class ClientRuntimeTests : IDisposable
         runtime.Start();
         await Eventually(() => transport.Reports.Count == 1);
         for (var i = 0; i < ClientCoordinator.MaximumPendingHooks; i++)
-            Assert.True(runtime.AcceptHook(AgentEvent.SessionStart, new("session-" + i, clock.GetUtcNow(), false)).Accepted);
+            Assert.True(runtime.AcceptHook(AgentEvent.SessionStart, new("session", clock.GetUtcNow(), false)).Accepted);
         Assert.False(runtime.AcceptHook(AgentEvent.SessionStart, new("overflow", clock.GetUtcNow(), false)).Accepted);
         await Task.Delay(30);
         clock.Advance(TimeSpan.FromSeconds(5));
@@ -65,7 +65,7 @@ public sealed class ClientRuntimeTests : IDisposable
         await Task.Delay(30);
         clock.Advance(TimeSpan.FromSeconds(5));
         await Eventually(() => runtime.Status().State == "connected");
-        await Eventually(() => transport.Reports.Any(r => r.Kind == PresenceKind.Heartbeat && r.Sessions!.Count == 64));
+        await Eventually(() => transport.Reports.Any(r => r.Kind == PresenceKind.Heartbeat && r.Sessions!.Count == 1));
         Assert.Equal(1, transport.MaximumConcurrent);
     }
 

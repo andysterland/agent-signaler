@@ -12,18 +12,14 @@ public interface IPresenceTransport : IDisposable
 public sealed class PresenceTransport(RemoteConfiguration configuration, HttpClient? client = null) : IPresenceTransport
 {
     private readonly HttpClient _client = client ?? RemoteHttpTransport.CreateClient(configuration);
-    private bool _capabilitiesConfirmed;
+    private int? _version;
 
     public async Task<bool> SendAsync(PresenceReport report, CancellationToken cancellationToken)
     {
-        var version = configuration.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version;
-        if (report.ProtocolVersion != version || PresenceProtocol.Validate(report).Count != 0) return false;
-        if (!_capabilitiesConfirmed)
-        {
-            await DashboardConnection.TestAsync(configuration, _client, cancellationToken);
-            _capabilitiesConfirmed = true;
-        }
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(report, Protocol.Json);
+        if (PresenceProtocol.Validate(report).Count != 0) return false;
+        var version = _version ??= await DashboardConnection.NegotiateAsync(configuration, _client, cancellationToken);
+        var projected = PresenceProtocol.Project(report, version);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(projected, PresenceProtocol.Json);
         if (bytes.Length > Protocol.MaxBodyBytes) return false;
         using var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new("application/json");

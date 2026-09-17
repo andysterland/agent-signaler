@@ -48,7 +48,7 @@ to the published EXE.
 
 ```powershell
 .\scripts\Set-TestFirewall.ps1 -Action Status
-.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.14
+.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
 dotnet test tests\AgentSignaler.RpcHost.Tests\AgentSignaler.RpcHost.Tests.csproj --no-build --configuration Release -p:Platform=x64 --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none
 ```
 

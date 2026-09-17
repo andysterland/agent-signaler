@@ -1,5 +1,34 @@
 @baseUrl = http://localhost:51820
 
+### Enriched snapshot capability; existing v1/v2/v3 endpoints remain unchanged
+GET {{baseUrl}}/api/v4/health
+
+### Enriched snapshot (timestamps describe accepted status events, never message content)
+POST {{baseUrl}}/api/v4/reports
+Content-Type: application/json
+
+{
+  "protocolVersion": 4,
+  "kind": "started",
+  "eventId": "d7098497-0e98-4451-b96b-02721257e151",
+  "machineId": "5b8185c1-8860-4780-b24e-197d746adfb9",
+  "machineName": "example-devbox",
+  "client": "agent-signaler",
+  "clientVersion": "1.0",
+  "generation": 2,
+  "sequence": 1,
+  "reportedAtUtc": "2026-09-17T18:00:00Z",
+  "heartbeatIntervalSeconds": 300,
+  "sessions": [{
+    "sessionId": "host-session",
+    "source": { "kind": "vscode", "scopeId": "local-profile", "version": "1.137.0" },
+    "underlyingState": "waiting",
+    "updatedAtUtc": "2026-09-17T18:00:00Z",
+    "latestEvent": "permissionRequest",
+    "latestEventAtUtc": "2026-09-17T18:00:00Z"
+  }]
+}
+
 ### Source-aware capability (legacy /health and /api/v2/health remain unchanged)
 GET {{baseUrl}}/api/v3/health
 

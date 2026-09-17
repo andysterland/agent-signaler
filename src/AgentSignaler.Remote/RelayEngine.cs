@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using AgentSignaler.Contracts;
 
 namespace AgentSignaler.Remote;
@@ -56,7 +57,10 @@ public sealed class DiagnosticLog(string path)
 
 public sealed record StoredRemoteSession(SessionSnapshot Snapshot, DateTimeOffset SourceTimestamp);
 public sealed record StoredRemoteState(int Version, DateTimeOffset LastReportedAtUtc, List<StoredRemoteSession> Sessions);
-public sealed record LocalReport(List<SessionSnapshot> Sessions, DateTimeOffset ReportedAtUtc, bool Accepted);
+public sealed record LocalReport(List<SessionSnapshot> Sessions, DateTimeOffset ReportedAtUtc, bool Accepted,
+    bool CapacityExceeded = false);
+internal sealed record EnrichedRemoteState(int Version, string LegacyHash, StoredRemoteState State,
+    Dictionary<string, DateTimeOffset> RetiredSources);
 
 public sealed class SessionStore(string path, DiagnosticLog log)
 {
@@ -67,9 +71,12 @@ public sealed class SessionStore(string path, DiagnosticLog log)
     {
         using var held = AtomicFile.Acquire(path + ".lock", TimeSpan.FromMilliseconds(180));
         StoredRemoteState stored;
+        var retired = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        byte[]? legacyBytes = null;
         try
         {
             var bytes = AtomicFile.ReadBounded(path, 65536);
+            legacyBytes = bytes;
             using var document = JsonDocument.Parse(bytes);
             if (document.RootElement.ValueKind == JsonValueKind.Array)
             {
@@ -88,6 +95,7 @@ public sealed class SessionStore(string path, DiagnosticLog log)
             if (sessions.Count > Protocol.MaxSessions ||
                 sessions.Select(s => SourceIdentity.SessionKey(s.Source, s.SessionId)).Distinct(StringComparer.Ordinal).Count() != sessions.Count ||
                 sessions.Any(s => !RemoteConfiguration.ValidText(s.SessionId, 128) ||
+                    !PresenceProtocol.ValidLatestEvent(s) ||
                     s.Source is { IsValid: false } ||
                     s.UnderlyingState is not (AgentState.Waiting or AgentState.Executing or AgentState.Idle) ||
                     (s.AwaitingUserInput && s.UnderlyingState != AgentState.Waiting) ||
@@ -109,19 +117,50 @@ public sealed class SessionStore(string path, DiagnosticLog log)
         }
         catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or ArgumentException)
         {
+            legacyBytes = null;
             stored = new StoredRemoteState(2, now.AddTicks(-1), []);
             log.Write("state-missing-or-invalid-idle");
         }
+        // The base file remains readable by older Clients. Only matching sidecars may enrich it.
+        byte[]? matchingEnrichment = null;
+        if (legacyBytes is not null)
+        {
+            foreach (var candidate in new[] { path + ".events-v1", path + ".events-v1.previous" })
+            {
+                if (!File.Exists(candidate)) continue;
+                var enrichment = AtomicFile.ReadBounded(candidate, 131072);
+                var enriched = JsonSerializer.Deserialize<EnrichedRemoteState>(enrichment, PresenceProtocol.Json)
+                    ?? throw new InvalidDataException("Invalid enriched session state. Restore both state files from backup.");
+                if (enriched.Version != 3)
+                    throw new InvalidDataException("Incompatible session state. Restore a compatible backup before restarting.");
+                if (enriched.LegacyHash == Convert.ToHexString(SHA256.HashData(legacyBytes)))
+                {
+                    if (enriched.State?.Sessions is null || enriched.RetiredSources is null ||
+                        enriched.State.Sessions.Count > Protocol.MaxSessions || enriched.RetiredSources.Count > Protocol.MaxSessions ||
+                        enriched.RetiredSources.Any(p => p.Key.Length != 64 || p.Key.Any(c => !char.IsAsciiHexDigit(c)) ||
+                            p.Value.Offset != TimeSpan.Zero || p.Value.Year is < 1970 or > 9998) ||
+                        enriched.State.Sessions.Any(s => s?.Snapshot is null || !PresenceProtocol.ValidLatestEvent(s.Snapshot)) ||
+                        !JsonSerializer.SerializeToUtf8Bytes(LegacyState(enriched.State), Protocol.Json).AsSpan().SequenceEqual(legacyBytes))
+                        throw new InvalidDataException("Invalid enriched session state. Restore both state files from backup.");
+                    stored = enriched.State;
+                    retired = enriched.RetiredSources;
+                    matchingEnrichment = enrichment;
+                    break;
+                }
+            }
+        }
         var reportedAt = now > stored.LastReportedAtUtc ? now : stored.LastReportedAtUtc.AddTicks(1);
-        var entries = stored.Sessions;
-        entries.RemoveAll(s => s.Snapshot.UnderlyingState == AgentState.Idle &&
-            s.Snapshot.UpdatedAtUtc < reportedAt - TimeSpan.FromDays(1));
+        var entries = stored.Sessions.ToList();
+        var originalRetired = new Dictionary<string, DateTimeOffset>(retired, StringComparer.Ordinal);
         var accepted = true;
+        var capacityExceeded = false;
         if (kind is { } eventKind && hook is not null)
         {
             var key = SourceIdentity.SessionKey(hook.Source, hook.SessionId);
             var previous = entries.Find(s => SourceIdentity.SessionKey(s.Snapshot.Source, s.Snapshot.SessionId) == key);
-            accepted = previous is null || hook.Timestamp >= previous.SourceTimestamp;
+            var scope = SourceIdentity.SessionKey(hook.Source, "");
+            accepted = previous is null ? !retired.TryGetValue(scope, out var watermark) || hook.Timestamp > watermark
+                : hook.Timestamp >= previous.SourceTimestamp;
             if (accepted)
             {
                 // Local source timestamps reject late session events; the global clock orders wire reports.
@@ -131,24 +170,44 @@ public sealed class SessionStore(string path, DiagnosticLog log)
                 entries.Add(new StoredRemoteSession(next, hook.Timestamp));
             }
         }
-        if (entries.Count > Protocol.MaxSessions) log.Write("session-capacity-trimmed");
-        entries = entries.OrderByDescending(s => s.Snapshot.UpdatedAtUtc).Take(Protocol.MaxSessions).ToList();
-        List<SessionSnapshot> active;
-        byte[] serialized;
-        while (true)
+        while (entries.Count > Protocol.MaxSessions ||
+            !PresenceProtocol.FitsSnapshot(entries.Select(s => s.Snapshot)))
         {
-            // Retain bounded tombstones locally to reject late hooks after a session ends.
-            active = entries.Select(s => s.Snapshot).Where(s =>
-                s.UnderlyingState != AgentState.Idle || s.ResultUntilUtc > reportedAt).ToList();
-            serialized = JsonSerializer.SerializeToUtf8Bytes(new StoredRemoteState(2, reportedAt, entries), Protocol.Json);
-            if (serialized.Length <= 60000 &&
-                JsonSerializer.SerializeToUtf8Bytes(active, Protocol.Json).Length <= Protocol.MaxBodyBytes - 4096) break;
-            log.Write("session-size-capacity-trimmed");
-            entries.RemoveAt(entries.Count - 1);
+            var ended = entries.Where(s => s.Snapshot.UnderlyingState == AgentState.Idle &&
+                (kind == AgentEvent.SessionEnd || hook is null || SourceIdentity.SessionKey(s.Snapshot.Source, s.Snapshot.SessionId) !=
+                    SourceIdentity.SessionKey(hook.Source, hook.SessionId)))
+                .OrderBy(s => s.SourceTimestamp).FirstOrDefault(s =>
+                    retired.ContainsKey(SourceIdentity.SessionKey(s.Snapshot.Source, "")) || retired.Count < Protocol.MaxSessions);
+            if (ended is null)
+            {
+                entries = stored.Sessions.ToList();
+                retired = originalRetired;
+                accepted = false;
+                capacityExceeded = true;
+                log.Write("session-capacity-rejected");
+                break;
+            }
+            var scope = SourceIdentity.SessionKey(ended.Snapshot.Source, "");
+            retired[scope] = retired.TryGetValue(scope, out var previous) && previous > ended.SourceTimestamp
+                ? previous : ended.SourceTimestamp;
+            entries.Remove(ended);
         }
+        var state = new StoredRemoteState(2, reportedAt, entries);
+        var serialized = JsonSerializer.SerializeToUtf8Bytes(LegacyState(state), Protocol.Json);
+        var sidecar = JsonSerializer.SerializeToUtf8Bytes(
+            new EnrichedRemoteState(3, Convert.ToHexString(SHA256.HashData(serialized)), state, retired), PresenceProtocol.Json);
+        // Write the enrichment first: a crash leaves either an old coherent base or a matching pair.
+        if (matchingEnrichment is not null) AtomicFile.Write(path + ".events-v1.previous", matchingEnrichment);
+        AtomicFile.Write(path + ".events-v1", sidecar);
         AtomicFile.Write(path, serialized);
-        return new LocalReport(active, reportedAt, accepted);
+        return new LocalReport(entries.Select(s => s.Snapshot).ToList(), reportedAt, accepted, capacityExceeded);
     }
+
+    private static StoredRemoteState LegacyState(StoredRemoteState state) => state with
+    {
+        Version = 2,
+        Sessions = state.Sessions.Select(s => s with { Snapshot = PresenceProtocol.ProjectStoredSession(s.Snapshot) }).ToList()
+    };
 }
 
 public sealed class RelayEngine(HttpClient? client = null)

@@ -25,7 +25,6 @@ internal sealed class TranscriptViewController : IDisposable
 {
     internal const string ProductionCaptureNotice = "Assistant transcript-file extraction is unavailable in this build: " +
         "no production format profile is verified. Receiver field support does not verify host capture.";
-    private const int MaximumSessions = 32;
     private readonly object _sync = new();
     private readonly ITranscriptReader _reader;
     private readonly TimeProvider _clock;
@@ -43,6 +42,7 @@ internal sealed class TranscriptViewController : IDisposable
     private bool _pending;
     private bool _latest = true;
     private bool _selectInitial = true;
+    private TranscriptSelection? _sessionScope;
     private long? _beforeSequence;
     private CancellationTokenSource? _readCancellation;
     private TaskCompletionSource? _work;
@@ -78,6 +78,12 @@ internal sealed class TranscriptViewController : IDisposable
     }
 
     public Task ShowAsync(Guid machineId, bool offline)
+        => ShowAsync(machineId, offline, null);
+
+    public Task ShowAsync(TranscriptSelection selection, bool offline)
+        => ShowAsync(selection.MachineId, offline, selection);
+
+    private Task ShowAsync(Guid machineId, bool offline, TranscriptSelection? selection)
     {
         lock (_sync)
         {
@@ -86,9 +92,10 @@ internal sealed class TranscriptViewController : IDisposable
             _machineId = machineId;
             _offline = offline;
             _latest = true;
-            _selectInitial = true;
+            _selectInitial = selection is null;
+            _sessionScope = selection;
             _beforeSequence = null;
-            _state = TranscriptViewState.Empty with { Visible = true };
+            _state = TranscriptViewState.Empty with { Visible = true, Selection = selection };
             _viewStamp = null;
             _previousCursor = _readBeforeCursor = null;
             _poll.Change(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
@@ -109,6 +116,7 @@ internal sealed class TranscriptViewController : IDisposable
             CancelSelectionLocked();
             _pending = false;
             _state = TranscriptViewState.Empty;
+            _sessionScope = null;
             _viewStamp = null;
             _previousCursor = _readBeforeCursor = null;
             _poll.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -260,20 +268,13 @@ internal sealed class TranscriptViewController : IDisposable
     private async Task ReadAsync(Guid machine, TranscriptSelection? selection, long revision,
         bool latest, bool following, long? before, string? beforeCursor, CancellationToken token)
     {
-        var first = await _reader.ListSessionsAsync(machine, cancellationToken: token).ConfigureAwait(false);
+        var first = await TranscriptMetadata.ReadAsync(_reader, machine, token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
-        var sessions = first.Sessions.Where(session => session.Selection.MachineId == machine).Take(MaximumSessions).ToImmutableArray();
-        if (first.ContinuationCursor is { } sessionCursor && sessions.Length < MaximumSessions)
-        {
-            var second = await _reader.ListSessionsAsync(machine, sessionCursor, token).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-            if (second.ReceiverEpoch != first.ReceiverEpoch || second.InvalidationGeneration != first.InvalidationGeneration) return;
-            sessions = sessions.AddRange(second.Sessions.Where(session => session.Selection.MachineId == machine)
-                .Take(MaximumSessions - sessions.Length));
-        }
         lock (_sync)
         {
             if (!CurrentLocked(machine, revision)) return;
+            var sessions = first.Sessions.Where(session => _sessionScope is null ||
+                SameSession(session.Selection, _sessionScope)).ToImmutableArray();
             _state = _state with { Sessions = sessions, ReceiverEpoch = first.ReceiverEpoch };
             if (first.Availability is TranscriptAvailability.Disabled or TranscriptAvailability.Unavailable)
             {
@@ -284,7 +285,7 @@ internal sealed class TranscriptViewController : IDisposable
             if (selection is not null && !sessions.Any(session => SameSelection(selection, session.Selection)))
             {
                 _viewStamp = null;
-                _state = _state with { Selection = null, Entries = [], Message = "Selected history is no longer retained. Select an available session.", HasOlder = false };
+                _state = _state with { Selection = null, Entries = [], Message = "Selected history is no longer retained. Choose a retained stream of this Copilot, or go Back to Copilots.", HasOlder = false };
                 return;
             }
             if (selection is null && _selectInitial)
@@ -296,7 +297,12 @@ internal sealed class TranscriptViewController : IDisposable
             if (selection is null || first.Availability is TranscriptAvailability.Disabled or TranscriptAvailability.Unavailable)
             {
                 _viewStamp = null;
-                _state = _state with { Entries = [], Message = Availability(first.Availability, first.ResetReason, _offline), HasOlder = false };
+                var message = _sessionScope is not null && first.ResetReason == TranscriptResetReason.None
+                    ? (_offline ? "Machine offline; only last-observed retained activity is available. " : "") +
+                        (sessions.IsEmpty ? "No retained events for this Copilot. Sharing may be disabled, expired, or unsupported." :
+                            "Choose a retained stream for this Copilot. The previous stream is no longer selected.")
+                    : Availability(first.Availability, first.ResetReason, _offline);
+                _state = _state with { Entries = [], Message = message, HasOlder = false };
                 return;
             }
             var info = sessions.First(session => SameSelection(session.Selection, selection));
@@ -413,8 +419,10 @@ internal sealed class TranscriptViewController : IDisposable
     }
 
     internal static bool SameSelection(TranscriptSelection left, TranscriptSelection right) =>
-        left.MachineId == right.MachineId && left.StreamId == right.StreamId &&
-        left.SessionId == right.SessionId && SameSource(left.Source, right.Source);
+        left.StreamId == right.StreamId && SameSession(left, right);
+
+    internal static bool SameSession(TranscriptSelection left, TranscriptSelection right) =>
+        left.MachineId == right.MachineId && left.SessionId == right.SessionId && SameSource(left.Source, right.Source);
 
     private static bool SameSource(SourceDescriptor left, SourceDescriptor right) =>
         left.Kind == right.Kind && left.ScopeId == right.ScopeId;
