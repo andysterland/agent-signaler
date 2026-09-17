@@ -71,10 +71,20 @@ public sealed class RelayToDashboardTests : IAsyncLifetime
         await Hook("postToolUse");
         Assert.Equal(AgentState.Executing, (await Machine()).State);
         await Hook("agentStop");
-        Assert.Equal(AgentState.Succeeded, (await Machine()).State);
+        var completed = await Machine();
+        Assert.Equal(AgentState.Succeeded, completed.State);
+        var completedSession = Assert.Single(completed.Sessions);
+        Assert.Equal(AgentState.Succeeded, completedSession.ResultState);
         await Hook("sessionEnd");
-        Assert.Equal(AgentState.Succeeded, (await Machine()).State);
-        _clock.Now = (await Machine()).Sessions.Max(s => s.ResultUntilUtc)!.Value;
+        var ended = await Machine();
+        Assert.Equal(AgentState.Idle, ended.State);
+        var endedSession = Assert.Single(ended.Sessions);
+        Assert.Equal(AgentState.Idle, endedSession.UnderlyingState);
+        Assert.Equal(AgentEvent.SessionEnd, endedSession.LatestEvent);
+        Assert.Equal(completedSession.ResultUntilUtc, endedSession.ResultUntilUtc);
+        Assert.Equal(AgentState.Succeeded, StateReducer.Effective(endedSession, _clock.Now));
+        _clock.Now = endedSession.ResultUntilUtc!.Value;
+        Assert.Equal(AgentState.Idle, StateReducer.Effective(endedSession, _clock.Now));
         Assert.Equal(AgentState.Idle, (await Machine()).State);
 
         foreach (var file in Directory.GetFiles(_directory, "*.json").Concat(Directory.GetFiles(_directory, "*.log")))
@@ -111,8 +121,13 @@ public sealed class RelayToDashboardTests : IAsyncLifetime
         Assert.Equal(2, (await Machine()).Sessions.Count);
         Assert.Equal(AgentState.Waiting, (await Machine()).State);
         await Hook("postToolUseFailure", "two");
-        Assert.Equal(AgentState.Failed, (await Machine()).State);
-        Assert.Equal(2, (await Machine()).Sessions.Count);
+        var failed = await Machine();
+        Assert.Equal(AgentState.Waiting, failed.State);
+        Assert.Equal(2, failed.Sessions.Count);
+        Assert.Equal(AgentState.Waiting, StateReducer.Effective(
+            Assert.Single(failed.Sessions, session => session.SessionId == "one"), _clock.Now));
+        Assert.Equal(AgentState.Failed, StateReducer.Effective(
+            Assert.Single(failed.Sessions, session => session.SessionId == "two"), _clock.Now));
         _clock.Now += TimeSpan.FromMinutes(11);
         Assert.Equal(AgentState.Offline, (await Machine()).State);
         await Hook("preToolUse", "two");
@@ -284,9 +299,12 @@ public sealed class RelayToDashboardTests : IAsyncLifetime
         Assert.Equal(AgentEvent.PreToolUse, (await Machine()).LatestEvent);
         Assert.Equal(0, await engine.RunAsync(["test", "--config", _config], Stream.Null));
         Assert.Equal(AgentState.Executing, (await Machine()).State);
-        Assert.Equal(4, tls.Requests.Count(request => request.Method == "GET" && request.Path == "/api/v2/health"));
-        Assert.Contains(tls.Requests, request => request.Method == "POST" && request.Path == "/api/v2/reports");
-        Assert.DoesNotContain(tls.Requests, request => request.Path is "/api/v1/status" or "/health");
+        Assert.Equal(4, tls.Requests.Count(request => request.Method == "GET" &&
+            request.Path == $"/api/v{PresenceProtocol.DisplayNameVersion}/health"));
+        Assert.Contains(tls.Requests, request => request.Method == "POST" &&
+            request.Path == $"/api/v{PresenceProtocol.DisplayNameVersion}/reports");
+        Assert.DoesNotContain(tls.Requests, request =>
+            request.Path is "/api/v1/status" or "/health" or "/api/v2/health" or "/api/v2/reports");
         Assert.All(tls.Requests, request =>
         {
             Assert.Equal("", request.Cookie);

@@ -183,22 +183,32 @@ public sealed class RpcRuntimeTests
         public void Advance(TimeSpan duration) => Interlocked.Add(ref ticks, duration.Ticks);
     }
 
+    private static SessionSnapshot[] MaximumFittingSessions(Func<int, SessionSnapshot> create)
+    {
+        var sessions = Enumerable.Range(0, Protocol.MaxSessions).Select(create).ToList();
+        while (!PresenceProtocol.FitsSnapshot(sessions)) sessions.RemoveAt(sessions.Count - 1);
+        Assert.InRange(sessions.Count, 2, Protocol.MaxSessions);
+        Assert.False(PresenceProtocol.FitsSnapshot(sessions.Append(create(sessions.Count))));
+        return sessions.ToArray();
+    }
+
     [Fact]
     public async Task MaximumMachineAndSessionFixtureFitsBoundedSummariesAndUsesDecimalCounters()
     {
         await using var fixture = await RuntimeFixture.StartAsync();
         var now = DateTimeOffset.UtcNow;
+        var snapshots = MaximumFittingSessions(index => new SessionSnapshot
+        {
+            SessionId = index.ToString("D3") + new string('s', 125),
+            UnderlyingState = AgentState.Executing, UpdatedAtUtc = now
+        });
         for (var i = 0; i < 25; i++)
             await fixture.Runtime.Store!.AcceptAsync(new PresenceReport
             {
                 Kind = PresenceKind.Started, EventId = Guid.NewGuid(), MachineId = Guid.NewGuid(),
                 MachineName = new string('m', 128), ClientVersion = new string('v', 64),
                 Generation = long.MaxValue, Sequence = long.MaxValue, ReportedAtUtc = now,
-                HeartbeatIntervalSeconds = 60,
-                Sessions = Enumerable.Range(0, 64).Select(n => new SessionSnapshot
-                {
-                    SessionId = n.ToString("D3") + new string('s', 125), UnderlyingState = AgentState.Executing, UpdatedAtUtc = now
-                }).ToArray()
+                HeartbeatIntervalSeconds = 60, Sessions = snapshots
             });
         await fixture.Runtime.RefreshMachinesAsync();
         using var socket = await fixture.ConnectAsync();
@@ -209,11 +219,11 @@ public sealed class RpcRuntimeTests
         Assert.Equal(JsonValueKind.Null, response.GetProperty("state").GetProperty("nextOffset").ValueKind);
         foreach (var item in items.EnumerateArray())
         {
-            Assert.Equal(64, item.GetProperty("sessionCount").GetInt32());
+            Assert.Equal(snapshots.Length, item.GetProperty("sessionCount").GetInt32());
             Assert.Equal(long.MaxValue.ToString(), item.GetProperty("generation").GetString());
             Assert.Equal(long.MaxValue.ToString(), item.GetProperty("sequence").GetString());
             var sessions = await fixture.CallAsync(socket, "machines.getSessions", new { machineId = item.GetProperty("machineId").GetString(), limit = 250 });
-            Assert.Equal(64, sessions.GetProperty("state").GetProperty("items").GetArrayLength());
+            Assert.Equal(snapshots.Length, sessions.GetProperty("state").GetProperty("items").GetArrayLength());
         }
     }
 
@@ -322,24 +332,35 @@ public sealed class RpcRuntimeTests
         await using var fixture = await RuntimeFixture.StartAsync();
         var machine = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
-        for (var i = 0; i < Protocol.MaxSessions; i++)
+        var snapshots = MaximumFittingSessions(index => new SessionSnapshot
+        {
+            SessionId = $"session-{index:D3}", UnderlyingState = AgentState.Waiting,
+            UpdatedAtUtc = now.AddTicks(index)
+        });
+        foreach (var session in snapshots)
             await fixture.Runtime.Store!.AcceptAsync(new StatusRequest
             {
                 MachineId = machine, MachineName = "synthetic", ClientVersion = "synthetic", EventId = Guid.NewGuid(),
-                SessionId = $"session-{i:D3}", Event = AgentEvent.SessionStart, ReportedAtUtc = now.AddTicks(i)
+                SessionId = session.SessionId, Event = AgentEvent.SessionStart, ReportedAtUtc = session.UpdatedAtUtc
             });
+        await Assert.ThrowsAsync<CapacityException>(() => fixture.Runtime.Store!.AcceptAsync(new StatusRequest
+        {
+            MachineId = machine, MachineName = "synthetic", ClientVersion = "synthetic", EventId = Guid.NewGuid(),
+            SessionId = $"session-{snapshots.Length:D3}", Event = AgentEvent.SessionStart,
+            ReportedAtUtc = now.AddTicks(snapshots.Length)
+        }));
         var legacy = new string('n', 16383) + "\U0001F600" + new string('n', 23617) + "\U0001F600";
         await fixture.Runtime.Store!.UpdateDetailsAsync(machine, "Synthetic legacy", legacy);
         await fixture.Runtime.RefreshMachinesAsync();
         using var socket = await fixture.ConnectAsync();
         var first = await fixture.CallAsync(socket, "machines.getSessions", new { machineId = machine, limit = 1 });
-        Assert.Equal(Protocol.MaxSessions, first.GetProperty("state").GetProperty("totalCount").GetInt32());
+        Assert.Equal(snapshots.Length, first.GetProperty("state").GetProperty("totalCount").GetInt32());
         var revision = first.GetProperty("revision").GetString();
         var next = await fixture.CallAsync(socket, "machines.getSessions", new
         {
             machineId = machine, offset = 1, limit = 250, expectedRevision = revision
         });
-        Assert.Equal(Protocol.MaxSessions - 1, next.GetProperty("state").GetProperty("items").GetArrayLength());
+        Assert.Equal(snapshots.Length - 1, next.GetProperty("state").GetProperty("items").GetArrayLength());
         Assert.Equal(JsonValueKind.Null, next.GetProperty("state").GetProperty("nextOffset").ValueKind);
         var all = "";
         var offset = 0;

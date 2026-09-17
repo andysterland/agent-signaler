@@ -372,10 +372,14 @@ public sealed class DashboardRuntimeTests
         await fixture.Runtime.InitializeAsync();
         var runtime = fixture.Runtime;
         var now = DateTimeOffset.UtcNow;
-        var sessions = Enumerable.Range(0, Protocol.MaxSessions).Select(index => new SessionSnapshot
+        var candidates = Enumerable.Range(0, Protocol.MaxSessions + 1).Select(index => new SessionSnapshot
         {
             SessionId = $"session-{index:D3}", UnderlyingState = AgentState.Executing, UpdatedAtUtc = now
         }).ToArray();
+        var sessions = candidates.Take(Protocol.MaxSessions).ToList();
+        while (!PresenceProtocol.FitsSnapshot(sessions)) sessions.RemoveAt(sessions.Count - 1);
+        Assert.InRange(sessions.Count, 2, Protocol.MaxSessions);
+        Assert.False(PresenceProtocol.FitsSnapshot(candidates.Take(sessions.Count + 1)));
         var template = new PresenceReport
         {
             Kind = PresenceKind.Started, EventId = Guid.NewGuid(), MachineId = Guid.NewGuid(),
@@ -390,11 +394,13 @@ public sealed class DashboardRuntimeTests
         Assert.Equal(25, page.State.Total);
         Assert.Null(page.State.NextOffset);
         Assert.Equal(page.State.Items.Select(item => item.Machine.MachineId).Order(), page.State.Items.Select(item => item.Machine.MachineId));
+        var pageSize = (sessions.Count + 1) / 2;
         foreach (var machine in page.State.Items)
         {
-            var first = runtime.GetSessions(machine.Machine.MachineId, limit: 32);
-            var second = runtime.GetSessions(machine.Machine.MachineId, 32, 32, first.Revision);
-            Assert.Equal(Protocol.MaxSessions, first.State.Items.Count + second.State.Items.Count);
+            var first = runtime.GetSessions(machine.Machine.MachineId, limit: pageSize);
+            Assert.Equal(pageSize, first.State.NextOffset);
+            var second = runtime.GetSessions(machine.Machine.MachineId, pageSize, pageSize, first.Revision);
+            Assert.Equal(sessions.Count, first.State.Items.Count + second.State.Items.Count);
             Assert.Null(second.State.NextOffset);
         }
         await Assert.ThrowsAsync<CapacityException>(() => runtime.Store!.AcceptAsync(template));
