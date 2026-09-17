@@ -143,6 +143,21 @@ public sealed class MachineCardPresentationTests
     }
 
     [Fact]
+    public void CompactViewReservesDpiScaledTitleBarSpaceAndKeepsTilesWithinWorkArea()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "AgentSignaler.slnx")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var compact = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "CompactWindow.cs"));
+        Assert.Contains("internal const int TopOffset = 32", compact);
+        Assert.Contains("Math.Round(TopOffset * scale)", compact);
+        Assert.Contains("Math.Max(0, workArea.Height - frameHeight - 1)", compact);
+        Assert.Contains("Math.Max(1, workArea.Height - frameHeight - topOffset)", compact);
+        Assert.Contains("workArea.Y + topOffset", compact);
+    }
+
+    [Fact]
     public void CompactHoverEscapesNarrowRootWithoutTakingFocusAndClosesWithItsOwner()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);

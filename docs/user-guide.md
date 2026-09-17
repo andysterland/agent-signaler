@@ -306,7 +306,9 @@ waiting, green for succeeded, red for failed, and neutral gray for idle/offline.
 **Compact view when minimized** is enabled by default in Settings, independently
 of the main dashboard's **Compact view** density setting. Minimizing shows only a
 vertical list of 64 x 64 tiles (Windows logical pixels), always on top at the
-top-right of the dashboard's monitor work area, without a title bar or toolbar.
+right edge of the dashboard's monitor work area, 32 logical pixels below its top
+(scaled for display DPI) to leave other applications' title-bar buttons visible,
+without a title bar or toolbar. The available list height accounts for this gap.
 Tiles show the saved display name (or hostname when blank) in small, centered text
 above the status icon; the local computer remains labeled **local**. Long names
 are shortened with an ellipsis. Tiles retain their status colors; hover

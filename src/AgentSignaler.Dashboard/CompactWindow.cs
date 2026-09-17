@@ -11,6 +11,7 @@ namespace AgentSignaler.Dashboard;
 internal sealed class CompactWindow : Window
 {
     internal const int TileSize = 64;
+    internal const int TopOffset = 32;
     private readonly StackPanel _tiles = new();
     private readonly Dictionary<Guid, CompactTile> _cards = [];
     private readonly Action _restore;
@@ -109,11 +110,13 @@ internal sealed class CompactWindow : Window
         var scale = NativeWindow.GetDpiForWindow(_handle) / 96.0;
         var width = (int)Math.Round(TileSize * scale);
         var frameHeight = AppWindow.Size.Height - AppWindow.ClientSize.Height;
+        var topOffset = Math.Min((int)Math.Round(TopOffset * scale),
+            Math.Max(0, workArea.Height - frameHeight - 1));
         var height = Math.Min((int)Math.Round(ordered.Length * TileSize * scale),
-            Math.Max(1, workArea.Height - frameHeight));
+            Math.Max(1, workArea.Height - frameHeight - topOffset));
         var size = new SizeInt32(width, height);
         if (AppWindow.ClientSize != size) AppWindow.ResizeClient(size);
-        var position = new PointInt32(workArea.X + workArea.Width - AppWindow.Size.Width, workArea.Y);
+        var position = new PointInt32(workArea.X + workArea.Width - AppWindow.Size.Width, workArea.Y + topOffset);
         if (AppWindow.Position != position) AppWindow.Move(position);
     }
 
