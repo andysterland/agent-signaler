@@ -185,6 +185,34 @@ public sealed class MachineCardPresentationTests
         Assert.Contains("foreach (var tile in _cards.Values) tile.Hover.Hide();", compact);
     }
 
+    [Fact]
+    public void CompactHoverChecksLiveCursorWhileWaitingAndOpenEvenWithoutPointerExit()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "AgentSignaler.slnx")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var source = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "CompactHoverPreview.cs"));
+        Assert.Contains("_timer.Interval = TimeSpan.FromMilliseconds(500)", source);
+        Assert.Contains("_dismissTimer.Interval = TimeSpan.FromMilliseconds(100)", source);
+        Assert.Contains("_dismissTimer.IsRepeating = true", source);
+        Assert.Contains("_dismissTimer.Tick += CheckPointer", source);
+        Assert.Contains("_dismissTimer.Start()", source);
+        Assert.Contains("if (!IsPointerOverTarget()) Hide()", source);
+        Assert.Contains("if (_hovering && IsPointerOverTarget())", source);
+        Assert.Contains("NativeWindow.GetCursorPos(out var cursor)", source);
+        Assert.Contains("NativeWindow.ScreenToClient(_window, ref cursor)", source);
+        Assert.Contains("cursor.X / root.RasterizationScale", source);
+        Assert.Contains("cursor.Y / root.RasterizationScale", source);
+        Assert.Contains("_target.TransformToVisual(root.Content)", source);
+        Assert.Contains("new Rect(0, 0, root.Size.Width, root.Size.Height).Contains(position) && bounds.Contains(position)", source);
+        Assert.DoesNotContain("args.GetCurrentPoint", source);
+        Assert.Contains("_dismissTimer.Stop()", source);
+        Assert.Contains("_dismissTimer.Tick -= CheckPointer", source);
+        Assert.Contains("_flyout.Closed += OnFlyoutClosed", source);
+        Assert.Contains("_flyout.Closed -= OnFlyoutClosed", source);
+    }
+
     private static MachineView Machine(AgentState state) =>
         new(Guid.NewGuid(), "test-machine", null, "copilot-cli", "1.0", state, null, Now, []);
 }

@@ -10,6 +10,17 @@ internal static class NativeWindow
     [DllImport("user32.dll")]
     internal static extern uint GetDpiForWindow(nint window);
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Point { public int X; public int Y; }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetCursorPos(out Point point);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ScreenToClient(nint window, ref Point point);
+
     [DllImport("user32.dll", EntryPoint = "MessageBoxW", CharSet = CharSet.Unicode)]
     private static extern int MessageBox(nint window, string text, string caption, uint type);
 
@@ -195,7 +206,7 @@ internal sealed class TrayIcon : IDisposable
         {
             AppendMenu(menu, 0, 1, "Show Agent Signaler");
             AppendMenu(menu, 0, 2, "Exit");
-            GetCursorPos(out var point);
+            NativeWindow.GetCursorPos(out var point);
             NativeWindow.SetForegroundWindow(_window);
             var command = TrackPopupMenu(menu, 0x0100 | 0x0002, point.X, point.Y, 0, _window, 0);
             if (command == 1) _show();
@@ -235,9 +246,6 @@ internal sealed class TrayIcon : IDisposable
         public nint BalloonIcon;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Point { public int X; public int Y; }
-
     [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShellNotifyIcon(uint command, ref NotifyIconData data);
@@ -255,9 +263,6 @@ internal sealed class TrayIcon : IDisposable
     private static extern bool AppendMenu(nint menu, uint flags, nuint id, string text);
     [DllImport("user32.dll")]
     private static extern uint TrackPopupMenu(nint menu, uint flags, int x, int y, int reserved, nint window, nint rect);
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyMenu(nint menu);

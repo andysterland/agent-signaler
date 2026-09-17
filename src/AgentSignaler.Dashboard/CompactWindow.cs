@@ -153,7 +153,7 @@ internal sealed class CompactWindow : Window
             ContextFlyout = menu
         };
         var hover = new CompactHoverPreview(container, card.HoverPreview
-            ?? throw new InvalidOperationException("The compact machine preview is unavailable."));
+            ?? throw new InvalidOperationException("The compact machine preview is unavailable."), _handle);
         return new CompactTile(card, container, connect, hover);
     }
 
