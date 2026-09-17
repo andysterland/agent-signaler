@@ -21,7 +21,7 @@ internal sealed class CopilotsDetailsView : IDisposable
         SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch
     };
     private readonly TextBlock _summary = MainWindow.Text("");
-    private readonly CheckBox _retained = new() { Content = "Include retained/ended history (not connected)", IsChecked = true };
+    private readonly CheckBox _retained = new() { Content = "Include retained history", IsChecked = true };
     private readonly Grid _listRoot = new() { RowSpacing = 8 };
     private readonly Grid _drill = new() { RowSpacing = 8, Visibility = Visibility.Collapsed };
     private TranscriptDetailsView? _transcript;

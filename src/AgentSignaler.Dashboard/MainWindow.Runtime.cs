@@ -60,6 +60,7 @@ internal sealed partial class MainWindow
 
     private static string RuntimeFailureMessage(RuntimeError error) => error.Code switch
     {
+        1001 when error.Field == "localMachine" => "The local machine cannot be removed.",
         1001 => "The supplied value is invalid. Check the fields and retry.",
         1002 => "The machine was removed.",
         1003 => "Another operation uses these resources. Wait or cancel it, then retry.",

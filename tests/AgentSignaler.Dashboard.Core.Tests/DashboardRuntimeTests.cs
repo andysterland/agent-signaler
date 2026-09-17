@@ -419,6 +419,27 @@ public sealed class DashboardRuntimeTests
         Assert.Equal(RuntimeCommitState.Committed, removed.CommitState);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalMachineCannotBeRemovedEvenWithConfirmation(bool changeCase)
+    {
+        await using var fixture = new Fixture();
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        var id = await fixture.AddMachineAsync(machineName: changeCase
+            ? Environment.MachineName.ToLowerInvariant() : Environment.MachineName);
+        var before = runtime.GetMachine(id);
+        var result = await runtime.RemoveMachineAsync(id, true, runtime.HostInstanceId, before.Revision);
+        Assert.False(result.Succeeded);
+        Assert.Equal(1001, result.Error!.Code);
+        Assert.Equal("localMachine", result.Error.Field);
+        Assert.False(result.Error.Retryable);
+        Assert.Equal(RuntimeCommitState.NotCommitted, result.CommitState);
+        Assert.Equal(before.State.Machine, runtime.GetMachine(id).State.Machine);
+        Assert.Contains(await runtime.Store!.GetMachinesAsync(), machine => machine.MachineId == id);
+    }
+
     [Fact]
     public async Task SettingsPersistSavedNotOverriddenValuesAndPreserveUnknownAndVisualFields()
     {

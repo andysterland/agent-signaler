@@ -16,7 +16,8 @@ public sealed class TranscriptDetailsSourceTests
                      "refreshCatalog", "catalogStatus", "connectionStatus", "refreshed", "connectionUri", "copyConnectionUri" })
             Assert.Contains($"content.Children.Add({control});", source);
         Assert.Contains("saveDetails.Visibility = removeMachine.Visibility = settingsSelected ? Visibility.Visible : Visibility.Collapsed;", source);
-        Assert.Contains("saveDetails.IsEnabled = removeMachine.IsEnabled = SettingsSelected() && machineExists && !busy;", source);
+        Assert.Contains("saveDetails.IsEnabled = SettingsSelected() && machineExists && !busy;", source);
+        Assert.Contains("removeMachine.IsEnabled = !local && saveDetails.IsEnabled;", source);
         Assert.Contains("if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || savingDetails || _exiting)", source);
         Assert.Contains("if (savingDetails && !_exiting)", source);
         Assert.Contains("closeDetails.IsEnabled = !savingDetails;", source);
@@ -27,6 +28,26 @@ public sealed class TranscriptDetailsSourceTests
         Assert.Contains("sharedProgress.Children.Add(cancelCatalog);", source);
         Assert.Contains("Content = \"Clear transcript\"", source);
         Assert.Contains("_server?.Transcripts.ClearMachine(id, removed: true);", source);
+    }
+
+    [Fact]
+    public void MachineTabsMoveExplanationsIntoAccessibleTopRightHelp()
+    {
+        var source = ReadDashboard("MainWindow.cs");
+        Assert.Contains("CreateHelpLayout(\"Machine settings\"", source);
+        Assert.Contains("CreateHelpLayout(\"Copilots\", copilotsView.Root, copilotsHelp)", source);
+        Assert.Contains("CreateHelpLayout(title, new ScrollViewer", source);
+        Assert.Contains("Content = new SymbolIcon(Symbol.Help)", source);
+        Assert.Contains("HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top", source);
+        Assert.Contains("AutomationProperties.SetHelpText(helpButton", source);
+        Assert.Contains("ToolTipService.SetToolTip(helpButton, new ToolTip", source);
+        Assert.Contains("settingsHelp.Children.Add(Text(\"Only Save mapping", source);
+        Assert.Contains("settingsHelp.Children.Add(Text(\"This anonymous prototype", source);
+        Assert.Contains("settingsHelp.Children.Add(Text(\"Closing the sign-in browser", source);
+        Assert.DoesNotContain("content.Children.Add(Text(\"Only Save mapping", source);
+        Assert.DoesNotContain("sharedProgress.Children.Add(Text(\"Closing the sign-in browser", source);
+        Assert.Contains("content.Children.Add(validation)", source);
+        Assert.Contains("content.Children.Add(transcriptSettings)", source);
     }
 
     [Fact]

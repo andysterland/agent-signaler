@@ -561,6 +561,36 @@ internal sealed partial class MainWindow : Window
             ? Color.FromArgb(255, 30, 41, 59) : Color.FromArgb(255, 226, 232, 240));
     }
 
+    private static Grid CreateHelpLayout(string title, UIElement content, StackPanel help)
+    {
+        var layout = new Grid { Padding = new Thickness(0, 12, 12, 0), ColumnSpacing = 12 };
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        layout.Children.Add(content);
+        var helpButton = new Button
+        {
+            Content = new SymbolIcon(Symbol.Help), Width = 32, Height = 32, Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top
+        };
+        AutomationProperties.SetName(helpButton, $"{title} help");
+        AutomationProperties.SetHelpText(helpButton, string.Join("\n\n", help.Children.OfType<TextBlock>().Select(block => block.Text)));
+        ToolTipService.SetToolTip(helpButton, new ToolTip
+        {
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left,
+            MaxWidth = 440,
+            Content = new ScrollViewer
+            {
+                Content = help, MaxWidth = 400, MaxHeight = 360,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            }
+        });
+        Grid.SetColumn(helpButton, 1);
+        layout.Children.Add(helpButton);
+        return layout;
+    }
+
     private async Task ShowDetailsAsync(Guid id, string? connectionMessage = null)
     {
         if (_exiting || _dialogOpen || _store is null || _connections is null || !_cardMap.TryGetValue(id, out var card))
@@ -575,14 +605,13 @@ internal sealed partial class MainWindow : Window
         var local = MachineNavigation.IsLocal(card.Machine);
         var name = new TextBox
         {
-            Header = local ? "Display name (local computer is always shown as local)" : "Display name (blank uses hostname)",
+            Header = "Display name",
             Text = card.Machine.DisplayName ?? "",
             MaxLength = 128, PlaceholderText = card.Machine.MachineName
         };
         var note = new TextBox
         {
-            Header = "Note/description", Text = card.Machine.Note ?? "",
-            PlaceholderText = "Shown when hovering over the computer tile",
+            Header = "Note", Text = card.Machine.Note ?? "",
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80
         };
         var detailsRevision = _runtime.GetMachine(id).Revision;
@@ -591,7 +620,7 @@ internal sealed partial class MainWindow : Window
         var validation = Text("");
         var picker = new ComboBox
         {
-            Header = "Mapped Dev Box", PlaceholderText = "Refresh the Dev Box list, then choose a Dev Box",
+            Header = "Mapped Dev Box", PlaceholderText = "Choose a Dev Box",
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var mappingSummary = Text("");
@@ -645,25 +674,32 @@ internal sealed partial class MainWindow : Window
                 ? new(item, snapshot.AzureAccountUpn, snapshot.AzureTenantId) : null;
         LoadPicker(useSavedMapping: true);
         var content = new StackPanel { Spacing = 12, MinWidth = 280 };
+        var settingsHelp = new StackPanel { Spacing = 10 };
+        settingsHelp.Children.Add(Text("Leave the display name blank to use the hostname. The local computer is always shown as local and cannot be removed. " +
+            "Notes are shown when hovering over the computer tile."));
         content.Children.Add(name);
         content.Children.Add(note);
         content.Children.Add(current);
         content.Children.Add(validation);
         var connectionStart = content.Children.Count;
         content.Children.Add(Text("Windows App connection", 18));
-        content.Children.Add(Text("Use the assigned Dev Box mapping, not the reported hostname or display name."));
-        content.Children.Add(Text("Only Save mapping commits your selection after verifying a fresh connection. Refresh connection and Open use the saved mapping."));
+        if (!local)
+        {
+            settingsHelp.Children.Add(Text("Refresh the Dev Box list, then choose a Dev Box. Use the assigned Dev Box mapping, not the reported hostname or display name."));
+            settingsHelp.Children.Add(Text("Only Save mapping commits your selection after verifying a fresh connection. Refresh connection and Open use the saved mapping."));
+        }
         content.Children.Add(picker);
         content.Children.Add(mappingSummary);
         content.Children.Add(refreshCatalog);
         content.Children.Add(catalogStatus);
         content.Children.Add(connectionStatus);
         content.Children.Add(refreshed);
-        content.Children.Add(Text("Windows App launch URI (last retrieved)", 16));
+        content.Children.Add(Text("Launch URI", 16));
         content.Children.Add(connectionUri);
         content.Children.Add(copyConnectionUri);
-        content.Children.Add(Text("Uses the saved Dev Box mapping. Save a mapping or refresh the connection to retrieve its URI. " +
-            "The URI includes account information; only share it with people you trust."));
+        if (!local)
+            settingsHelp.Children.Add(Text("The launch URI is the last retrieved Windows App connection and uses the saved Dev Box mapping. Save a mapping or refresh the connection to retrieve its URI. " +
+                "The URI includes account information; only share it with people you trust."));
         foreach (var action in actions)
         {
             content.Children.Add(action);
@@ -672,16 +708,18 @@ internal sealed partial class MainWindow : Window
         if (local)
         {
             foreach (var control in content.Children.Skip(connectionStart)) control.Visibility = Visibility.Collapsed;
-            content.Children.Add(Text("This computer is shown as local. Return to local minimizes only Windows App sessions. " +
+            settingsHelp.Children.Add(Text("This computer is shown as local. Return to local minimizes only Windows App sessions. " +
                 "Reporting uses the normal Client and configured dashboard HTTPS URL; no Dev Box mapping is required."));
         }
         var transcriptSettings = Text(TranscriptReceiverDescription());
         content.Children.Add(Text("Detailed conversations", 18));
         content.Children.Add(transcriptSettings);
-        content.Children.Add(Text("This anonymous prototype does not authenticate reporting identities. Permission is obtained outside the app. " +
+        settingsHelp.Children.Add(Text("This anonymous prototype does not authenticate reporting identities. Permission is obtained outside the app. " +
             "Text can contain personal information. Retention is memory-only for at most 30 minutes, not an archive or a guarantee against OS paging or host history."));
         var clearTranscript = new Button { Content = "Clear transcript" };
         content.Children.Add(clearTranscript);
+        settingsHelp.Children.Add(Text("Clear transcript clears locally retained text. Future reception is unchanged; old queued content is not replayed."));
+        settingsHelp.Children.Add(Text("Closing the sign-in browser does not cancel sign-in. Use Cancel, close this dialog, or Exit Dashboard."));
         var tabs = new TabView
         {
             IsAddTabButtonVisible = false, CanDragTabs = false, CanReorderTabs = false,
@@ -690,14 +728,19 @@ internal sealed partial class MainWindow : Window
         var settingsTab = new TabViewItem
         {
             Header = "Settings", IsClosable = false,
-            Content = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }
+            Content = CreateHelpLayout("Machine settings",
+                new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }, settingsHelp)
         };
         var copilotsView = new CopilotsDetailsView(_server?.Transcripts, DispatcherQueue, card.Machine);
         _copilotsView = copilotsView;
+        var copilotsHelp = new StackPanel { Spacing = 10 };
+        copilotsHelp.Children.Add(Text("Copilots shows sessions and their latest accepted status events. Include retained history to show ended sessions; retained history does not mean a Copilot is connected."));
+        copilotsHelp.Children.Add(Text("View transcript opens retained observations for the selected Copilot. Choose a retained stream and use Older retained entries or Latest to navigate. Back to Copilots returns to the session list."));
+        copilotsHelp.Children.Add(Text("Transcripts are read-only, memory-only observations retained for at most 30 minutes. Missing or expired text cannot be recovered here. Reporting identities are not authenticated, and text may contain personal information."));
         var copilotsTab = new TabViewItem
         {
             Header = "Copilots", IsClosable = false,
-            Content = copilotsView.Root
+            Content = CreateHelpLayout("Copilots", copilotsView.Root, copilotsHelp)
         };
         tabs.TabItems.Add(settingsTab);
         tabs.TabItems.Add(copilotsTab);
@@ -711,12 +754,12 @@ internal sealed partial class MainWindow : Window
         sharedProgress.Children.Add(progress);
         sharedProgress.Children.Add(cancel);
         sharedProgress.Children.Add(cancelCatalog);
-        sharedProgress.Children.Add(Text("Closing the sign-in browser does not cancel sign-in. Use Cancel, close this dialog, or Exit Dashboard."));
         var footer = new ScrollViewer { Content = sharedProgress, MaxHeight = 120 };
         Grid.SetRow(footer, 1);
         detailsLayout.Children.Add(footer);
         var saveDetails = new Button { Content = "Save details" };
         var removeMachine = new Button { Content = "Remove" };
+        if (local) ToolTipService.SetToolTip(removeMachine, "The local machine cannot be removed.");
         var remote = new Button { Content = local ? "Return to local" : "Remote" };
         var closeDetails = new Button { Content = "Close" };
         ToolTipService.SetToolTip(remote, local ? "Minimize Windows App sessions only." : "Connect or reuse the existing Windows App session.");
@@ -787,7 +830,8 @@ internal sealed partial class MainWindow : Window
                 cancel.IsEnabled = connectionBusy;
                 note.IsEnabled = machineExists && !busy;
                 name.IsEnabled = !local && machineExists && !busy;
-                saveDetails.IsEnabled = removeMachine.IsEnabled = SettingsSelected() && machineExists && !busy;
+                saveDetails.IsEnabled = SettingsSelected() && machineExists && !busy;
+                removeMachine.IsEnabled = !local && saveDetails.IsEnabled;
                 closeDetails.IsEnabled = !savingDetails;
                 clearTranscript.IsEnabled = SettingsSelected() && machineExists && !busy;
                 transcriptSettings.Text = TranscriptReceiverDescription();
@@ -955,6 +999,11 @@ internal sealed partial class MainWindow : Window
         };
         removeMachine.Click += (_, _) =>
         {
+            if (local)
+            {
+                validation.Text = "The local machine cannot be removed.";
+                return;
+            }
             if (!SettingsSelected() || !machineExists || connections.IsBusy(id) || savingDetails || _exiting) return;
             requestedResult = ContentDialogResult.Secondary;
             dialog.Hide();
@@ -1074,36 +1123,13 @@ internal sealed partial class MainWindow : Window
             };
             TabViewItem AddSection(string title, StackPanel section, StackPanel help)
             {
-                var layout = new Grid { Padding = new Thickness(0, 12, 12, 0), ColumnSpacing = 12 };
-                layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                layout.Children.Add(new ScrollViewer
+                var layout = CreateHelpLayout(title, new ScrollViewer
                 {
                     Content = section,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch
-                });
-                var helpButton = new Button
-                {
-                    Content = new SymbolIcon(Symbol.Help), Width = 32, Height = 32, Padding = new Thickness(0),
-                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top
-                };
-                AutomationProperties.SetName(helpButton, $"{title} help");
-                ToolTipService.SetToolTip(helpButton, new ToolTip
-                {
-                    Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left,
-                    MaxWidth = 440,
-                    Content = new ScrollViewer
-                    {
-                        Content = help, MaxWidth = 400, MaxHeight = 360,
-                        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                        HorizontalContentAlignment = HorizontalAlignment.Stretch
-                    }
-                });
-                Grid.SetColumn(helpButton, 1);
-                layout.Children.Add(helpButton);
+                }, help);
                 var tab = new TabViewItem
                 {
                     Header = title, IsClosable = false, Content = layout

@@ -197,6 +197,8 @@ public sealed partial class DashboardRuntime
         {
             if (!confirmed) throw new RuntimeCommandException(new(1009, "confirmed", false));
             RequireMachine(id, expectedHostInstanceId, expectedRevision);
+            if (MachineNavigation.IsLocal(GetMachine(id).State.Machine))
+                throw new RuntimeCommandException(new(1001, "localMachine", false));
             token.ThrowIfCancellationRequested();
             commit.State = RuntimeCommitState.Unknown;
             await store!.RemoveAsync(id, token).ConfigureAwait(false);
