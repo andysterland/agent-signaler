@@ -3,15 +3,24 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
-$json = & dotnet list (Join-Path $root 'AgentSignaler.slnx') package --vulnerable --include-transitive --format json
-if ($LASTEXITCODE) { throw 'NuGet dependency audit could not complete.' }
+$solutionPath = Join-Path $root 'AgentSignaler.slnx'
+[xml] $solution = Get-Content -LiteralPath $solutionPath -Raw
+# Solution restore skips disabled installer projects, but the audit includes them.
+foreach ($project in $solution.SelectNodes('//Project[Build[@Project="false"]]')) {
+    & dotnet restore (Join-Path $root $project.GetAttribute('Path')) -p:Platform=x64
+    if ($LASTEXITCODE) { throw 'An excluded solution project could not be restored for dependency audit.' }
+}
+$json = & dotnet list $solutionPath package --vulnerable --include-transitive --format json
+if ($LASTEXITCODE) { throw "NuGet dependency audit could not complete (exit code $LASTEXITCODE)." }
 $audit = $json -join "`n" | ConvertFrom-Json
 if (($audit.PSObject.Properties.Name -contains 'logs' -and @($audit.logs).Count -gt 0) -or
+    ($audit.PSObject.Properties.Name -contains 'problems' -and @($audit.problems).Count -gt 0) -or
     @($audit.projects).Count -eq 0) {
     throw 'NuGet audit returned diagnostics or no projects; absence of findings is not a completed audit.'
 }
 foreach ($project in $audit.projects) {
-    if ($project.PSObject.Properties.Name -contains 'logs' -and @($project.logs).Count -gt 0) {
+    if (($project.PSObject.Properties.Name -contains 'logs' -and @($project.logs).Count -gt 0) -or
+        ($project.PSObject.Properties.Name -contains 'problems' -and @($project.problems).Count -gt 0)) {
         throw 'A project dependency audit did not complete cleanly.'
     }
     if ($project.PSObject.Properties.Name -notcontains 'frameworks') { continue }
