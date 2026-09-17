@@ -31,7 +31,8 @@ public sealed class TranscriptDetailsSourceTests
     public void RemoteButtonRemainsInSharedFooterAndUsesGuardedWindowsAppOpenFlow()
     {
         var source = ReadDashboard("MainWindow.cs");
-        Assert.Contains("var remote = new Button { Content = \"Remote\" };", source);
+        Assert.Contains("var local = MachineNavigation.IsLocal(card.Machine);", source);
+        Assert.Contains("var remote = new Button { Content = local ? \"Return to local\" : \"Remote\" };", source);
         Assert.Contains("new[] { saveDetails, removeMachine, remote, closeDetails }", source);
         Assert.Contains("Grid.SetRow(detailActions, 2);", source);
         Assert.Contains("detailsLayout.Children.Add(detailActions);", source);
