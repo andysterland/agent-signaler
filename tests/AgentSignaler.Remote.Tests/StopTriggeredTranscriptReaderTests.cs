@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using Xunit;
 
@@ -16,8 +18,44 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
 
     public StopTriggeredTranscriptReaderTests()
     {
-        Directory.CreateDirectory(_root);
+        CreateOwnedDirectory(_root);
         _adapter = new(_root);
+    }
+
+    private static void CreateOwnedDirectory(string path)
+    {
+        var directory = new DirectoryInfo(path);
+        if (!OperatingSystem.IsWindows())
+        {
+            directory.Create();
+            return;
+        }
+        using var current = WindowsIdentity.GetCurrent();
+        var security = new DirectorySecurity();
+        // Elevated runners can default to Administrators as owner rather than the current user.
+        security.SetOwner(current.User!);
+        security.AddAccessRule(new FileSystemAccessRule(current.User!, FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None,
+            AccessControlType.Allow));
+        directory.Create(security);
+    }
+
+    private static void WriteTranscriptFile(string path, string contents)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(path, contents);
+            return;
+        }
+        using var current = WindowsIdentity.GetCurrent();
+        var security = new FileSecurity();
+        security.SetOwner(current.User!);
+        security.AddAccessRule(new FileSystemAccessRule(current.User!, FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        using var file = new FileInfo(path).Create(FileMode.Create, FileSystemRights.Write, FileShare.Read,
+            4096, FileOptions.None, security);
+        using var writer = new StreamWriter(file);
+        writer.Write(contents);
     }
 
     private LocalTranscriptReference Reference(string session = "session-a") => new(_adapter.Source, session,
@@ -41,7 +79,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task FirstStopBaselinesAndNewCompleteAssistantOnlyIsEmittedOnce()
     {
-        File.WriteAllText(FilePath, SyntheticTranscriptFileAdapter.Record("OLD-HISTORY"));
+        WriteTranscriptFile(FilePath, SyntheticTranscriptFileAdapter.Record("OLD-HISTORY"));
         await using var reader = Reader();
         await Stop(reader);
         Assert.Empty(Replies);
@@ -64,7 +102,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     public async Task BaselineInsideFrameDiscardsItsLaterCompletion()
     {
         var old = SyntheticTranscriptFileAdapter.Record("PRE-BASELINE");
-        File.WriteAllText(FilePath, old[..20]);
+        WriteTranscriptFile(FilePath, old[..20]);
         await using var reader = Reader();
         await Stop(reader);
         File.AppendAllText(FilePath, old[20..] + SyntheticTranscriptFileAdapter.Record("NEW"));
@@ -75,7 +113,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task IncompleteAppendWaitsForLaterStopWithoutRetainedBufferOrPolling()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         var data = SyntheticTranscriptFileAdapter.Record("FINISHED-LATER");
@@ -94,7 +132,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task DelayedFlushIsReadByOneOfTheFixedRetries()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         var data = SyntheticTranscriptFileAdapter.Record("DELAYED");
@@ -102,7 +140,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
         var clock = new RetryTimeProvider(() => File.AppendAllText(FilePath, data[20..]));
         await using var retryReader = Reader(clock);
         // Establish this reader's baseline before appending a new partial frame.
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await Stop(retryReader);
         File.AppendAllText(FilePath, data[..20]);
         await Stop(retryReader);
@@ -113,14 +151,14 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task ReplacementAndTruncationRebaselineWithoutHistoryReplay()
     {
-        File.WriteAllText(FilePath, SyntheticTranscriptFileAdapter.Record(new string('a', 200)));
+        WriteTranscriptFile(FilePath, SyntheticTranscriptFileAdapter.Record(new string('a', 200)));
         await using var reader = Reader();
         await Stop(reader);
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await Stop(reader);
         Assert.True(Has(TranscriptReaderCategories.Truncated));
         File.Delete(FilePath);
-        File.WriteAllText(FilePath, SyntheticTranscriptFileAdapter.Record("REPLACEMENT-HISTORY"));
+        WriteTranscriptFile(FilePath, SyntheticTranscriptFileAdapter.Record("REPLACEMENT-HISTORY"));
         await Stop(reader);
         Assert.True(Has(TranscriptReaderCategories.IdentityChanged));
         File.AppendAllText(FilePath, SyntheticTranscriptFileAdapter.Record("NEW-REPLY"));
@@ -131,7 +169,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task InvalidEncodingAndSessionMismatchAreGapsNotReplies()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         using (var file = File.OpenWrite(FilePath)) file.Write([0xC3, 0x28, 0x0A]);
@@ -146,7 +184,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task ReplyAndEncodedRecordBudgetsDropBacklogAndRebaseline()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         File.AppendAllText(FilePath, string.Concat(Enumerable.Range(0, 20).Select(i =>
@@ -166,7 +204,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task EncodedRecordLimitIncludesFramingByte()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         var overhead = Encoding.UTF8.GetByteCount(SyntheticTranscriptFileAdapter.Record(""));
         var text = new string('x', StopTriggeredTranscriptReader.MaximumRecordBytes - overhead);
         var exact = SyntheticTranscriptFileAdapter.Record(text);
@@ -185,7 +223,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task RecordBudgetCountsIgnoredRecords()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         File.AppendAllText(FilePath, string.Concat(Enumerable.Repeat(
@@ -201,7 +239,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task InspectedByteBudgetIncludesIgnoredRecordsAndSkipsBacklog()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         var parsed = 0;
         _adapter.Parsing = () => parsed++;
         await using var reader = Reader();
@@ -219,7 +257,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task NormalizedOutputBudgetIsSharedAcrossRecords()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         File.AppendAllText(FilePath, string.Concat(Enumerable.Repeat(
@@ -233,7 +271,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task PassDeadlineCancelsAdmissionAndRebaselinesNextStop()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         var clock = new AdmissionDeadlineTimeProvider();
         await using var reader = Reader(clock, async (value, token) =>
         {
@@ -260,7 +298,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var clock = new OffsetTimeProvider();
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader(clock, async (value, token) =>
         {
             _output.Enqueue(value);
@@ -291,7 +329,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
         await Stop(reader);
         Assert.Equal([TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(300)], clock.RetryDueTimes);
         Assert.True(Has(TranscriptReaderCategories.Unavailable));
-        File.WriteAllText(FilePath, SyntheticTranscriptFileAdapter.Record("CREATED-LATER"));
+        WriteTranscriptFile(FilePath, SyntheticTranscriptFileAdapter.Record("CREATED-LATER"));
         Assert.Empty(Replies);
         await Stop(reader);
         Assert.Empty(Replies);
@@ -301,7 +339,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task ExitCancelsRetryWaitAndReleasesScratch()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         var clock = new BlockedRetryTimeProvider();
         var reader = Reader(clock);
         await Stop(reader);
@@ -317,7 +355,8 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task FilesAboveSizeCeilingNeverParse()
     {
-        using (var file = File.Create(FilePath))
+        WriteTranscriptFile(FilePath, "");
+        using (var file = File.OpenWrite(FilePath))
             file.SetLength(StopTriggeredTranscriptReader.MaximumFileBytes + 1L);
         _adapter.Parsing = () => Assert.Fail("An oversized file must not parse");
         await using var reader = Reader();
@@ -328,7 +367,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task OutputRejectionCommitsOffsetWithGapInsteadOfRereading()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader(callback: (value, _) =>
         {
             _output.Enqueue(value);
@@ -345,7 +384,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task ReadinessAndRevisionAreRecheckedBeforeOutput()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         await using var reader = Reader();
         await Stop(reader);
         File.AppendAllText(FilePath, SyntheticTranscriptFileAdapter.Record("STALE"));
@@ -359,7 +398,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task ResetCancelsBlockedAdmissionAndReenableStartsFresh()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var reader = Reader(callback: async (value, token) =>
         {
@@ -385,7 +424,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task PendingStopsCoalesceAndOnlyOneSuccessorPerSessionRuns()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var reader = Reader(callback: async (value, token) =>
@@ -412,7 +451,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public async Task SharedScratchCapacityDoesNotOpenOrRetainFileBuffers()
     {
-        File.WriteAllText(FilePath, "HISTORY");
+        WriteTranscriptFile(FilePath, "HISTORY");
         using var occupied = _scratch.TryReserve(128 * 1024);
         await using var reader = Reader();
         await Stop(reader);
@@ -428,7 +467,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
         for (var i = 0; i < 9; i++)
         {
             var reference = Reference("session-" + i);
-            File.WriteAllText(reference.Path, "");
+            WriteTranscriptFile(reference.Path, "");
             Assert.Null(reader.TrySchedule(reference));
             await reader.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
         }
@@ -455,7 +494,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
             for (var i = 0; i < 8; i++)
             {
                 var reference = Reference("session-" + i) with { Source = adapter.Source };
-                File.WriteAllText(reference.Path, "");
+                WriteTranscriptFile(reference.Path, "");
                 Assert.Null(reader.TrySchedule(reference));
                 await reader.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
@@ -495,7 +534,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     {
         // Directory junction creation does not require symbolic-link privileges.
         var nested = Path.Combine(_root, "nested");
-        Directory.CreateDirectory(nested);
+        CreateOwnedDirectory(nested);
         var junction = Path.Combine(_root, "junction");
         using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
@@ -507,7 +546,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
         Assert.Equal(0, process.ExitCode);
         var adapter = new SyntheticTranscriptFileAdapter(junction);
         var reference = Reference() with { Path = Path.Combine(junction, "session-a.synthetic") };
-        File.WriteAllText(Path.Combine(nested, "session-a.synthetic"), "");
+        WriteTranscriptFile(Path.Combine(nested, "session-a.synthetic"), "");
         var error = Assert.Throws<TranscriptFileBoundaryException>(() => TranscriptFileBoundary.Open(reference, adapter));
         Assert.Equal(TranscriptReaderCategories.PathRejected, error.Category);
         Directory.Delete(junction);
@@ -517,7 +556,10 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     public void HardLinksAreRejectedOnHandleAndCurrentUserOwnedFileIsReadable()
     {
         if (!OperatingSystem.IsWindows()) return;
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
+        using var current = WindowsIdentity.GetCurrent();
+        Assert.Equal(current.User, new DirectoryInfo(_root).GetAccessControl().GetOwner(typeof(SecurityIdentifier)));
+        Assert.Equal(current.User, new FileInfo(FilePath).GetAccessControl().GetOwner(typeof(SecurityIdentifier)));
         var hardLink = Path.Combine(_root, "linked.synthetic");
         Assert.True(CreateHardLink(hardLink, FilePath, IntPtr.Zero));
         var error = Assert.Throws<TranscriptFileBoundaryException>(() => TranscriptFileBoundary.Open(Reference(), _adapter));
@@ -530,7 +572,7 @@ public sealed class StopTriggeredTranscriptReaderTests : IDisposable
     [Fact]
     public void ReadOnlyHandleAllowsHostWritingAndDeletionAndCannotWrite()
     {
-        File.WriteAllText(FilePath, "");
+        WriteTranscriptFile(FilePath, "");
         using var file = TranscriptFileBoundary.Open(Reference(), _adapter);
         Assert.False(file.Stream.CanWrite);
         using (var writer = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
