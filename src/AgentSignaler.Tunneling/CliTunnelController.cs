@@ -13,6 +13,7 @@ public sealed class CliTunnelController : IAsyncDisposable
     private readonly Func<TunnelIdentity, CancellationToken, Task> persist;
     private readonly ITunnelProcessRunner runner;
     private readonly ITunnelHealthProbe probe;
+    private readonly TunnelDiagnostics diagnostics;
     private readonly bool ownsProbe;
     private readonly SemaphoreSlim operations = new(1, 1);
     private readonly object sync = new();
@@ -36,6 +37,10 @@ public sealed class CliTunnelController : IAsyncDisposable
 
     public CliTunnelController(TunnelOptions options, Func<TunnelIdentity, CancellationToken, Task> persistIdentity,
         ITunnelProcessRunner runner, ITunnelHealthProbe probe)
+        : this(options, persistIdentity, runner, probe, null) { }
+
+    internal CliTunnelController(TunnelOptions options, Func<TunnelIdentity, CancellationToken, Task> persistIdentity,
+        ITunnelProcessRunner runner, ITunnelHealthProbe probe, Action<string>? debugOutput)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(persistIdentity);
@@ -58,6 +63,7 @@ public sealed class CliTunnelController : IAsyncDisposable
         persist = persistIdentity;
         this.runner = runner;
         this.probe = probe;
+        diagnostics = new(debugOutput);
         identity = options.Identity;
     }
 
@@ -96,6 +102,7 @@ public sealed class CliTunnelController : IAsyncDisposable
     {
         var requestedGeneration = Interlocked.Read(ref generation);
         await operations.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var startupTiming = diagnostics.Begin("Sharing startup");
         CancellationTokenSource? start = null;
         var keepHost = false;
         try
@@ -114,22 +121,31 @@ public sealed class CliTunnelController : IAsyncDisposable
             }
             await StopHostAsync().ConfigureAwait(false);
             var token = start.Token;
-            SetStatus(TunnelState.CheckingAccount, "Checking the installed CLI and signed-in account.");
             await CheckAccountCoreAsync(token).ConfigureAwait(false);
-            await probe.VerifyAsync(new Uri($"http://127.0.0.1:{receiverPort}/"), token).ConfigureAwait(false);
+            using (var localHealth = BeginStage(TunnelState.Preparing, "Checking local receiver health..."))
+            {
+                await probe.VerifyAsync(new Uri($"http://127.0.0.1:{receiverPort}/"), token).ConfigureAwait(false);
+                localHealth.Complete();
+            }
             var pending = Identity.PendingTunnelId is not null;
             JsonDocument? tunnel = null;
             var recreated = false;
             if (Identity.TunnelId is { } existing)
             {
+                using var lookup = BeginStage(TunnelState.Preparing, "Looking up the saved Dev Tunnel...");
                 tunnel = await LookupAsync(existing, token).ConfigureAwait(false);
                 recreated = tunnel is null;
+                lookup.Complete();
             }
             else if (Identity.PendingTunnelId is { } intent)
+            {
+                using var lookup = BeginStage(TunnelState.Preparing, "Looking up the pending Dev Tunnel...");
                 tunnel = await LookupAsync(intent, token).ConfigureAwait(false);
+                lookup.Complete();
+            }
             if (tunnel is null)
             {
-                SetStatus(TunnelState.Creating, recreated
+                using var creation = BeginStage(TunnelState.Creating, recreated
                     ? "The previous tunnel is confirmed absent. Creating a replacement; update remote settings with its new URL."
                     : "Creating a private application-owned tunnel.");
                 var intentId = Identity.PendingTunnelId ?? $"agentsignaler-{Guid.NewGuid():N}";
@@ -137,6 +153,7 @@ public sealed class CliTunnelController : IAsyncDisposable
                 pending = true;
                 tunnel = await JsonCommandAsync(token, "create", intentId, "--description", Description,
                     "--expiration", "1d", "--json").ConfigureAwait(false);
+                creation.Complete();
             }
             using (tunnel)
             {
@@ -151,7 +168,7 @@ public sealed class CliTunnelController : IAsyncDisposable
             if (pending)
                 await SaveAsync(Identity with { PendingTunnelId = null }, token).ConfigureAwait(false);
 
-            SetStatus(TunnelState.Starting, "Starting the owned relay host.");
+            using var hosting = BeginStage(TunnelState.Starting, "Starting the owned relay host...");
             var ready = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             var outputFailure = new TaskCompletionSource<TunnelException>(TaskCreationOptions.RunContinuationsAsynchronously);
             var parser = new TunnelHostOutputParser(id, receiverPort);
@@ -176,11 +193,13 @@ public sealed class CliTunnelController : IAsyncDisposable
             var first = await Task.WhenAny(ready.Task, currentHost.Completion).WaitAsync(token).ConfigureAwait(false);
             if (first == currentHost.Completion) throw new TunnelException("The relay host exited before becoming ready.");
             var uri = await ready.Task.ConfigureAwait(false);
-            SetStatus(TunnelState.Verifying, "Relay ready; verifying anonymous public HTTPS health.");
+            hosting.Complete();
+            using var publicHealth = BeginStage(TunnelState.Verifying, "Relay ready; verifying anonymous public HTTPS health...");
             await probe.VerifyAsync(uri, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             if (currentHost.Completion.IsCompleted) throw new TunnelException("The relay host exited during verification.");
             if (outputFailure.Task.IsCompleted) throw await outputFailure.Task.ConfigureAwait(false);
+            publicHealth.Complete();
             lock (sync)
             {
                 token.ThrowIfCancellationRequested();
@@ -192,6 +211,7 @@ public sealed class CliTunnelController : IAsyncDisposable
             hostLifetime = new CancellationTokenSource();
             monitoring = MonitorHostAsync(currentHost, requestedGeneration, uri, outputFailure.Task, hostLifetime.Token);
             keepHost = true;
+            startupTiming.Complete();
         }
         catch (OperationCanceledException)
         {
@@ -239,7 +259,6 @@ public sealed class CliTunnelController : IAsyncDisposable
                 if (requestedGeneration != generation) return Status;
                 activeStart = operation;
             }
-            if (host is null) SetStatus(TunnelState.CheckingAccount, "Checking the installed CLI and signed-in Microsoft account.");
             await CheckAccountCoreAsync(operation.Token).ConfigureAwait(false);
             if (host is null) SetStatus(TunnelState.Stopped, "Microsoft CLI account is ready. Sharing starts only when explicitly requested.");
         }
@@ -357,7 +376,14 @@ public sealed class CliTunnelController : IAsyncDisposable
 
     private async Task CheckAccountCoreAsync(CancellationToken token)
     {
-        await CheckVersionAsync(token).ConfigureAwait(false);
+        if (host is null) SetStatus(TunnelState.CheckingCli, "Checking Dev Tunnels CLI signature and version...");
+        using (var version = diagnostics.Begin("Dev Tunnels CLI version check"))
+        {
+            await CheckVersionAsync(token).ConfigureAwait(false);
+            version.Complete();
+        }
+        if (host is null) SetStatus(TunnelState.CheckingAccount, "Checking the Dev Tunnels signed-in Microsoft account...");
+        using var account = diagnostics.Begin("Dev Tunnels account check");
         var owner = await CliPrerequisiteChecks.CheckAccountAsync(runner, options.CliPath, options.CommandTimeout, token).ConfigureAwait(false);
         if (!string.Equals(Identity.OwnerHash, owner, StringComparison.Ordinal))
         {
@@ -365,6 +391,7 @@ public sealed class CliTunnelController : IAsyncDisposable
                 throw new TunnelException("The signed-in account does not own this dashboard's saved tunnel. Sign in to the original account.");
             await SaveAsync(Identity with { OwnerHash = owner }, token).ConfigureAwait(false);
         }
+        account.Complete();
     }
 
     private string VerifyOwnedTunnel(JsonElement tunnel)
@@ -384,17 +411,21 @@ public sealed class CliTunnelController : IAsyncDisposable
 
     private async Task ConfigureAndVerifyAsync(string id, bool pending, CancellationToken token)
     {
-        using var show = await JsonCommandAsync(token, "show", id, "--json").ConfigureAwait(false);
+        using var configuration = BeginStage(TunnelState.Preparing, "Checking Dev Tunnel ownership, receiver port, and access...");
+        var (showResult, tunnelAclResult) = await ReadPairAsync(token,
+            ["show", id, "--json"], ["access", "list", id, "--json"]).ConfigureAwait(false);
+        using var show = TunnelValidation.Parse(showResult.StandardOutput);
         var tunnel = TunnelValidation.Property(show.RootElement, "tunnel", JsonValueKind.Object);
         VerifyOwnedTunnel(tunnel);
         var hasPorts = tunnel.TryGetProperty("ports", out var ports);
         if (!hasPorts && !pending)
             throw new TunnelException("The saved tunnel no longer has its receiver port; no changes were made.");
         var portCount = hasPorts ? TunnelValidation.Property(tunnel, "ports", JsonValueKind.Array).GetArrayLength() : 0;
-        using var tunnelAcl = await JsonCommandAsync(token, "access", "list", id, "--json").ConfigureAwait(false);
+        using var tunnelAcl = TunnelValidation.Parse(tunnelAclResult.StandardOutput);
         TunnelValidation.NoTunnelAcl(TunnelValidation.Property(tunnelAcl.RootElement, "accessControlEntries", JsonValueKind.Array));
         if (portCount == 0 && pending)
         {
+            SetStatus(TunnelState.Preparing, "Creating the Dev Tunnel receiver port...");
             using var created = await JsonCommandAsync(token, "port", "create", id, "-p", PortText, "--protocol", "http", "--json").ConfigureAwait(false);
             VerifyPort(TunnelValidation.Property(created.RootElement, "port", JsonValueKind.Object), id, requireAcl: false);
         }
@@ -403,14 +434,19 @@ public sealed class CliTunnelController : IAsyncDisposable
             if (portCount != 1) throw new TunnelException("Tunnel port drift detected; exactly one receiver port is required.");
             VerifyPort(ports[0], id, requireAcl: false);
         }
-        using var port = await JsonCommandAsync(token, "port", "show", id, "--port-number", PortText, "--json").ConfigureAwait(false);
+        SetStatus(TunnelState.Preparing, "Checking the Dev Tunnel receiver port and access...");
+        var (portResult, portAclResult) = await ReadPairAsync(token,
+            ["port", "show", id, "--port-number", PortText, "--json"],
+            ["access", "list", id, "--port-number", PortText, "--json"]).ConfigureAwait(false);
+        using var port = TunnelValidation.Parse(portResult.StandardOutput);
         var portValue = TunnelValidation.Property(port.RootElement, "port", JsonValueKind.Object);
         VerifyPort(portValue, id, requireAcl: false);
         var access = TunnelValidation.Property(portValue, "accessControl", JsonValueKind.Array);
-        using var portAcl = await JsonCommandAsync(token, "access", "list", id, "--port-number", PortText, "--json").ConfigureAwait(false);
+        using var portAcl = TunnelValidation.Parse(portAclResult.StandardOutput);
         var listed = TunnelValidation.Property(portAcl.RootElement, "accessControlEntries", JsonValueKind.Array);
         if (pending && access.GetArrayLength() == 0 && listed.GetArrayLength() == 0)
         {
+            SetStatus(TunnelState.Preparing, "Configuring anonymous connect-only access to the receiver port...");
             using var grant = await JsonCommandAsync(token, "access", "create", id, "--port-number", PortText,
                 "--anonymous", "--scopes", "connect", "--json").ConfigureAwait(false);
             TunnelValidation.PortAcl(TunnelValidation.Property(grant.RootElement, "accessControlEntries", JsonValueKind.Array));
@@ -420,18 +456,35 @@ public sealed class CliTunnelController : IAsyncDisposable
             TunnelValidation.PortAcl(access);
             TunnelValidation.PortAcl(listed);
         }
-        using var finalShow = await JsonCommandAsync(token, "show", id, "--json").ConfigureAwait(false);
+        configuration.Complete();
+        using var verification = BeginStage(TunnelState.Preparing, "Revalidating Dev Tunnel ownership, port, and access before hosting...");
+        var (finalShowResult, finalAclResult) = await ReadPairAsync(token,
+            ["show", id, "--json"], ["access", "list", id, "--json"]).ConfigureAwait(false);
+        using var finalShow = TunnelValidation.Parse(finalShowResult.StandardOutput);
         var finalTunnel = TunnelValidation.Property(finalShow.RootElement, "tunnel", JsonValueKind.Object);
         VerifyOwnedTunnel(finalTunnel);
         var finalPorts = TunnelValidation.Property(finalTunnel, "ports", JsonValueKind.Array);
         if (finalPorts.GetArrayLength() != 1) throw new TunnelException("Tunnel port drift detected before hosting.");
         VerifyPort(finalPorts[0], id, requireAcl: false);
-        using var finalAcl = await JsonCommandAsync(token, "access", "list", id, "--json").ConfigureAwait(false);
+        using var finalAcl = TunnelValidation.Parse(finalAclResult.StandardOutput);
         TunnelValidation.NoTunnelAcl(TunnelValidation.Property(finalAcl.RootElement, "accessControlEntries", JsonValueKind.Array));
-        using var finalPort = await JsonCommandAsync(token, "port", "show", id, "--port-number", PortText, "--json").ConfigureAwait(false);
+        var (finalPortResult, finalPortAclResult) = await ReadPairAsync(token,
+            ["port", "show", id, "--port-number", PortText, "--json"],
+            ["access", "list", id, "--port-number", PortText, "--json"]).ConfigureAwait(false);
+        using var finalPort = TunnelValidation.Parse(finalPortResult.StandardOutput);
         VerifyPort(TunnelValidation.Property(finalPort.RootElement, "port", JsonValueKind.Object), id, requireAcl: true);
-        using var finalPortAcl = await JsonCommandAsync(token, "access", "list", id, "--port-number", PortText, "--json").ConfigureAwait(false);
+        using var finalPortAcl = TunnelValidation.Parse(finalPortAclResult.StandardOutput);
         TunnelValidation.PortAcl(TunnelValidation.Property(finalPortAcl.RootElement, "accessControlEntries", JsonValueKind.Array));
+        verification.Complete();
+    }
+
+    private async Task<(CliCommandResult First, CliCommandResult Second)> ReadPairAsync(
+        CancellationToken token, string[] first, string[] second)
+    {
+        // Await both owned commands even on failure; parse only afterwards so partial success cannot leak JSON documents.
+        var results = await Task.WhenAll(CommandAsync(token, first), CommandAsync(token, second)).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        return (results[0], results[1]);
     }
 
     private string PortText => receiverPort.ToString(CultureInfo.InvariantCulture);
@@ -593,6 +646,12 @@ public sealed class CliTunnelController : IAsyncDisposable
         var snapshot = new TunnelStatus(state, message, state == TunnelState.Connected ? uri : null);
         Volatile.Write(ref status, snapshot);
         StatusChanged?.Invoke(this, snapshot);
+    }
+
+    private TunnelDiagnostics.Scope BeginStage(TunnelState state, string message)
+    {
+        SetStatus(state, message);
+        return diagnostics.Begin(message);
     }
 
     public async ValueTask DisposeAsync()

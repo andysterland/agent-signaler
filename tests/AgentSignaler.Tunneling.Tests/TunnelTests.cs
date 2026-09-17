@@ -657,12 +657,17 @@ public sealed partial class TunnelTests
         if (!OperatingSystem.IsWindows()) return;
         var output = new StringBuilder();
         var error = new StringBuilder();
+        var logs = new List<string>();
+        using var timing = new TunnelDiagnostics(logs.Add).Begin("Native test command");
         await using var child = NativeChild.Start(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
-            ["-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.WriteLine('hello'); [Console]::Error.WriteLine('error')"], output, error, null, 65536, verifyTrust: false);
+            ["-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.WriteLine('hello'); [Console]::Error.WriteLine('error')"], output, error, null, 65536, verifyTrust: false, timing);
         Assert.Equal(0, await child.Completion.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Contains("hello", output.ToString());
         Assert.Contains("error", error.ToString());
+        timing.Complete();
+        Assert.Contains(logs, line => line.Contains("Process startup: completed; elapsed="));
+        Assert.DoesNotContain(logs, line => line.Contains("hello") || line.Contains("error"));
     }
 
     [Fact]

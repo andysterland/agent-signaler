@@ -98,7 +98,6 @@
                             <TextBox x:Name="IdentityBox" Header="Machine UUID" IsReadOnly="True" />
                             <Button x:Name="TestButton" Content="Test connection" Click="Test_Click" />
                             <Button x:Name="CancelTestButton" Content="Cancel test" Click="CancelTest_Click" IsEnabled="False" />
-                            <Button x:Name="StartClientButton" Content="Start client" Click="StartClient_Click" />
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
@@ -238,6 +237,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
                 <TextBlock x:Name="ConfigPathText" TextTrimming="CharacterEllipsis" IsTextSelectionEnabled="True"
@@ -245,7 +245,8 @@
                 <TextBlock x:Name="RelayPathText" TextTrimming="CharacterEllipsis" IsTextSelectionEnabled="True"
                            ToolTipService.ToolTip="{Binding Text, ElementName=RelayPathText}" />
             </StackPanel>
-            <Button x:Name="ApplyButton" Grid.Column="1" Content="Apply settings" Click="Apply_Click"
+            <Button x:Name="StartClientButton" Grid.Column="1" Content="Start client" Click="StartClient_Click" />
+            <Button x:Name="ApplyButton" Grid.Column="2" Content="Apply settings" Click="Apply_Click"
                     Style="{StaticResource AccentButtonStyle}" />
         </Grid>
     </Grid>

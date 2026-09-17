@@ -1381,6 +1381,8 @@ internal sealed partial class MainWindow : Window
 internal sealed class MachineCard
 {
     private readonly bool _miniature;
+    private readonly MachineCard? _hoverCard;
+    private readonly TextBlock? _hoverNote;
     private readonly SolidColorBrush _background = new();
     private readonly SolidColorBrush _pointerOverBackground = new();
     private readonly SolidColorBrush _pressedBackground = new();
@@ -1430,6 +1432,24 @@ internal sealed class MachineCard
             Button.Width = Button.Height = CompactWindow.TileSize;
             Button.MinWidth = Button.MinHeight = 0;
             _icon.FontSize = 32;
+            _hoverCard = new MachineCard(machine, activate);
+            _hoverCard.Button.Width = 370;
+            _hoverCard.Button.MinHeight = MachineCardPresentation.MinimumHeight;
+            _hoverCard.Button.IsHitTestVisible = false;
+            _hoverCard.Button.IsTabStop = false;
+            _hoverNote = MainWindow.Text("", 14);
+            _hoverNote.Margin = new Thickness(12);
+            var preview = new StackPanel();
+            preview.Children.Add(_hoverCard.Button);
+            preview.Children.Add(_hoverNote);
+            ToolTipService.SetToolTip(Button, new ToolTip
+            {
+                Content = preview,
+                Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left,
+                Padding = new Thickness(0),
+                BorderThickness = new Thickness(0),
+                MaxWidth = 370
+            });
         }
         Button.Click += (_, _) => activate();
         Update(machine);
@@ -1486,12 +1506,18 @@ internal sealed class MachineCard
         var summary = online ? $"{connectionStatus}, {StatusText(machine.State)}" : connectionStatus;
         AutomationProperties.SetName(Button, _miniature ? $"{WindowsAppConnectionController.LaunchLabel(machine.Name)}, {summary}"
             : $"{machine.Name}, {summary}. {_activity.Text}. {_mapping.Text}. {_footer.Text}. Open machine details.");
-        var tooltip = _miniature
-            ? $"{WindowsAppConnectionController.LaunchLabel(machine.Name)}\nStatus: {StatusText(machine.State)}\n{StatusDescription(machine.State)}\n{ActivityDescription(machine)}"
-            : $"{machine.Name} — {summary}\n{_mapping.Text}";
-        if (!string.IsNullOrWhiteSpace(machine.Note)) tooltip += $"\n\nNote: {machine.Note}";
-        ToolTipService.SetToolTip(Button, tooltip);
-        if (_miniature) ToolTipService.SetToolTip(_connectionIcon, tooltip);
+        if (_hoverCard is not null && _hoverNote is not null)
+        {
+            _hoverCard.Update(machine);
+            _hoverNote.Text = string.IsNullOrWhiteSpace(machine.Note) ? "" : $"Note: {machine.Note}";
+            _hoverNote.Visibility = string.IsNullOrWhiteSpace(machine.Note) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        else
+        {
+            var tooltip = $"{machine.Name} — {summary}\n{_mapping.Text}";
+            if (!string.IsNullOrWhiteSpace(machine.Note)) tooltip += $"\n\nNote: {machine.Note}";
+            ToolTipService.SetToolTip(Button, tooltip);
+        }
     }
 
     private void ApplyStateAppearance(AgentState state)
@@ -1533,19 +1559,4 @@ internal sealed class MachineCard
         AgentState.Idle => "Idle",
         _ => "Offline"
     };
-
-    private static string StatusDescription(AgentState state) => state switch
-    {
-        AgentState.Executing => "The agent is actively processing work.",
-        AgentState.Waiting => "The agent is waiting for input or permission.",
-        AgentState.Succeeded => "The most recent task completed successfully.",
-        AgentState.Failed => "The most recent task reported a failure.",
-        AgentState.Idle => "No active work is currently reported.",
-        _ => "No recent activity has been received from this computer."
-    };
-
-    private static string ActivityDescription(MachineView machine) =>
-        machine.LatestEvent is { } latest
-            ? $"Latest activity: {latest}; tracked sessions: {machine.Sessions.Count}."
-            : "No hook activity has been received yet.";
 }

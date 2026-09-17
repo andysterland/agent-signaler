@@ -201,6 +201,19 @@ labels; sharing details remain in **Settings > Internet sharing**. Machine
 activity and connectivity indicators are unchanged. Prerequisite checks and Dev
 Box discovery are explicitly run from Settings, not automatically at startup.
 
+Internet-sharing startup reports separate Dev Tunnels CLI, account, local health,
+cloud lookup, configuration, final validation, relay hosting, and public HTTPS
+verification stages. Independent read-only cloud checks run in pairs (at most two
+CLI commands at once); mutations and the final pre-host validation remain ordered.
+Machine tiles and the public URL still wait for startup readiness as before.
+With a debugger attached, Visual Studio's Debug Output includes `[DevTunnel #...]`
+start/completion timings in milliseconds for startup stages and individual commands,
+with separate signature-verification, process-startup, and command-execution timings.
+Parent IDs associate these low-level timings with their command. Failed or cancelled
+scopes are marked `incomplete`; command completion includes its exit code.
+Timing output is available in Debug and Release builds and excludes CLI output,
+resource IDs, paths, and account details.
+
 Dashboard settings are grouped into five tabs:
 **General** (appearance, compact views, and Windows startup),
 **Network** (receiver mode, port, and firewall),

@@ -50,7 +50,7 @@ internal sealed partial class MainWindow
                     if (!_exiting)
                     {
                         UpdateConnectionPresentation();
-                        ReportStartupProgress(_tunnel.Status.Message);
+                        ReportStartupProgress(status.Message);
                     }
                 });
             };

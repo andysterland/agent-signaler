@@ -3,7 +3,7 @@ namespace AgentSignaler.Tunneling;
 public enum TunnelState
 {
     Stopped, CheckingAccount, AccountRequired, Creating, Starting, Verifying,
-    Connected, Stopping, Faulted, Unsupported, Reconnecting
+    Connected, Stopping, Faulted, Unsupported, Reconnecting, CheckingCli, Preparing
 }
 
 public sealed record TunnelStatus(TunnelState State, string Message, Uri? PublicUrl = null)
@@ -26,6 +26,7 @@ public sealed record CliCommandResult(int ExitCode, string StandardOutput, strin
 
 public interface ITunnelProcessRunner
 {
+    // Independent read-only commands may run concurrently (at most two per controller).
     Task<CliCommandResult> RunAsync(string executable, IReadOnlyList<string> arguments,
         TimeSpan timeout, CancellationToken cancellationToken);
     Task<ITunnelHostProcess> StartHostAsync(string executable, IReadOnlyList<string> arguments,

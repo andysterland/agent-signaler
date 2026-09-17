@@ -12,19 +12,29 @@ namespace AgentSignaler.Tunneling;
 /// </summary>
 public sealed class WindowsTunnelProcessRunner : ITunnelProcessRunner
 {
+    private readonly TunnelDiagnostics diagnostics;
+
+    public WindowsTunnelProcessRunner() : this(null) { }
+
+    internal WindowsTunnelProcessRunner(Action<string>? debugOutput) => diagnostics = new(debugOutput);
+
     public async Task<CliCommandResult> RunAsync(string executable, IReadOnlyList<string> arguments,
         TimeSpan timeout, CancellationToken cancellationToken)
     {
+        using var timing = diagnostics.Begin($"Command {TunnelDiagnostics.CommandName(arguments)}");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
         deadline.Token.ThrowIfCancellationRequested();
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
-        await using var process = NativeChild.Start(executable, arguments, stdout, stderr, null, 65536, verifyTrust: true);
+        await using var process = NativeChild.Start(executable, arguments, stdout, stderr, null, 65536, verifyTrust: true, timing);
         using var registration = deadline.Token.Register(process.Kill);
+        using var execution = timing.BeginPhase("Command execution");
         try
         {
             var exit = await process.Completion.WaitAsync(deadline.Token).ConfigureAwait(false);
+            execution.Complete(exit);
+            timing.Complete(exit);
             return new CliCommandResult(exit, stdout.ToString(), stderr.ToString());
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -37,9 +47,11 @@ public sealed class WindowsTunnelProcessRunner : ITunnelProcessRunner
     public Task<ITunnelHostProcess> StartHostAsync(string executable, IReadOnlyList<string> arguments,
         Action<string> outputLine, CancellationToken cancellationToken)
     {
+        using var timing = diagnostics.Begin("Host process launch");
         cancellationToken.ThrowIfCancellationRequested();
-        var process = NativeChild.Start(executable, arguments, null, null, outputLine, 1024 * 1024, verifyTrust: true);
+        var process = NativeChild.Start(executable, arguments, null, null, outputLine, 1024 * 1024, verifyTrust: true, timing);
         process.BindCancellation(cancellationToken);
+        timing.Complete();
         return Task.FromResult<ITunnelHostProcess>(process);
     }
 }
@@ -69,7 +81,7 @@ internal sealed class NativeChild : ITunnelHostProcess
     }
 
     internal static NativeChild Start(string executable, IReadOnlyList<string> arguments, StringBuilder? stdout,
-        StringBuilder? stderr, Action<string>? outputLine, int limit, bool verifyTrust)
+        StringBuilder? stderr, Action<string>? outputLine, int limit, bool verifyTrust, TunnelDiagnostics.Scope? timing = null)
     {
         if (!OperatingSystem.IsWindows()) throw new TunnelException("CLI containment requires Windows.", TunnelState.Unsupported)
         { FailureKind = CliFailureKind.UnsupportedPlatform };
@@ -83,8 +95,14 @@ internal sealed class NativeChild : ITunnelHostProcess
                 throw new TunnelException("Choose an explicitly installed absolute local CLI executable path.", TunnelState.Unsupported);
             executable = DevTunnelDiagnostics.ValidateCliPath(executable);
             lockedFile = new FileStream(executable, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (verifyTrust) Native.VerifyMicrosoftSignature(executable);
+            if (verifyTrust)
+            {
+                using var signature = timing?.BeginPhase("Signature verification");
+                Native.VerifyMicrosoftSignature(executable);
+                signature?.Complete();
+            }
 
+            using var startup = timing?.BeginPhase("Process startup");
             job = Native.CreateJobObject(IntPtr.Zero, null);
             if (job.IsInvalid) throw new Win32Exception();
             var limits = new Native.JobExtendedLimits();
@@ -115,7 +133,7 @@ internal sealed class NativeChild : ITunnelHostProcess
             Marshal.WriteIntPtr(jobs, job.DangerousGetHandle());
             if (!Native.UpdateProcThreadAttribute(attributes, 0, (IntPtr)0x2000D, jobs, (nuint)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
                 throw new Win32Exception();
-            var startup = new Native.StartupInfoEx
+            var startupInfo = new Native.StartupInfoEx
             {
                 StartupInfo = new Native.StartupInfo
                 {
@@ -133,7 +151,7 @@ internal sealed class NativeChild : ITunnelHostProcess
             }
             // CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT.
             if (!Native.CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, 0x08080004,
-                IntPtr.Zero, Path.GetDirectoryName(executable), ref startup, out var info))
+                IntPtr.Zero, Path.GetDirectoryName(executable), ref startupInfo, out var info))
                 throw new Win32Exception();
             process = new SafeFileHandle(info.Process, ownsHandle: true);
             thread = new SafeFileHandle(info.Thread, ownsHandle: true);
@@ -143,6 +161,7 @@ internal sealed class NativeChild : ITunnelHostProcess
             var result = new NativeChild(job, process, outRead, errRead, lockedFile, stdout, stderr, outputLine, limit);
             job = process = outRead = errRead = null;
             lockedFile = null;
+            startup?.Complete();
             return result;
         }
         catch

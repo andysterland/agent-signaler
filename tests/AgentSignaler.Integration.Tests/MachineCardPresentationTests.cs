@@ -109,6 +109,27 @@ public sealed class MachineCardPresentationTests
         Assert.Contains("ToolTipService.SetToolTip(Button, tooltip)", main);
     }
 
+    [Fact]
+    public void CompactHoverReusesFullCardAndKeepsItsContentCurrent()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "AgentSignaler.slnx")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var main = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "MainWindow.cs"));
+        Assert.Contains("_hoverCard = new MachineCard(machine, activate)", main);
+        Assert.Contains("_hoverCard.Button.MinHeight = MachineCardPresentation.MinimumHeight", main);
+        Assert.Contains("_hoverCard.Button.IsHitTestVisible = false", main);
+        Assert.Contains("_hoverCard.Button.IsTabStop = false", main);
+        Assert.Contains("preview.Children.Add(_hoverCard.Button)", main);
+        Assert.Contains("preview.Children.Add(_hoverNote)", main);
+        Assert.Contains("ToolTipService.SetToolTip(Button, new ToolTip", main);
+        Assert.Contains("Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Left", main);
+        Assert.Contains("_hoverCard.Update(machine)", main);
+        Assert.Contains("_hoverNote.Visibility = string.IsNullOrWhiteSpace(machine.Note) ? Visibility.Collapsed : Visibility.Visible", main);
+        Assert.Contains("Button.Click += (_, _) => activate()", main);
+    }
+
     private static MachineView Machine(AgentState state) =>
         new(Guid.NewGuid(), "test-machine", null, "copilot-cli", "1.0", state, null, Now, []);
 }
