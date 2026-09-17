@@ -26,6 +26,8 @@ public sealed record StatusRequest
     public string ClientVersion { get; init; } = "";
     public string? SessionId { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DisplayName { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SourceDescriptor? Source { get; init; }
     [JsonRequired]
     public AgentEvent Event { get; init; }
@@ -48,6 +50,7 @@ public static class Protocol
     public const string ConnectionTestHeader = "X-AgentSignaler-Connection-Test";
     public const int MaxBodyBytes = 32768;
     public const int MaxSessions = 64;
+    public const int MaxDisplayNameLength = 128;
     public static readonly TimeSpan OfflineAfter = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan ResultDuration = TimeSpan.FromSeconds(60);
     public static readonly JsonSerializerOptions Json = CreateJson();
@@ -70,11 +73,19 @@ public static class Protocol
     public static IReadOnlyList<string> ValidateSource(StatusRequest request)
         => ValidateCore(request, sourceAware: true);
 
+    public static bool ValidDisplayName(string? value) =>
+        value is null || !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= MaxDisplayNameLength && !value.Any(char.IsControl);
+
     private static IReadOnlyList<string> ValidateCore(StatusRequest request, bool sourceAware)
     {
         var errors = new List<string>();
-        if (request.ProtocolVersion != (sourceAware ? PresenceProtocol.SourceVersion : Version))
+        if (sourceAware ? request.ProtocolVersion is not (PresenceProtocol.SourceVersion or PresenceProtocol.DisplayNameVersion)
+            : request.ProtocolVersion != Version)
             errors.Add("Unsupported protocolVersion.");
+        if (!ValidDisplayName(request.DisplayName) ||
+            request.DisplayName is not null && request.ProtocolVersion != PresenceProtocol.DisplayNameVersion)
+            errors.Add("Invalid displayName or unsupported protocol version.");
         if (request.EventId == Guid.Empty) errors.Add("eventId must be a nonempty UUID.");
         if (request.MachineId == Guid.Empty) errors.Add("machineId must be a nonempty UUID.");
         CheckText(request.MachineName, 128, "machineName", errors);

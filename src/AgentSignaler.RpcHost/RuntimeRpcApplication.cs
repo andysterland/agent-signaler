@@ -301,7 +301,10 @@ internal sealed class RuntimeRpcApplication : IRpcApplication, IDisposable
         var s = state.Snapshot;
         return new(s.SessionId, s.Source is { } source ? new(source.Kind, source.ScopeId, source.Version) : null,
             Name(state.State), Name(s.UnderlyingState), s.ResultState is { } result ? Name(result) : null,
-            s.ResultUntilUtc?.ToUniversalTime(), s.AwaitingUserInput, s.UpdatedAtUtc.ToUniversalTime());
+            s.ResultUntilUtc?.ToUniversalTime(), s.AwaitingUserInput, s.UpdatedAtUtc.ToUniversalTime())
+        {
+            DisplayName = s.DisplayName
+        };
     }
     private static RpcPage<RpcMachine> MachinePage(RuntimePage<RuntimeMachine> state, int offset, int limit) =>
         BoundedPage(state.Items.Select(Machine).ToArray(), state.Total, offset, limit);

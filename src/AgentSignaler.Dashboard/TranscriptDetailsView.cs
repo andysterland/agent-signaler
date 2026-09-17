@@ -31,6 +31,8 @@ internal sealed class TranscriptDetailsView : IDisposable
     private ImmutableArray<TranscriptSessionInfo> _displayedSessions = [];
     private ImmutableArray<TranscriptEntry> _displayedEntries = [];
     private ScrollViewer? _scroll;
+    private string _displayName;
+    private string? _renderedDisplayName;
     private bool _updating, _disposed, _visible, _offline;
     private int _queued;
 
@@ -39,6 +41,7 @@ internal sealed class TranscriptDetailsView : IDisposable
         _controller = new(reader);
         _dispatcher = dispatcher;
         _selection = selection;
+        _displayName = selection.SessionId;
         _offline = offline;
         Root = new Grid { RowSpacing = 8, Padding = new Thickness(0, 12, 0, 0) };
         Root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -64,7 +67,7 @@ internal sealed class TranscriptDetailsView : IDisposable
             if (args.ItemContainer.ContentTemplateRoot is not StackPanel row) return;
             var item = !args.InRecycleQueue && !_disposed && _visible ? args.Item as TranscriptEntry : null;
             if (item is not null && !_controller.State.Entries.Contains(item)) item = null;
-            ((TextBlock)row.Children[0]).Text = item?.Header ?? "";
+            ((TextBlock)row.Children[0]).Text = item is null ? "" : $"{_displayName}\n{item.Header}";
             ((TextBlock)row.Children[1]).Text = item?.Text ?? "";
             args.Handled = true;
         };
@@ -115,7 +118,9 @@ internal sealed class TranscriptDetailsView : IDisposable
             return;
         }
         _offline = machine.State == AgentState.Offline;
+        _displayName = SessionSourcePresentation.DisplayName(machine, _selection);
         _controller.SetOffline(_offline);
+        Render();
     }
 
     private void OnChanged()
@@ -145,21 +150,25 @@ internal sealed class TranscriptDetailsView : IDisposable
         _updating = true;
         try
         {
-            if (!_displayedSessions.SequenceEqual(state.Sessions))
+            var nameChanged = _renderedDisplayName != _displayName;
+            _renderedDisplayName = _displayName;
+            if (nameChanged || !_displayedSessions.SequenceEqual(state.Sessions))
             {
                 _displayedSessions = state.Sessions;
-                _sessions.ItemsSource = state.Sessions.Select(session => new SessionChoice(session)).ToArray();
+                _sessions.ItemsSource = state.Sessions.Select(session => new SessionChoice(session, _displayName)).ToArray();
             }
             _sessions.SelectedItem = _sessions.Items.OfType<SessionChoice>().FirstOrDefault(choice =>
                 state.Selection is { } selection && TranscriptViewController.SameSelection(choice.Session.Selection, selection));
-            _status.Text = (state.Loading ? "Loading… " : "") + state.Message;
+            _status.Text = $"{_displayName} · Session ID: {_selection.SessionId}\n" +
+                (state.Loading ? "Loading… " : "") + state.Message;
             _older.IsEnabled = state.HasOlder && !state.Loading;
             _latest.IsEnabled = state.Selection is not null && !state.Loading;
             _latest.Content = state.HasNewActivity ? "New activity — Latest" : "Latest";
-            if (_displayedEntries != state.Entries)
+            if (nameChanged || _displayedEntries != state.Entries)
             {
                 ClearRenderedText();
                 _displayedEntries = state.Entries;
+                _entries.ItemsSource = null;
                 _entries.ItemsSource = state.Entries;
                 if (!state.Entries.IsEmpty)
                     _entries.ScrollIntoView(state.FollowingLatest ? state.Entries[^1] : state.Entries[0]);
@@ -206,11 +215,10 @@ internal sealed class TranscriptDetailsView : IDisposable
         return null;
     }
 
-    private sealed record SessionChoice(TranscriptSessionInfo Session)
+    private sealed record SessionChoice(TranscriptSessionInfo Session, string DisplayName)
     {
         public override string ToString() =>
-            $"{SessionSourcePresentation.Describe(Session.Selection.Source)} · {Session.Selection.SessionId}" +
-            $" · stream {Session.Selection.StreamId}" + (Session.Closed ? " · ended/closed (retained)" : "");
+            SessionSourcePresentation.DescribeStream(Session, DisplayName);
     }
 
     public void Dispose()

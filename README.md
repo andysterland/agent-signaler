@@ -46,7 +46,7 @@ between development computers, or waiting for a long-running task to need input.
 | Capability | What you get |
 | --- | --- |
 | Multi-machine status | Up to 25 computers with connectivity, activity, display names, and persistent notes. |
-| Independent Copilot sessions | A **Copilots** list with each conversation's last observed state, accepted event, and timestamp. Waiting takes priority over other sessions' activity. |
+| Independent Copilot sessions | A **Copilots** list with each conversation's display name when available, last observed state, accepted event, and timestamp. Waiting takes priority over other sessions' activity. |
 | Compact monitoring | Always-on-top tiles with computer names, an aggregate state glyph, and wrapping 4 x 4 logical-pixel indicators for connected Copilots. |
 | Dev Box navigation | Explicit mappings, connection refresh, and reuse of matching Windows App windows before launching another connection. |
 | Deliberate integration setup | Previewed hook/configuration changes, ownership checks, and transactional recovery. |
@@ -357,7 +357,9 @@ servicing. See the [user guide](docs/user-guide.md) and
 ## Security and privacy
 
 Status reports and SQLite machine/session history do not store conversation
-bodies. Persistent notes and mappings are user data; do not put secrets in them.
+bodies. They can include Copilot's saved session title, which may summarize
+sensitive work and is not automatically redacted. Session titles, persistent
+notes and mappings are user data; do not put secrets in them.
 The optional conversation prototype is separate:
 
 - New v5 configuration defaults detailed reporting on. Obtain external informed

@@ -47,6 +47,7 @@ internal sealed class CopilotsDetailsView : IDisposable
             <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
               <StackPanel Spacing="4" Margin="0,8,12,12">
                 <TextBlock TextWrapping="Wrap" FontWeight="SemiBold" />
+                <TextBlock TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                 <TextBlock TextWrapping="Wrap" />
                 <TextBlock TextWrapping="Wrap" />
                 <TextBlock TextWrapping="Wrap" />
@@ -123,6 +124,7 @@ internal sealed class CopilotsDetailsView : IDisposable
         var selection = current.Streams.FirstOrDefault()?.Selection ??
             new TranscriptSelection(current.MachineId, current.Source, current.SessionId, Guid.Empty);
         _transcript = new(_reader, _dispatcher, selection, _machine.State == AgentState.Offline);
+        _transcript.SetMachine(_machine);
         Grid.SetRow(_transcript.Root, 1);
         _drill.Children.Add(_transcript.Root);
         await _transcript.SetVisibleAsync(true);
@@ -192,7 +194,7 @@ internal sealed class CopilotsDetailsView : IDisposable
     {
         if (container.ContentTemplateRoot is not StackPanel panel || panel.Children[^1] is not Button button) return;
         var value = row?.Value;
-        string[] labels = [value?.Heading ?? "", value?.Status ?? "", value?.LastEvent ?? "",
+        string[] labels = [value?.Heading ?? "", value?.Identity ?? "", value?.Status ?? "", value?.LastEvent ?? "",
             value?.EventTime ?? "", value?.TranscriptStatus ?? ""];
         for (var i = 0; i < labels.Length; i++) ((TextBlock)panel.Children[i]).Text = labels[i];
         AutomationProperties.SetName(container, string.Join(". ", labels));

@@ -19,7 +19,7 @@ internal static class CompactSessionPresentation
     {
         var sessions = SessionPresentation.Project(machine, now).Where(session => session.IsConnected).ToArray();
         var indicators = sessions.Select((session, index) => new CompactSessionIndicator(session.SessionKey, session.State,
-            $"{session.SourceLabel} · scope {session.Source.ScopeId} · session {session.SessionId}: " +
+            $"{session.SourceLabel} · scope {session.Source.ScopeId} · session {session.DisplayName}: " +
             (session.State == AgentState.Waiting ? "Waiting for input" : session.State.ToString()),
             index % Columns * (SquareSize + Gap), index / Columns * (SquareSize + Gap))).ToImmutableArray();
         var rows = (sessions.Length + Columns - 1) / Columns;

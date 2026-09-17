@@ -35,21 +35,22 @@ public static class DashboardConnection
             await TestVersionAsync(config, client, Protocol.Version, token);
             return Protocol.Version;
         }
-        try
+        foreach (var version in new[] { PresenceProtocol.DisplayNameVersion, PresenceProtocol.EnrichedVersion })
         {
-            await TestVersionAsync(config, client, PresenceProtocol.EnrichedVersion, token);
-            return PresenceProtocol.EnrichedVersion;
+            try
+            {
+                await TestVersionAsync(config, client, version, token);
+                return version;
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { }
         }
+        var legacy = config.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version;
+        try { await TestVersionAsync(config, client, legacy, token); }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            var legacy = config.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version;
-            try { await TestVersionAsync(config, client, legacy, token); }
-            catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                throw new InvalidDataException($"Upgrade the dashboard receiver first. This configuration requires protocol v{legacy} or newer; source identity cannot be removed.", error);
-            }
-            return legacy;
+            throw new InvalidDataException($"Upgrade the dashboard receiver first. This configuration requires protocol v{legacy} or newer; source identity cannot be removed.", ex);
         }
+        return legacy;
     }
 
     private static async Task TestVersionAsync(RemoteConfiguration config, HttpClient client, int expectedVersion, CancellationToken token)

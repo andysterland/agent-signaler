@@ -1,0 +1,60 @@
+@baseUrl = http://localhost:51820
+
+### Session display name capability; older endpoints do not accept session names
+GET {{baseUrl}}/api/v5/health
+
+### Explicit sanitized session title, separate from session identity and status timestamps
+POST {{baseUrl}}/api/v5/reports
+Content-Type: application/json
+
+{
+  "protocolVersion": 5,
+  "kind": "started",
+  "eventId": "ea749537-9838-4b38-aa16-7acd3da07c0f",
+  "machineId": "5b8185c1-8860-4780-b24e-197d746adfb9",
+  "machineName": "example-devbox",
+  "client": "agent-signaler",
+  "clientVersion": "1.0",
+  "generation": 3,
+  "sequence": 1,
+  "reportedAtUtc": "2026-09-17T18:00:00Z",
+  "heartbeatIntervalSeconds": 300,
+  "sessions": [{
+    "sessionId": "host-session",
+    "displayName": "Build verification",
+    "source": { "kind": "vscode", "scopeId": "local-profile", "version": "1.137.0" },
+    "underlyingState": "waiting",
+    "updatedAtUtc": "2026-09-17T18:00:00Z",
+    "latestEvent": "permissionRequest",
+    "latestEventAtUtc": "2026-09-17T18:00:00Z"
+  }]
+}
+
+### Ordered v5 hook: omitted displayName retains the last known title unless optional names exceed snapshot capacity
+POST {{baseUrl}}/api/v5/reports
+Content-Type: application/json
+
+{
+  "protocolVersion": 5,
+  "kind": "hook",
+  "eventId": "7cc42892-246d-42d7-b9cf-219990246f5e",
+  "machineId": "5b8185c1-8860-4780-b24e-197d746adfb9",
+  "machineName": "example-devbox",
+  "client": "agent-signaler",
+  "clientVersion": "1.0",
+  "generation": 3,
+  "sequence": 2,
+  "reportedAtUtc": "2026-09-17T18:00:01Z",
+  "hook": {
+    "protocolVersion": 5,
+    "eventId": "7cc42892-246d-42d7-b9cf-219990246f5e",
+    "machineId": "5b8185c1-8860-4780-b24e-197d746adfb9",
+    "machineName": "example-devbox",
+    "client": "vscode",
+    "clientVersion": "1.137.0",
+    "source": { "kind": "vscode", "scopeId": "local-profile", "version": "1.137.0" },
+    "sessionId": "host-session",
+    "event": "userPromptSubmitted",
+    "reportedAtUtc": "2026-09-17T18:00:01Z"
+  }
+}

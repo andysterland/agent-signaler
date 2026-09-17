@@ -9,6 +9,24 @@ public sealed class SessionPresentationTests
     private static readonly DateTimeOffset Now = new(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void DisplayNamesFallBackToIdsWithoutChangingIdentityOrOrdering()
+    {
+        var a = Session("a", null, AgentEvent.SessionStart);
+        var b = Session("b", null, AgentEvent.SessionStart);
+        var machine = Machine(Guid.NewGuid(), [b, a]);
+        var before = SessionPresentation.Project(machine, Now);
+        var after = SessionPresentation.Project(machine with
+        {
+            Sessions = [b with { DisplayName = "A friendly name" }, a with { DisplayName = "Z friendly name" }]
+        }, Now);
+        Assert.Equal(new[] { "a", "b" }, before.Select(row => row.DisplayName));
+        Assert.Equal(new[] { "Z friendly name", "A friendly name" }, after.Select(row => row.DisplayName));
+        Assert.Equal(before.Select(row => row.SessionId), after.Select(row => row.SessionId));
+        Assert.Equal(before.Select(row => row.SessionKey), after.Select(row => row.SessionKey));
+        Assert.Equal("a", (after[0] with { Snapshot = a }).DisplayName);
+    }
+
+    [Fact]
     public void IdentityOrderingAndEventsAreSessionSpecific()
     {
         var id = Guid.NewGuid();

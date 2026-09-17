@@ -1,13 +1,15 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using AgentSignaler.Contracts;
 
 namespace AgentSignaler.Remote;
 
 public sealed record HookData(string SessionId, DateTimeOffset Timestamp, bool ToolFailed,
-    bool ToolRequiresUserInput = false, SourceDescriptor? Source = null, string? InvocationId = null);
+    bool ToolRequiresUserInput = false, SourceDescriptor? Source = null, string? InvocationId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DisplayName = null);
 
 public static class HookParser
 {
@@ -61,8 +63,10 @@ public sealed record LocalReport(List<SessionSnapshot> Sessions, DateTimeOffset 
     bool CapacityExceeded = false);
 internal sealed record EnrichedRemoteState(int Version, string LegacyHash, StoredRemoteState State,
     Dictionary<string, DateTimeOffset> RetiredSources);
+internal sealed record SessionDisplayNames(int Version, string LegacyHash, Dictionary<string, string> Names);
 
-public sealed class SessionStore(string path, DiagnosticLog log)
+public sealed class SessionStore(string path, DiagnosticLog log,
+    Func<SessionSnapshot, string?>? displayNameReader = null)
 {
     public List<SessionSnapshot> Update(AgentEvent? kind, HookData? hook, DateTimeOffset now) =>
         UpdateReport(kind, hook, now).Sessions;
@@ -95,6 +99,7 @@ public sealed class SessionStore(string path, DiagnosticLog log)
             if (sessions.Count > Protocol.MaxSessions ||
                 sessions.Select(s => SourceIdentity.SessionKey(s.Source, s.SessionId)).Distinct(StringComparer.Ordinal).Count() != sessions.Count ||
                 sessions.Any(s => !RemoteConfiguration.ValidText(s.SessionId, 128) ||
+                    !Protocol.ValidDisplayName(s.DisplayName) ||
                     !PresenceProtocol.ValidLatestEvent(s) ||
                     s.Source is { IsValid: false } ||
                     s.UnderlyingState is not (AgentState.Waiting or AgentState.Executing or AgentState.Idle) ||
@@ -149,6 +154,37 @@ public sealed class SessionStore(string path, DiagnosticLog log)
                 }
             }
         }
+        byte[]? matchingNames = null;
+        if (legacyBytes is not null)
+        {
+            foreach (var candidate in new[] { path + ".names-v1", path + ".names-v1.previous" })
+            {
+                if (!File.Exists(candidate)) continue;
+                var bytes = AtomicFile.ReadBounded(candidate, 131072);
+                var names = JsonSerializer.Deserialize<SessionDisplayNames>(bytes, Protocol.Json)
+                    ?? throw new InvalidDataException("Invalid session display name state.");
+                if (names.Version != 1 || names.Names is null || names.Names.Count > Protocol.MaxSessions ||
+                    names.Names.Any(p => p.Value is null || !Protocol.ValidDisplayName(p.Value)))
+                    throw new InvalidDataException("Invalid session display name state.");
+                if (names.LegacyHash != Convert.ToHexString(SHA256.HashData(legacyBytes))) continue;
+                var identities = stored.Sessions.Select(s => SourceIdentity.SessionKey(s.Snapshot.Source, s.Snapshot.SessionId))
+                    .ToHashSet(StringComparer.Ordinal);
+                if (names.Names.Keys.Any(key => !identities.Contains(key)))
+                    throw new InvalidDataException("Inconsistent session display name state.");
+                stored = stored with
+                {
+                    Sessions = stored.Sessions.Select(s => s with
+                    {
+                        Snapshot = s.Snapshot with
+                        {
+                            DisplayName = names.Names.GetValueOrDefault(SourceIdentity.SessionKey(s.Snapshot.Source, s.Snapshot.SessionId))
+                        }
+                    }).ToList()
+                };
+                matchingNames = bytes;
+                break;
+            }
+        }
         var reportedAt = now > stored.LastReportedAtUtc ? now : stored.LastReportedAtUtc.AddTicks(1);
         var entries = stored.Sessions.ToList();
         var originalRetired = new Dictionary<string, DateTimeOffset>(retired, StringComparer.Ordinal);
@@ -165,11 +201,15 @@ public sealed class SessionStore(string path, DiagnosticLog log)
             {
                 // Local source timestamps reject late session events; the global clock orders wire reports.
                 var next = StateReducer.Apply(previous?.Snapshot, hook.SessionId, eventKind, reportedAt, reportedAt,
-                    hook.ToolFailed, hook.ToolRequiresUserInput) with { Source = hook.Source ?? SourceDescriptor.LegacyCli };
+                    hook.ToolFailed, hook.ToolRequiresUserInput, hook.Source ?? SourceDescriptor.LegacyCli, hook.DisplayName);
+                next = RefreshDisplayName(next);
                 entries.RemoveAll(s => SourceIdentity.SessionKey(s.Snapshot.Source, s.Snapshot.SessionId) == key);
                 entries.Add(new StoredRemoteSession(next, hook.Timestamp));
             }
         }
+        else if (hook is null && displayNameReader is not null)
+            entries = entries.Select(s => s with { Snapshot = RefreshDisplayName(s.Snapshot) }).ToList();
+        DropDisplayNamesUnderPressure(entries);
         while (entries.Count > Protocol.MaxSessions ||
             !PresenceProtocol.FitsSnapshot(entries.Select(s => s.Snapshot)))
         {
@@ -191,16 +231,45 @@ public sealed class SessionStore(string path, DiagnosticLog log)
             retired[scope] = retired.TryGetValue(scope, out var previous) && previous > ended.SourceTimestamp
                 ? previous : ended.SourceTimestamp;
             entries.Remove(ended);
+            DropDisplayNamesUnderPressure(entries);
         }
         var state = new StoredRemoteState(2, reportedAt, entries);
         var serialized = JsonSerializer.SerializeToUtf8Bytes(LegacyState(state), Protocol.Json);
+        var legacyHash = Convert.ToHexString(SHA256.HashData(serialized));
+        var eventState = state with
+        {
+            Sessions = entries.Select(s => s with { Snapshot = s.Snapshot with { DisplayName = null } }).ToList()
+        };
         var sidecar = JsonSerializer.SerializeToUtf8Bytes(
-            new EnrichedRemoteState(3, Convert.ToHexString(SHA256.HashData(serialized)), state, retired), PresenceProtocol.Json);
+            new EnrichedRemoteState(3, legacyHash, eventState, retired), PresenceProtocol.Json);
+        var nameBytes = JsonSerializer.SerializeToUtf8Bytes(new SessionDisplayNames(1, legacyHash,
+            entries.Where(s => s.Snapshot.DisplayName is not null).ToDictionary(
+                s => SourceIdentity.SessionKey(s.Snapshot.Source, s.Snapshot.SessionId),
+                s => s.Snapshot.DisplayName!, StringComparer.Ordinal)), Protocol.Json);
         // Write the enrichment first: a crash leaves either an old coherent base or a matching pair.
         if (matchingEnrichment is not null) AtomicFile.Write(path + ".events-v1.previous", matchingEnrichment);
+        if (matchingNames is not null) AtomicFile.Write(path + ".names-v1.previous", matchingNames);
+        AtomicFile.Write(path + ".names-v1", nameBytes);
         AtomicFile.Write(path + ".events-v1", sidecar);
         AtomicFile.Write(path, serialized);
         return new LocalReport(entries.Select(s => s.Snapshot).ToList(), reportedAt, accepted, capacityExceeded);
+    }
+
+    private SessionSnapshot RefreshDisplayName(SessionSnapshot session)
+    {
+        var name = displayNameReader?.Invoke(session);
+        if (!Protocol.ValidDisplayName(name)) throw new InvalidDataException("Invalid session display name.");
+        return name is null ? session : session with { DisplayName = name };
+    }
+
+    private void DropDisplayNamesUnderPressure(List<StoredRemoteSession> entries)
+    {
+        if (PresenceProtocol.FitsSnapshot(entries.Select(s => s.Snapshot)) ||
+            !PresenceProtocol.FitsSnapshot(entries.Select(s => s.Snapshot with { DisplayName = null }))) return;
+        // Optional titles must not block status delivery or evict an active session.
+        for (var index = 0; index < entries.Count; index++)
+            entries[index] = entries[index] with { Snapshot = entries[index].Snapshot with { DisplayName = null } };
+        log.Write("session-names-capacity-omitted");
     }
 
     private static StoredRemoteState LegacyState(StoredRemoteState state) => state with

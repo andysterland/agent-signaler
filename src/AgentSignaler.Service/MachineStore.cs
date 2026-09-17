@@ -61,6 +61,9 @@ public sealed class MachineStore : IDisposable
             CREATE TABLE IF NOT EXISTS SessionMetadataV1 (
                 MachineId TEXT PRIMARY KEY, SnapshotHash TEXT NOT NULL, Sessions TEXT NOT NULL,
                 FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS SessionDisplayNamesV1 (
+                MachineId TEXT PRIMARY KEY, SnapshotHash TEXT NOT NULL, DisplayNames TEXT NOT NULL,
+                FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS Receipts (
                 EventId TEXT PRIMARY KEY, MachineId TEXT NOT NULL,
                 FOREIGN KEY (MachineId) REFERENCES Machines(Id) ON DELETE CASCADE);
@@ -189,7 +192,8 @@ public sealed class MachineStore : IDisposable
             if (report.Kind is PresenceKind.Started or PresenceKind.Heartbeat)
             {
                 machine.HeartbeatIntervalSeconds = report.HeartbeatIntervalSeconds;
-                ReconcileSessions(machine, report.Sessions!, now, report.ProtocolVersion == PresenceProtocol.EnrichedVersion);
+                ReconcileSessions(machine, report.Sessions!, now, report.ProtocolVersion >= PresenceProtocol.EnrichedVersion,
+                    report.ProtocolVersion >= PresenceProtocol.DisplayNameVersion);
             }
             else if (report.Kind == PresenceKind.Hook)
             {
@@ -199,7 +203,7 @@ public sealed class MachineStore : IDisposable
                     machine.LatestReportUtc = hook.ReportedAtUtc;
                     machine.LatestEvent = hook.Event;
                 }
-                ApplyHook(machine, hook, now, report.ProtocolVersion == PresenceProtocol.EnrichedVersion);
+                ApplyHook(machine, hook, now, report.ProtocolVersion >= PresenceProtocol.EnrichedVersion);
             }
             else machine.ExplicitOffline = true;
             Save(connection, transaction, machine);
@@ -218,11 +222,12 @@ public sealed class MachineStore : IDisposable
         var previous = index < 0 ? null : machine.Sessions[index];
         var next = StateReducer.Apply(previous, request.SessionId!, request.Event,
             request.ReportedAtUtc, enriched ? request.ReportedAtUtc : now,
-            request.ToolFailed, request.ToolRequiresUserInput, request.Source);
+            request.ToolFailed, request.ToolRequiresUserInput, request.Source, request.DisplayName);
         if (!enriched && next.ResultUntilUtc > now + Protocol.ResultDuration)
             next = next with { ResultUntilUtc = now + Protocol.ResultDuration };
         if (index < 0) machine.Sessions.Add(next);
         else machine.Sessions[index] = next;
+        DropDisplayNamesUnderPressure(machine.Sessions);
         while (machine.Sessions.Count > Protocol.MaxSessions || !PresenceProtocol.FitsSnapshot(machine.Sessions))
         {
             var incomingScope = SourceIdentity.SessionKey(request.Source, "");
@@ -235,11 +240,22 @@ public sealed class MachineStore : IDisposable
                 throw new CapacityException("Maximum tracked sessions reached; end an active session before starting another.");
             machine.Sessions.Remove(retired);
             Retire(machine, retired.Source, retired.UpdatedAtUtc);
+            DropDisplayNamesUnderPressure(machine.Sessions);
         }
     }
 
     private static string SessionKey(SessionSnapshot session) =>
         SourceIdentity.SessionKey(session.Source, session.SessionId);
+
+    private static void DropDisplayNamesUnderPressure(List<SessionSnapshot> sessions)
+    {
+        if (PresenceProtocol.FitsSnapshot(sessions) ||
+            !PresenceProtocol.FitsSnapshot(sessions.Select(session => session with { DisplayName = null }))) return;
+        // Optional titles must not prevent status admission or evict active sessions.
+        for (var index = 0; index < sessions.Count; index++)
+            if (sessions[index].DisplayName is not null)
+                sessions[index] = sessions[index] with { DisplayName = null };
+    }
 
     private static bool IsRetired(StoredMachine machine, SourceDescriptor? source, DateTimeOffset timestamp) =>
         machine.RetiredSources.TryGetValue(SourceIdentity.SessionKey(source, ""), out var watermark) &&
@@ -257,9 +273,11 @@ public sealed class MachineStore : IDisposable
         else if (timestamp > watermark) machine.RetiredSources[scope] = timestamp;
     }
 
-    private static void ReconcileSessions(StoredMachine machine, IReadOnlyList<SessionSnapshot> snapshot, DateTimeOffset now, bool enriched)
+    private static void ReconcileSessions(StoredMachine machine, IReadOnlyList<SessionSnapshot> snapshot, DateTimeOffset now,
+        bool enriched, bool displayNames)
     {
-        if (!PresenceProtocol.FitsSnapshot(snapshot))
+        if (!PresenceProtocol.FitsSnapshot(snapshot) &&
+            !PresenceProtocol.FitsSnapshot(snapshot.Select(session => session with { DisplayName = null })))
             throw new CapacityException("Session snapshot exceeds capacity reserved for status metadata. End an active session before retrying.");
         var ids = snapshot.Select(SessionKey).ToHashSet(StringComparer.Ordinal);
         foreach (var removed in machine.Sessions.Where(s => !ids.Contains(SessionKey(s))))
@@ -270,7 +288,8 @@ public sealed class MachineStore : IDisposable
         {
             if (previous.TryGetValue(SessionKey(incoming), out var existing) && existing.UpdatedAtUtc >= incoming.UpdatedAtUtc)
             {
-                machine.Sessions.Add(existing);
+                machine.Sessions.Add(displayNames && existing.UpdatedAtUtc == incoming.UpdatedAtUtc &&
+                    incoming.DisplayName is not null ? existing with { DisplayName = incoming.DisplayName } : existing);
                 continue;
             }
             if (existing is null && IsRetired(machine, incoming.Source, incoming.UpdatedAtUtc)) continue;
@@ -279,9 +298,13 @@ public sealed class MachineStore : IDisposable
             if (!enriched && until > now + Protocol.ResultDuration) until = now + Protocol.ResultDuration;
             machine.Sessions.Add(incoming with
             {
-                ResultUntilUtc = until
+                ResultUntilUtc = until,
+                DisplayName = incoming.DisplayName ?? existing?.DisplayName
             });
         }
+        DropDisplayNamesUnderPressure(machine.Sessions);
+        if (!PresenceProtocol.FitsSnapshot(machine.Sessions))
+            throw new CapacityException("Session snapshot exceeds capacity reserved for status metadata. End an active session before retrying.");
     }
 
     public async Task<IReadOnlyList<MachineView>> GetMachinesAsync(CancellationToken cancellationToken = default)
@@ -292,8 +315,9 @@ public sealed class MachineStore : IDisposable
             using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT m.Snapshot, e.SnapshotHash, e.Sessions
+                SELECT m.Snapshot, e.SnapshotHash, e.Sessions, n.SnapshotHash, n.DisplayNames
                 FROM Machines m LEFT JOIN SessionMetadataV1 e ON e.MachineId=m.Id
+                LEFT JOIN SessionDisplayNamesV1 n ON n.MachineId=m.Id
                 """;
             using var reader = command.ExecuteReader();
             var now = _timeProvider.GetUtcNow();
@@ -404,8 +428,9 @@ public sealed class MachineStore : IDisposable
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT m.Snapshot, e.SnapshotHash, e.Sessions
-            FROM Machines m LEFT JOIN SessionMetadataV1 e ON e.MachineId=m.Id WHERE m.Id=$id
+            SELECT m.Snapshot, e.SnapshotHash, e.Sessions, n.SnapshotHash, n.DisplayNames
+            FROM Machines m LEFT JOIN SessionMetadataV1 e ON e.MachineId=m.Id
+            LEFT JOIN SessionDisplayNamesV1 n ON n.MachineId=m.Id WHERE m.Id=$id
             """;
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
@@ -429,7 +454,7 @@ public sealed class MachineStore : IDisposable
             if (!reader.IsDBNull(1) && reader.GetString(1) == SnapshotHash(json))
             {
                 var sessions = JsonSerializer.Deserialize<List<SessionSnapshot>>(reader.GetString(2), Protocol.Json);
-                if (sessions is null || sessions.Count > Protocol.MaxSessions || sessions.Any(s => s is null) ||
+                if (sessions is null || sessions.Count > Protocol.MaxSessions || sessions.Any(s => s is null || s.DisplayName is not null) ||
                     JsonSerializer.Serialize(sessions.Select(PresenceProtocol.ProjectStoredSession), Protocol.Json) !=
                     JsonSerializer.Serialize(machine.Sessions, Protocol.Json))
                     throw new InvalidDataException("The machine database contains inconsistent session metadata. Restore a compatible database backup.");
@@ -438,10 +463,23 @@ public sealed class MachineStore : IDisposable
             if (machine.SchemaVersion is < 1 or > 2 || machine.Sessions is null ||
                 machine.Sessions.Count > Protocol.MaxSessions || machine.RetiredSources is null ||
                 machine.RetiredSources.Count > Protocol.MaxSessions ||
-                machine.Sessions.Any(s => s is null || !PresenceProtocol.ValidLatestEvent(s) || s.Source is { IsValid: false } ||
+                machine.Sessions.Any(s => s is null || s.DisplayName is not null ||
+                    !PresenceProtocol.ValidLatestEvent(s) || s.Source is { IsValid: false } ||
                     string.IsNullOrWhiteSpace(s.SessionId) || s.SessionId.Length > 128 || s.SessionId.Any(char.IsControl)) ||
                 machine.Sessions.Select(SessionKey).Distinct(StringComparer.Ordinal).Count() != machine.Sessions.Count)
                 throw new InvalidDataException("The machine database contains invalid source identity metadata.");
+            if (!reader.IsDBNull(3) && reader.GetString(3) == SnapshotHash(json))
+            {
+                var names = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(4), Protocol.Json);
+                var identities = machine.Sessions.Select(SessionKey).ToHashSet(StringComparer.Ordinal);
+                if (names is null || names.Count > Protocol.MaxSessions ||
+                    names.Any(pair => !identities.Contains(pair.Key) || pair.Value is null || !Protocol.ValidDisplayName(pair.Value)))
+                    throw new InvalidDataException("The machine database contains invalid session display name metadata.");
+                machine.Sessions = machine.Sessions.Select(session => session with
+                {
+                    DisplayName = names.GetValueOrDefault(SessionKey(session))
+                }).ToList();
+            }
             // Missing source remains the wire-compatible representation of the legacy CLI scope.
             if (machine.RetiredThroughUtc is { } retired)
             {
@@ -486,7 +524,19 @@ public sealed class MachineStore : IDisposable
             """;
         command.Parameters.AddWithValue("$id", machine.MachineId.ToString());
         command.Parameters.AddWithValue("$hash", SnapshotHash(legacy));
-        command.Parameters.AddWithValue("$sessions", JsonSerializer.Serialize(machine.Sessions, Protocol.Json));
+        command.Parameters.AddWithValue("$sessions", JsonSerializer.Serialize(
+            machine.Sessions.Select(session => session with { DisplayName = null }), Protocol.Json));
+        command.ExecuteNonQuery();
+        command.Parameters.Clear();
+        command.CommandText = """
+            INSERT INTO SessionDisplayNamesV1(MachineId, SnapshotHash, DisplayNames) VALUES ($id,$hash,$names)
+            ON CONFLICT(MachineId) DO UPDATE SET SnapshotHash=excluded.SnapshotHash, DisplayNames=excluded.DisplayNames
+            """;
+        command.Parameters.AddWithValue("$id", machine.MachineId.ToString());
+        command.Parameters.AddWithValue("$hash", SnapshotHash(legacy));
+        command.Parameters.AddWithValue("$names", JsonSerializer.Serialize(machine.Sessions
+            .Where(session => session.DisplayName is not null)
+            .ToDictionary(SessionKey, session => session.DisplayName!, StringComparer.Ordinal), Protocol.Json));
         command.ExecuteNonQuery();
     }
 

@@ -28,7 +28,11 @@ public sealed record RpcSource(string Kind, string ScopeId, string Version);
 
 /// <summary>Effective session state with original UTC state-transition timestamps.</summary>
 public sealed record RpcSession(string SessionId, RpcSource? Source, string State, string UnderlyingState,
-    string? ResultState, DateTimeOffset? ResultUntilUtc, bool AwaitingUserInput, DateTimeOffset UpdatedAtUtc);
+    string? ResultState, DateTimeOffset? ResultUntilUtc, bool AwaitingUserInput, DateTimeOffset UpdatedAtUtc)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DisplayName { get; init; }
+}
 
 /// <summary>Mapping identity; cached connection URIs and credential material are deliberately absent.</summary>
 public sealed record RpcMapping(string DevCenterEndpoint, string ProjectName, string DevBoxName,

@@ -6,6 +6,8 @@ public sealed record SessionSnapshot
 {
     public string SessionId { get; init; } = "";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DisplayName { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SourceDescriptor? Source { get; init; }
     public AgentState UnderlyingState { get; init; } = AgentState.Idle;
     public AgentState? ResultState { get; init; }
@@ -23,8 +25,9 @@ public static class StateReducer
 {
     public static SessionSnapshot Apply(SessionSnapshot? previous, string sessionId,
         AgentEvent kind, DateTimeOffset reportedAtUtc, DateTimeOffset now, bool toolFailed = false,
-        bool toolRequiresUserInput = false, SourceDescriptor? source = null)
+        bool toolRequiresUserInput = false, SourceDescriptor? source = null, string? displayName = null)
     {
+        if (!Protocol.ValidDisplayName(displayName)) throw new ArgumentException("Invalid session display name.", nameof(displayName));
         if (previous is not null && reportedAtUtc <= previous.UpdatedAtUtc) return previous;
         var awaitingUserInput = kind switch
         {
@@ -59,6 +62,7 @@ public static class StateReducer
         return new SessionSnapshot
         {
             SessionId = sessionId, Source = source ?? previous?.Source, UnderlyingState = underlying,
+            DisplayName = displayName ?? previous?.DisplayName,
             AwaitingUserInput = awaitingUserInput,
             ResultState = result, ResultUntilUtc = until, UpdatedAtUtc = reportedAtUtc,
             LatestEvent = kind, LatestEventAtUtc = reportedAtUtc

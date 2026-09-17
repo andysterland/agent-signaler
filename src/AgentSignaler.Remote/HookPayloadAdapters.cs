@@ -59,6 +59,7 @@ public static class HookPayloadAdapters
     public static bool IsSanitized(AgentEvent? kind, HookData? hook) =>
         kind is { } value && Enum.IsDefined(value) && hook is not null &&
         RemoteConfiguration.ValidText(hook.SessionId, 128) &&
+        Protocol.ValidDisplayName(hook.DisplayName) &&
         hook.Timestamp.Offset == TimeSpan.Zero && hook.Timestamp.Year is >= 1970 and <= 9998 &&
         (hook.Source is null || hook.Source.IsValid) &&
         (!hook.ToolFailed || value == AgentEvent.PostToolUse) &&

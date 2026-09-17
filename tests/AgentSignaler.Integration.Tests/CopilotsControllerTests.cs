@@ -12,6 +12,31 @@ public sealed class CopilotsControllerTests
     private static readonly SourceDescriptor Cli = new("copilot-cli", "scope", "1");
 
     [Fact]
+    public async Task RenamingKeepsSelectionAndTranscriptIdentityAndRetainedRowsFallBackToIds()
+    {
+        var reader = new MetadataReader();
+        var selection = reader.Add(Cli, "active");
+        reader.Add(Cli, "retained", closed: true);
+        using var controller = new CopilotsController(reader);
+        var session = Session(Cli, "active", AgentState.Waiting, AgentEvent.PermissionRequest);
+        controller.SetMachine(Machine(session));
+        await controller.ShowAsync();
+        var original = controller.State.Rows.Single(row => row.SessionId == "active");
+        controller.Select(original.Key);
+        controller.SetMachine(Machine(session with { DisplayName = "Friendly name" }));
+        var renamed = controller.State.Rows.Single(row => row.SessionId == "active");
+        Assert.Equal(original.Key, renamed.Key);
+        Assert.Equal(original.Key, controller.State.SelectedKey);
+        Assert.Equal("Friendly name", renamed.DisplayName);
+        Assert.Contains("session Friendly name", renamed.Heading);
+        Assert.Equal("Session ID: active", renamed.Identity);
+        Assert.Equal(selection, Assert.Single(renamed.Streams).Selection);
+        Assert.Equal("retained", controller.State.Rows.Single(row => row.SessionId == "retained").DisplayName);
+        Assert.Equal(0, reader.EventReads);
+        await controller.RefreshAsync();
+    }
+
+    [Fact]
     public async Task DisabledTranscriptsLeaveDistinctStatusRowsAndWaitingCountAvailableWithoutBodyReads()
     {
         var reader = new MetadataReader { Availability = TranscriptAvailability.Disabled };

@@ -80,7 +80,7 @@ public sealed class DashboardServer : IAsyncDisposable
                 onConfiguratorTestConnection?.Invoke();
             return Results.Json(new HealthResponse(Protocol.Version, "ok"), Protocol.Json);
         });
-        foreach (var version in new[] { PresenceProtocol.Version, PresenceProtocol.SourceVersion, PresenceProtocol.EnrichedVersion })
+        foreach (var version in new[] { PresenceProtocol.Version, PresenceProtocol.SourceVersion, PresenceProtocol.EnrichedVersion, PresenceProtocol.DisplayNameVersion })
         {
         _application.MapGet($"/api/v{version}/health", (HttpContext context, CancellationToken cancellationToken) =>
         {
@@ -154,6 +154,9 @@ public sealed class DashboardServer : IAsyncDisposable
                 if (document.RootElement.ValueKind == JsonValueKind.Object &&
                     document.RootElement.EnumerateObject().Any(p => p.Name.Equals("source", StringComparison.OrdinalIgnoreCase)))
                     return Error(400, "Source fields require presence v3.");
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.EnumerateObject().Any(p => p.Name.Equals("displayName", StringComparison.OrdinalIgnoreCase)))
+                    return Error(400, "Session display names require presence v5.");
                 request = document.RootElement.Deserialize<StatusRequest>(Protocol.Json);
             }
             catch (BadHttpRequestException error) { return Error(error.StatusCode, "Invalid or oversized HTTP request."); }

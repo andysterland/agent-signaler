@@ -8,6 +8,21 @@ public sealed class CompactSessionPresentationTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
 
+    [Fact]
+    public void FriendlyLabelsDoNotChangeIndicatorKeysOrPositions()
+    {
+        var a = Session("a");
+        var b = Session("b");
+        var before = CompactSessionPresentation.Project(Machine(a, b), Now);
+        var after = CompactSessionPresentation.Project(Machine(
+            a with { DisplayName = "Z name" }, b with { DisplayName = "A name" }), Now);
+        Assert.Contains("session a:", before.Indicators[0].Label);
+        Assert.Contains("session Z name:", after.Indicators[0].Label);
+        Assert.Contains("session A name:", after.Indicators[1].Label);
+        Assert.Equal(before.Indicators.Select(item => (item.Key, item.Left, item.Top)),
+            after.Indicators.Select(item => (item.Key, item.Left, item.Top)));
+    }
+
     [Theory]
     [InlineData(0, 0, 64)]
     [InlineData(1, 4, 70)]

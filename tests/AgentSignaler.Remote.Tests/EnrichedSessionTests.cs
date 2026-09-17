@@ -126,7 +126,7 @@ public sealed class EnrichedSessionTests : IDisposable
         }));
         using var transport = new PresenceTransport(configuration, client);
         Assert.True(await transport.SendAsync(report, CancellationToken.None));
-        Assert.Equal("/api/v4/health", requests[0]);
+        Assert.Equal("/api/v5/health", requests[0]);
         if (receiverVersion != 2) Assert.DoesNotContain(requests, p => p.Contains("/v2/", StringComparison.Ordinal));
     }
 
@@ -142,7 +142,7 @@ public sealed class EnrichedSessionTests : IDisposable
         }));
         var error = await Assert.ThrowsAsync<InvalidDataException>(() => DashboardConnection.NegotiateAsync(configuration, client, CancellationToken.None));
         Assert.Contains("Upgrade", error.Message);
-        Assert.Equal(new[] { "/api/v4/health", "/api/v3/health" }, paths);
+        Assert.Equal(new[] { "/api/v5/health", "/api/v4/health", "/api/v3/health" }, paths);
     }
 
     [Fact]

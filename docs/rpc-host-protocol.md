@@ -309,6 +309,22 @@ transcript export surface nor a production WebView UI.
 | Windows App | `windowsApp.getState`, `windowsApp.map`, `windowsApp.signIn`, `windowsApp.refresh`, `windowsApp.open`, `windowsApp.openLastKnown`, `windowsApp.clear`, `windowsApp.cancel` | Per-machine mapping and operation state, `windowsApp.changed`; explicit clear confirmation, cached URI never exposed. Native focus failure is not permission to duplicate-launch. |
 | Operations | `operations.cancel` | Connection-local request ID cancellation without waiting on target resource gates. |
 
+### Session presentation fields
+
+Each `machines.getSessions` item contains `sessionId`, optional `source`,
+`state`, `underlyingState`, optional `resultState` and `resultUntilUtc`,
+`awaitingUserInput`, and `updatedAtUtc`. It may also contain `displayName`, an
+optional source-provided session label. When no name is available, `displayName`
+is omitted rather than populated with the ID; clients should display
+`displayName ?? sessionId`. Older unnamed items retain their existing JSON shape.
+
+Names are presentation metadata, not identity or ordering keys. Continue to
+identify sessions by machine, source kind/scope, and `sessionId`; source version
+and display-name changes do not create a new session. Keep the ID accessible in
+details even when displaying a name. A name-only update advances the machine's
+entity revision and invalidates older session pages normally. This optional field
+does not change the RPC envelope's `protocolVersion: 1`.
+
 ### Conflict and cancellation contract
 
 Acquire required resources atomically in stable order; never hold a partial

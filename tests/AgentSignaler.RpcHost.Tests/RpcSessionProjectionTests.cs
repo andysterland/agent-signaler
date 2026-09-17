@@ -43,6 +43,20 @@ public sealed class RpcSessionProjectionTests
             Assert.False(first.TryGetProperty("latestEvent", out _));
             Assert.False(first.TryGetProperty("latestEventAtUtc", out _));
             var previousRevision = json.GetProperty("revision").GetString();
+            waiting = waiting with { DisplayName = "Friendly session" };
+            runtime.PublishMachines([machine with { Sessions = [waiting, running] }]);
+            var renamed = await application.ExecuteAsync("machines.getSessions", parameters, CancellationToken.None);
+            var renamedJson = JsonSerializer.SerializeToElement(renamed.State, RpcProtocol.Json);
+            var renamedSession = renamedJson.GetProperty("state").GetProperty("items")[0];
+            Assert.Equal("Friendly session", renamedSession.GetProperty("displayName").GetString());
+            Assert.Equal("a", renamedSession.GetProperty("sessionId").GetString());
+            Assert.Equal("waiting", renamedSession.GetProperty("state").GetString());
+            Assert.NotEqual(previousRevision, renamedJson.GetProperty("revision").GetString());
+            Assert.Equal(first.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal),
+                renamedSession.EnumerateObject().Select(p => p.Name).Where(name => name != "displayName").Order(StringComparer.Ordinal));
+            var roundTrip = renamedSession.Deserialize<AgentSignaler.Contracts.Rpc.V1.RpcSession>(RpcProtocol.Json)!;
+            Assert.Equal("Friendly session", roundTrip.DisplayName);
+            Assert.Null(first.Deserialize<AgentSignaler.Contracts.Rpc.V1.RpcSession>(RpcProtocol.Json)!.DisplayName);
             running = StateReducer.Apply(running, "b", AgentEvent.PostToolUse, now.AddSeconds(2), now.AddSeconds(2));
             runtime.PublishMachines([machine with { Sessions = [waiting, running] }]);
             var stale = JsonSerializer.SerializeToElement(new

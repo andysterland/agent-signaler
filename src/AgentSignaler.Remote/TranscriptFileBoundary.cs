@@ -6,10 +6,11 @@ using Microsoft.Win32.SafeHandles;
 
 namespace AgentSignaler.Remote;
 
-public sealed class TranscriptFileBoundaryException(string category, bool transient = false) : IOException(category)
+public sealed class TranscriptFileBoundaryException(string category, bool transient = false, int? nativeError = null) : IOException(category)
 {
     public string Category { get; } = category;
     public bool IsTransient { get; } = transient;
+    public int? NativeError { get; } = nativeError;
 }
 
 public sealed class ValidatedTranscriptFile(FileStream stream, string identity) : IDisposable
@@ -169,7 +170,7 @@ public static class TranscriptFileBoundary
 
     private static void ThrowLastError() => ThrowError(Marshal.GetLastPInvokeError());
     private static void ThrowError(int error) => throw new TranscriptFileBoundaryException(
-        TranscriptReaderCategories.Unavailable, error is 2 or 3 or 32 or 33);
+        TranscriptReaderCategories.Unavailable, error is 2 or 3 or 32 or 33, error);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct UnicodeString { public ushort Length, MaximumLength; public IntPtr Buffer; }

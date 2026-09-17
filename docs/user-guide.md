@@ -116,11 +116,26 @@ belong only to Settings; Close and ongoing connection cancellation remain reacha
 from either tab.
 
 Copilots lists each observed conversation independently, including concurrent
-conversations in the same integration. Each row shows product, scope/session,
+conversations in the same integration. Each row shows the saved session display
+name when available (otherwise the session ID), product, scope/session,
 effective status, and the latest accepted status event with its reporting
 timestamp. This is not a prompt, answer, raw hook payload, or transcript excerpt.
 Older snapshots show **Last event unavailable** rather than borrowing another
 session's event. Status rows work with detailed conversations disabled.
+
+For configured CLI and shared Visual Studio runtime sources, names are read from
+the matching `session-state\<session-id>\workspace.yaml` under the configured
+Copilot home. Only its `name` is returned after checking the metadata's `id`;
+prompts, transcripts and unrelated workspace fields are not sent. Reads are
+limited to 16 KiB, and reparse points, hard links and unsafe ownership are rejected.
+VS Code and legacy configurations without matching integration roots currently
+retain the ID fallback; their title formats are not guessed.
+They can arrive after the session starts and refresh on subsequent hooks or
+heartbeats. Renaming a session does not create a new row or change transcript
+selection. Names are not guaranteed unique; the original source/scope/session
+identity remains visible in details. Unsupported or unavailable metadata keeps
+the ID fallback. Saved titles can contain sensitive information even with
+detailed conversations disabled.
 
 Connected means observed and not ended while the reporting Client is online,
 not verified host-process liveness. Hook silence never expires a waiting row.
@@ -555,8 +570,8 @@ Approved multi-target Apply explicitly migrates to v5 with `integrations`,
 (default **300**). **Heartbeat interval (minutes)** accepts whole numbers **1–60**;
 zero does not disable reporting. UUID and metadata are retained.
 Upgrade **Dashboard first**, then **Client, Configurator, and Relay together**.
-New multi-target integration prefers `/api/v4/health`, with source-aware v3
-fallback only when v4 returns 404. Older dashboards without source-aware support
+New multi-target integration prefers `/api/v5/health`, with v4 then source-aware v3
+fallback only when the newer endpoint returns 404. Older dashboards without source-aware support
 are rejected rather than silently falling back to v1 reporting.
 Old Clients cannot read v5. Explicit downgrade requires stopping the exact owned
 Client, clearing volatile detail, transactionally writing validated status-only
@@ -722,8 +737,8 @@ session status. If the dashboard is hidden, open it to see the message; no Windo
 notification is sent. Ordinary health checks and relay reports do not show it.
 
 Relay `test --config <path>` uses `DashboardConnection.TestAsync` for read-only
-`GET /api/v4/health` with managed configuration (source-aware v3 fallback for
-configuration v4/v5, or v2 fallback for configuration v3, only on v4 HTTP 404),
+`GET /api/v5/health` with managed configuration (v4 fallback, then source-aware v3 for
+configuration v4/v5, or v2 for configuration v3, only on newer endpoint HTTP 404),
 or `GET /health` with legacy
 v1/v2 configuration. It does not post status, register a machine, change
 session state, or refresh machine liveness. Like Configurator's test, it includes
@@ -880,7 +895,10 @@ can submit or spoof status reports. Use it only on a trusted LAN or VPN.**
   Its warning is informational, not a consent gate; the release checks above still apply.
 - A Private-profile firewall rule is a convenience, not authentication.
 - The server validates a fixed protocol and never executes incoming values.
-- Status/presence remains content-free. V5 detailed reporting uses the fixed
+- Status/presence can include a saved session display name, independently of
+  detailed-conversation reporting. Titles may summarize sensitive work, are not
+  automatically redacted, and are persisted locally and by the receiver.
+  No prompt or response body is read to derive a title. V5 detailed reporting uses the fixed
   message/tool-metadata allowlist and externally consented HTTPS prototype policy
   above; allowed text can contain PII. Excluded tool bodies, reasoning, raw errors,
   attachments, and local transcript references never enter the network stream.
@@ -906,16 +924,24 @@ can submit or spoof status reports. Use it only on a trusted LAN or VPN.**
 ## Protocol and state
 
 `GET /health` retains its strict legacy v1 version/status response.
-Managed configurations prefer `GET /api/v4/health`, returning exactly
-`{"protocolVersion":4,"status":"ok"}`, and `POST /api/v4/reports`.
+Managed configurations prefer `GET /api/v5/health`, returning exactly
+`{"protocolVersion":5,"status":"ok"}`, and `POST /api/v5/reports`.
+V5 adds optional per-session `displayName` to snapshots and nested hook requests
+(nested protocol v5). Names are limited to 128 nonblank characters without
+control characters. They are labels, never session identity or selection keys;
+duplicate names are allowed. Missing names display the opaque session ID.
+Names refresh on accepted hooks and heartbeats without renewing state timestamps
+or result overlays. A newer ordered v5 snapshot may update only the name at the
+same state timestamp; stale state timestamps cannot rename a session.
 V4 snapshots carry nullable per-session `latestEvent` and `latestEventAtUtc`.
 The timestamp is the accepted reporting time, not heartbeat receipt or result
-expiry. Unknown legacy metadata remains unknown. Nested source-aware hook
-requests remain v3; no hook IPC or transcript identity change is required.
+expiry. Unknown legacy metadata remains unknown. V3/v4 nested source-aware hook
+requests remain v3; no transcript identity change is required.
 Sessions carry source kind, integration scope and opaque host session identity;
 reporter identity/heartbeat remains machine-wide. Identical session IDs across
 CLI, IDEs and profiles do not share state. Dashboard displays per-session sources.
-Only when v4 health returns 404, configuration v4/v5 falls back to source-aware
+Only when v5 health returns 404 does negotiation try v4, with names omitted.
+If v4 also returns 404, configuration v4/v5 falls back to source-aware
 v3 health/reports, while legacy managed configuration v3 falls back to v2
 health/reports. V2/v3 snapshots use explicit legacy projections without the new
 fields; source-aware mode never falls back below v3 or strips source identity.
@@ -979,7 +1005,7 @@ Upgrade Dashboard before the remote package: older receivers reject the new meta
 
 On `/api/v1/status`, only hook events are accepted; `heartbeat` and legacy snapshot
 fields `state` and `sessions` are rejected. Managed snapshots belong only to the
-versioned presence endpoints (v2/v3/v4).
+versioned presence endpoints (v2/v3/v4/v5).
 `relayVersion` identifies the reporting relay without
 replacing the discovered CLI version. At most **25 computers** and
 **64 tracked sessions per computer** are accepted.
@@ -1042,12 +1068,13 @@ SQLite reuses freed pages; removal does not promise to shrink the database file.
 Upgrade the receiver (Dashboard or RpcHost) first, then deploy matching
 Client/Relay/Configurator binaries. Presence protocol versions are independent
 of configuration, transcript, RPC and local IPC versions. Enriched status
-snapshots carry only event enums and UTC timestamps, not conversation text.
+snapshots carry event enums, UTC timestamps and optional saved session titles,
+not conversation bodies. V4 receivers receive projections without titles.
 Source-aware v3 and legacy v2 receivers use explicit legacy projections;
 source identity is never stripped to make a multi-source setup appear
 compatible. Unsupported receivers require an upgrade, not merged CLI sessions.
 
-The local primary state remains rollback-readable format v2 with event metadata
+The local primary state remains rollback-readable format v2 with titles and event metadata
 omitted. A hash-bound `.events-v1` sidecar carries enriched format v3 state;
 `.events-v1.previous` preserves the prior matching enrichment during interrupted
 publication. SQLite likewise keeps legacy schema-v2 snapshots and stores
@@ -1057,12 +1084,18 @@ changes the base, unmatched enrichment is ignored rather than treating those
 sessions/settings as corrupt. Missing metadata displays as unavailable; it is
 not reconstructed from a machine-wide event.
 
+Titles use a separate hash-bound `.names-v1` sidecar (with `.names-v1.previous`
+for interrupted publication) and a transactional `SessionDisplayNamesV1` table.
+Existing event sidecars and metadata tables remain title-free for older binaries.
+If optional titles exceed the bounded snapshot budget, Client omits them with a
+category-only diagnostic rather than blocking status delivery or evicting a live session.
+
 Before the first upgraded launch, stop Dashboard/RpcHost and Client and take
 a consistent backup of their owned data directories plus matching configuration
 and integration backups. Do not copy a live SQLite database/WAL independently.
 Keep the compatible binaries with the backup. To roll back, stop the upgraded
 processes, restore the matching stopped backup and old binaries/configuration
-together, including the local primary and both sidecars, then explicitly start
+together, including the local primary and all matching sidecars, then explicitly start
 the desired reporter. Never substitute a sidecar for the rollback-readable
 primary state file. Changes after the
 backup are not part of rollback; preserve later display names, notes and mappings

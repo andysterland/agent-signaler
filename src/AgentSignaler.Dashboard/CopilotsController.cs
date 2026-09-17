@@ -8,7 +8,9 @@ internal sealed record CopilotRow(Guid MachineId, string Key, SourceDescriptor S
     RuntimeSession? Session, ImmutableArray<TranscriptSessionInfo> Streams, DateTimeOffset Now)
 {
     public bool RetainedOnly => Session is null || Session.IsEnded;
-    public string Heading => $"{SessionPresentation.SourceLabel(Source.Kind)} · scope {Source.ScopeId} · session {SessionId}";
+    public string DisplayName => Session?.DisplayName ?? SessionId;
+    public string Heading => $"{SessionPresentation.SourceLabel(Source.Kind)} · scope {Source.ScopeId} · session {DisplayName}";
+    public string Identity => $"Session ID: {SessionId}";
     public string Status => Session is null ? "Retained history only — not connected; host lifecycle unknown" :
         $"{Session.LifecycleLabel} · {(Session.State == AgentState.Waiting ? "Waiting for input" : Session.State)}" +
         (Session.Snapshot.ResultState is { } result ? $" · last result {result}" : "");

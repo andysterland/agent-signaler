@@ -28,6 +28,7 @@ public sealed record RuntimeSession(SessionSnapshot Snapshot, AgentState State)
     public SourceDescriptor Source => Snapshot.Source ?? SourceDescriptor.LegacyCli;
     public string SessionKey => SourceIdentity.SessionKey(Source, Snapshot.SessionId);
     public string SessionId => Snapshot.SessionId;
+    public string DisplayName => Snapshot.DisplayName ?? SessionId;
     public string SourceLabel => SessionPresentation.SourceLabel(Source.Kind);
     public AgentEvent? LatestEvent => Snapshot.LatestEvent;
     public DateTimeOffset? LatestEventAtUtc => Snapshot.LatestEventAtUtc;

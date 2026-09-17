@@ -575,6 +575,8 @@ public sealed class SettingsServicingTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Assert.Equal(HttpMethod.Get, request.Method);
+            if (request.RequestUri!.AbsolutePath is "/api/v5/health" or "/api/v4/health")
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
             Assert.Equal("/api/v2/health", request.RequestUri!.AbsolutePath);
             Assert.Null(request.Content);
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)

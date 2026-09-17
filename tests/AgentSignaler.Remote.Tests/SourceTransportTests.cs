@@ -208,7 +208,7 @@ public sealed class SourceTransportTests : IDisposable
     }
 
     [Fact]
-    public async Task RealRelayPipeProducesV4AndRejectsDisabledScopesAndProbeMisuse()
+    public async Task RealRelayPipeProducesV5AndRejectsDisabledScopesAndProbeMisuse()
     {
         Save(Config);
         var transport = new RecordingTransport();
@@ -223,12 +223,12 @@ public sealed class SourceTransportTests : IDisposable
         Assert.Equal(0, await new RelayEngine(http).RunAsync(args, new MemoryStream(CodePayload())));
         await Eventually(() => transport.Reports.Any(r => r.Kind == PresenceKind.Hook));
         var report = transport.Reports.Single(r => r.Kind == PresenceKind.Hook);
-        Assert.Equal(PresenceProtocol.EnrichedVersion, report.ProtocolVersion);
+        Assert.Equal(PresenceProtocol.DisplayNameVersion, report.ProtocolVersion);
         Assert.Equal("agent-signaler", report.Client);
         Assert.Equal(Code, report.Hook!.Source);
         Assert.Equal("vscode", report.Hook.Client);
         Assert.Equal(Code.Version, report.Hook.ClientVersion);
-        Assert.Equal(3, report.Hook.ProtocolVersion);
+        Assert.Equal(PresenceProtocol.DisplayNameVersion, report.Hook.ProtocolVersion);
         Assert.Equal(AgentEvent.ExecutionStopped, report.Hook.Event);
         Assert.Empty(PresenceProtocol.Validate(report));
         Assert.Empty(handler.Paths);
@@ -440,7 +440,7 @@ public sealed class SourceTransportTests : IDisposable
             ReportedAtUtc = _now, HeartbeatIntervalSeconds = 300, Sessions = []
         };
         Assert.True(await transport.SendAsync(report, CancellationToken.None));
-        Assert.Equal(new[] { "/api/v4/health", $"/api/v{protocolVersion}/health", $"/api/v{protocolVersion}/reports" }, handler.Paths);
+        Assert.Equal(new[] { "/api/v5/health", "/api/v4/health", $"/api/v{protocolVersion}/health", $"/api/v{protocolVersion}/reports" }, handler.Paths);
     }
 
     [Fact]
@@ -449,7 +449,7 @@ public sealed class SourceTransportTests : IDisposable
         var handler = new RecordingHttpHandler(2);
         using var client = new HttpClient(handler);
         await Assert.ThrowsAsync<InvalidDataException>(() => DashboardConnection.TestAsync(Config, client, CancellationToken.None));
-        Assert.Equal(new[] { "/api/v4/health", "/api/v3/health" }, handler.Paths);
+        Assert.Equal(new[] { "/api/v5/health", "/api/v4/health", "/api/v3/health" }, handler.Paths);
     }
 
     [Fact]

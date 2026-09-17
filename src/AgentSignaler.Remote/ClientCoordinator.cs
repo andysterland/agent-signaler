@@ -62,7 +62,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             _transport = _transportFactory(_configuration);
             _acknowledgedInterval = _configuration.HeartbeatIntervalSeconds;
             _log = new DiagnosticLog(RemotePaths.Log(_configPath));
-            _sessions = new SessionStore(RemotePaths.State(_configPath), _log);
+            _sessions = new SessionStore(RemotePaths.State(_configPath), _log,
+                session => SessionDisplayNameReader.Read(_configuration, session.Source, session.SessionId, _log));
             InitializeTranscripts(transcriptTransport, transcriptFileAdapters);
         }
         catch { _owner.Dispose(); throw; }
@@ -159,11 +160,13 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             _hooks.Enqueue(new StatusRequest
             {
                 EventId = Guid.NewGuid(), MachineId = _configuration.MachineId, MachineName = _configuration.MachineName,
-                ProtocolVersion = _configuration.Version >= 4 ? PresenceProtocol.SourceVersion : Protocol.Version,
+                ProtocolVersion = PresenceProtocol.DisplayNameVersion,
                 Client = _configuration.Version >= 4 ? hook.Source?.Kind ?? "copilot-cli" : "copilot-cli",
                 Source = _configuration.Version >= 4 ? hook.Source ?? SourceDescriptor.LegacyCli : null,
                 ClientVersion = _configuration.Version >= 4 ? (hook.Source ?? SourceDescriptor.LegacyCli).Version : _configuration.ClientVersion,
                 Event = kind.Value, SessionId = hook.SessionId,
+                DisplayName = local.Sessions.FirstOrDefault(s =>
+                    SourceIdentity.SessionKey(s.Source, s.SessionId) == SourceIdentity.SessionKey(hook.Source, hook.SessionId))?.DisplayName,
                 ReportedAtUtc = local.ReportedAtUtc, ToolFailed = hook.ToolFailed,
                 ToolRequiresUserInput = hook.ToolRequiresUserInput
             });
@@ -203,7 +206,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         var verifiedScopes = new Dictionary<string, bool>(StringComparer.Ordinal);
         return PresenceProtocol.Project(new PresenceReport
         {
-            ProtocolVersion = PresenceProtocol.EnrichedVersion,
+            ProtocolVersion = PresenceProtocol.DisplayNameVersion,
             Client = _configuration.Version >= 4 ? "agent-signaler" : "copilot-cli",
             Kind = kind, EventId = hook?.EventId ?? Guid.NewGuid(), MachineId = _configuration.MachineId,
             MachineName = _configuration.MachineName,
@@ -213,7 +216,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             HeartbeatIntervalSeconds = local is null ? null : _configuration.HeartbeatIntervalSeconds,
             Sessions = local?.Sessions.Where(s => IsSessionAllowed(s.Source, verifiedScopes)).ToList(),
             Hook = hook
-        }, PresenceProtocol.EnrichedVersion);
+        }, PresenceProtocol.DisplayNameVersion);
     }
 
     private bool IsSessionAllowed(SourceDescriptor? source, Dictionary<string, bool> verifiedScopes)

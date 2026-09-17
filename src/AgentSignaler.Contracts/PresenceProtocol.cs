@@ -38,6 +38,7 @@ public static class PresenceProtocol
     public const int Version = 2;
     public const int SourceVersion = 3;
     public const int EnrichedVersion = 4;
+    public const int DisplayNameVersion = 5;
     public const int DefaultHeartbeatIntervalSeconds = 300;
     public const int MinHeartbeatIntervalSeconds = 60;
     public const int MaxHeartbeatIntervalSeconds = 3600;
@@ -67,15 +68,20 @@ public static class PresenceProtocol
                 if (snapshotField && report.Kind is not (PresenceKind.Started or PresenceKind.Heartbeat) ||
                     hookField && report.Kind != PresenceKind.Hook)
                     throw new JsonException("Property is not allowed for this report kind.");
-                if (report.ProtocolVersion is not (SourceVersion or EnrichedVersion) &&
+                if (report.ProtocolVersion is not (SourceVersion or EnrichedVersion or DisplayNameVersion) &&
                     (property.Name.Equals("hook", StringComparison.OrdinalIgnoreCase) && HasSource(property.Value) ||
                      property.Name.Equals("sessions", StringComparison.OrdinalIgnoreCase) &&
                      property.Value.ValueKind == JsonValueKind.Array && property.Value.EnumerateArray().Any(HasSource)))
                     throw new JsonException("Source fields require presence v3.");
-                if (report.ProtocolVersion != EnrichedVersion &&
+                if (report.ProtocolVersion is not (EnrichedVersion or DisplayNameVersion) &&
                     property.Name.Equals("sessions", StringComparison.OrdinalIgnoreCase) &&
                     property.Value.ValueKind == JsonValueKind.Array && property.Value.EnumerateArray().Any(HasLatestEvent))
                     throw new JsonException("Latest event fields require presence v4.");
+                if (report.ProtocolVersion != DisplayNameVersion &&
+                    (property.Name.Equals("hook", StringComparison.OrdinalIgnoreCase) && HasDisplayName(property.Value) ||
+                     property.Name.Equals("sessions", StringComparison.OrdinalIgnoreCase) &&
+                     property.Value.ValueKind == JsonValueKind.Array && property.Value.EnumerateArray().Any(HasDisplayName)))
+                    throw new JsonException("Display name fields require presence v5.");
             }
             return report;
         }
@@ -85,6 +91,9 @@ public static class PresenceProtocol
 
         private static bool HasSource(JsonElement value) => value.ValueKind == JsonValueKind.Object &&
             value.EnumerateObject().Any(p => p.Name.Equals("source", StringComparison.OrdinalIgnoreCase));
+
+        private static bool HasDisplayName(JsonElement value) => value.ValueKind == JsonValueKind.Object &&
+            value.EnumerateObject().Any(p => p.Name.Equals("displayName", StringComparison.OrdinalIgnoreCase));
 
         private static void RejectDuplicateProperties(JsonElement value)
         {
@@ -118,8 +127,8 @@ public static class PresenceProtocol
     public static IReadOnlyList<string> Validate(PresenceReport report)
     {
         var errors = new List<string>();
-        var sourceAware = report.ProtocolVersion is SourceVersion or EnrichedVersion;
-        if (report.ProtocolVersion is not (Version or SourceVersion or EnrichedVersion)) errors.Add("Unsupported protocolVersion.");
+        var sourceAware = report.ProtocolVersion is SourceVersion or EnrichedVersion or DisplayNameVersion;
+        if (report.ProtocolVersion is not (Version or SourceVersion or EnrichedVersion or DisplayNameVersion)) errors.Add("Unsupported protocolVersion.");
         if (!Enum.IsDefined(report.Kind)) errors.Add("Unknown report kind.");
         if (report.EventId == Guid.Empty) errors.Add("eventId must be a nonempty UUID.");
         if (report.MachineId == Guid.Empty) errors.Add("machineId must be a nonempty UUID.");
@@ -143,13 +152,17 @@ public static class PresenceProtocol
                 {
                     if (session is null) { errors.Add("Invalid session snapshot."); continue; }
                     CheckText(session.SessionId, 128, "sessionId", errors);
+                    if (!Protocol.ValidDisplayName(session.DisplayName) ||
+                        session.DisplayName is not null && report.ProtocolVersion != DisplayNameVersion)
+                        errors.Add("Invalid displayName or unsupported presence version.");
                     if (session.Source is { IsValid: false }) errors.Add("Invalid source descriptor.");
                     else if (session.SessionId is not null &&
                         !ids.Add(SourceIdentity.SessionKey(session.Source, session.SessionId)))
                         errors.Add("Duplicate session identity.");
                     if (!sourceAware && session.Source is not null) errors.Add("source requires presence v3.");
                     if (!ValidLatestEvent(session) ||
-                        report.ProtocolVersion != EnrichedVersion && (session.LatestEvent is not null || session.LatestEventAtUtc is not null))
+                        report.ProtocolVersion is not (EnrichedVersion or DisplayNameVersion) &&
+                        (session.LatestEvent is not null || session.LatestEventAtUtc is not null))
                         errors.Add("Invalid latest event metadata or unsupported presence version.");
                     if (session.UnderlyingState is not (AgentState.Idle or AgentState.Waiting or AgentState.Executing) ||
                         session.ResultState is not (null or AgentState.Succeeded or AgentState.Failed) ||
@@ -177,6 +190,9 @@ public static class PresenceProtocol
                 else
                 {
                     errors.AddRange(sourceAware ? Protocol.ValidateSource(hook) : Protocol.Validate(hook));
+                    if (sourceAware && hook.ProtocolVersion !=
+                        (report.ProtocolVersion == DisplayNameVersion ? DisplayNameVersion : SourceVersion))
+                        errors.Add("Hook protocolVersion must match the presence capabilities.");
                     if (hook.EventId != report.EventId || hook.MachineId != report.MachineId ||
                         hook.MachineName != report.MachineName || hook.ReportedAtUtc != report.ReportedAtUtc ||
                         !sourceAware && (hook.Client != report.Client || hook.ClientVersion != report.ClientVersion))
@@ -196,12 +212,12 @@ public static class PresenceProtocol
 
     public static SessionSnapshot ProjectStoredSession(SessionSnapshot session) => session with
     {
-        LatestEvent = null, LatestEventAtUtc = null
+        LatestEvent = null, LatestEventAtUtc = null, DisplayName = null
     };
 
     public static SessionSnapshot ProjectSession(SessionSnapshot session, int version)
     {
-        if (version is not (Protocol.Version or Version or SourceVersion or EnrichedVersion))
+        if (version is not (Protocol.Version or Version or SourceVersion or EnrichedVersion or DisplayNameVersion))
             throw new ArgumentOutOfRangeException(nameof(version));
         if (version < SourceVersion && session.Source is { } source &&
             SourceIdentity.SessionKey(source, "") != SourceIdentity.SessionKey(null, ""))
@@ -214,14 +230,15 @@ public static class PresenceProtocol
             Source = version < SourceVersion ? null : session.Source,
             ResultState = hideResult ? null : session.ResultState,
             ResultUntilUtc = hideResult ? null : session.ResultUntilUtc,
-            LatestEvent = version == EnrichedVersion ? session.LatestEvent : null,
-            LatestEventAtUtc = version == EnrichedVersion ? session.LatestEventAtUtc : null
+            LatestEvent = version >= EnrichedVersion ? session.LatestEvent : null,
+            LatestEventAtUtc = version >= EnrichedVersion ? session.LatestEventAtUtc : null,
+            DisplayName = version >= DisplayNameVersion ? session.DisplayName : null
         };
     }
 
     public static PresenceReport Project(PresenceReport report, int version)
     {
-        if (version is not (Version or SourceVersion or EnrichedVersion))
+        if (version is not (Version or SourceVersion or EnrichedVersion or DisplayNameVersion))
             throw new InvalidOperationException("Managed reporting requires receiver v2 or newer.");
         var hook = report.Hook;
         if (hook is not null)
@@ -232,7 +249,9 @@ public static class PresenceProtocol
             var source = hook.Source ?? SourceDescriptor.LegacyCli;
             hook = hook with
             {
-                ProtocolVersion = version >= SourceVersion ? SourceVersion : Protocol.Version,
+                ProtocolVersion = version >= DisplayNameVersion ? DisplayNameVersion :
+                    version >= SourceVersion ? SourceVersion : Protocol.Version,
+                DisplayName = version >= DisplayNameVersion ? hook.DisplayName : null,
                 Source = version >= SourceVersion ? source : null,
                 Client = version >= SourceVersion ? source.Kind : "copilot-cli",
                 ClientVersion = version >= SourceVersion ? source.Version : report.ClientVersion
