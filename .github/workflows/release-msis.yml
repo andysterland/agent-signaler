@@ -33,7 +33,7 @@ jobs:
       RELEASE_UNSIGNED_CONFIRMED: ${{ inputs.confirm_unsigned }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
