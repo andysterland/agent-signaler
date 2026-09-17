@@ -21,8 +21,24 @@ public sealed class ProcessOwnershipTests
                 Assert.Equal("ownership-conflict", (await contender.StandardError.ReadToEndAsync()).Trim());
                 owner.Kill();
                 await owner.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-                using var lease = DashboardResourceLease.Acquire(path, path);
+                var cleanup = Stopwatch.StartNew();
+                DashboardResourceLease lease;
+                while (true)
+                {
+                    try
+                    {
+                        lease = DashboardResourceLease.Acquire(path, path);
+                        break;
+                    }
+                    catch (DashboardOwnershipException) when (cleanup.Elapsed < TimeSpan.FromSeconds(5))
+                    {
+                        // Process exit can precede completion of kernel file-handle cleanup.
+                        await Task.Delay(25);
+                    }
+                }
+                using var releasedLease = lease;
                 Assert.True(lease.IsHeld);
+                Assert.Throws<DashboardOwnershipException>(() => DashboardResourceLease.Acquire(path, path));
             }
             finally { await Stop(owner); }
         }
