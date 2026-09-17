@@ -45,6 +45,13 @@ internal sealed class WindowsAppLauncher(
     public WindowsAppLauncher(MachineStore store)
         : this(new DevBoxConnectionResolver(new AzureCliProcess()), new WindowsAppPlatform(), store.SetWindowsAppConnectionAsync) { }
 
+    public void ReturnToLocal(Guid machineId, CancellationToken cancellationToken)
+    {
+        using var operation = gate.Enter(machineId);
+        cancellationToken.ThrowIfCancellationRequested();
+        platform.MinimizeSessions();
+    }
+
     public Task<WindowsAppLaunchResult> OpenAsync(
         Guid machineId, WindowsAppConnection? mapping, CancellationToken cancellationToken = default)
         => OpenCurrentAsync(machineId, _ => Task.FromResult(mapping), cancellationToken);

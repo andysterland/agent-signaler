@@ -252,7 +252,11 @@ public sealed partial class DashboardRuntime
         DevBoxMappingSelection? selection, bool confirmed, Guid expectedHostInstanceId, long expectedRevision,
         CancellationToken cancellationToken = default)
     {
-        string[] resources = operation is WindowsAppOperation.Clear or WindowsAppOperation.OpenLastKnown
+        bool localOpen;
+        lock (machineSync)
+            localOpen = operation == WindowsAppOperation.Open &&
+                machines.State.Any(item => item.Machine.MachineId == id && MachineNavigation.IsLocal(item.Machine));
+        string[] resources = localOpen || operation is WindowsAppOperation.Clear or WindowsAppOperation.OpenLastKnown
             ? [$"machine:{id:D}"] : ["azure", $"machine:{id:D}"];
         return RunCommandAsync($"windowsApp:{id:D}", resources, TimeSpan.FromMinutes(3), async (token, commit) =>
         {
@@ -295,6 +299,12 @@ public sealed partial class DashboardRuntime
 
     private sealed class TrackingWindowsAppPlatform(IWindowsAppPlatform inner, Action<RuntimeCommitState> track) : IWindowsAppPlatform
     {
+        public void MinimizeSessions()
+        {
+            track(RuntimeCommitState.Unknown);
+            inner.MinimizeSessions();
+            track(RuntimeCommitState.Committed);
+        }
         public bool IsProtocolAvailable() => inner.IsProtocolAvailable();
         public WindowsAppActivationDisposition TryActivateExisting(string name)
         {

@@ -17,6 +17,7 @@ internal interface IWindowsAppPlatform
     bool IsProtocolAvailable();
     WindowsAppActivationDisposition TryActivateExisting(string devBoxName);
     WindowsAppActivationDisposition Activate(Uri connectionUri, string devBoxName);
+    void MinimizeSessions();
 }
 
 internal sealed class WindowsAppPlatform(
@@ -40,6 +41,34 @@ internal sealed class WindowsAppPlatform(
     }
 
     internal bool CheckProtocolAvailability() => registrationProbe();
+
+    public void MinimizeSessions()
+    {
+        lock (activationLock)
+        {
+            try
+            {
+                var failed = false;
+                foreach (var window in windows.Enumerate())
+                {
+                    try
+                    {
+                        if (windows.IsWindow(window) && !windows.IsMinimized(window) &&
+                            !windows.Minimize(window) && windows.IsWindow(window)) failed = true;
+                    }
+                    catch (Exception error) when (IsExpectedWindowFailure(error))
+                    {
+                        failed = true;
+                    }
+                }
+                if (failed) throw new WindowsAppConnectionException(WindowsAppFailure.MinimizeFailed);
+            }
+            catch (Exception error) when (IsExpectedWindowFailure(error))
+            {
+                throw new WindowsAppConnectionException(WindowsAppFailure.MinimizeFailed);
+            }
+        }
+    }
 
     public WindowsAppActivationDisposition TryActivateExisting(string devBoxName)
     {

@@ -345,11 +345,12 @@ internal sealed partial class MainWindow : Window
                 ShowDashboard, ShowProblem, ShowConnectionDetailsAsync, id =>
                 {
                     var progress = new WindowsAppProgressWindow(_connections, id,
-                        _cardMap.TryGetValue(id, out var card) ? card.Machine.Name : "Dev Box",
+                        _cardMap.TryGetValue(id, out var card) ? MachineNavigation.Name(card.Machine) : "Dev Box",
                         _root.RequestedTheme, _compactWindow?.AppWindow.Id ?? AppWindow.Id);
                     progress.Activate();
                     return progress;
-                }, id => ExecuteRuntimeConnectionAsync(id, WindowsAppOperation.Open));
+                }, id => ExecuteRuntimeConnectionAsync(id, WindowsAppOperation.Open),
+                id => _cardMap.TryGetValue(id, out var card) && MachineNavigation.IsLocal(card.Machine));
         }
         UpdateConnectionPresentation();
         ReportStartupProgress("Loading computer tiles...");
@@ -423,9 +424,22 @@ internal sealed partial class MainWindow : Window
         if (_compactWindow?.AppWindow.IsVisible == true) ShowDashboard();
     }
 
-    private Task<WindowsAppActionResult> OpenWindowsAppAsync(Guid machineId, bool compact = false) =>
-        _connectionActions?.OpenWindowsAppAsync(machineId, compact) ??
-        Task.FromResult(new WindowsAppActionResult(false, "Local storage is unavailable. Restart Dashboard and retry.", compact));
+    private async Task<WindowsAppActionResult> OpenWindowsAppAsync(Guid machineId, bool compact = false)
+    {
+        var result = _connectionActions is null
+            ? new WindowsAppActionResult(false, "Local storage is unavailable. Restart Dashboard and retry.", compact)
+            : await _connectionActions.OpenWindowsAppAsync(machineId, compact);
+        if (!result.Succeeded && !compact && !_exiting) ShowProblem(result.Message);
+        return result;
+    }
+
+    private async Task ActivateMachineAsync(Guid id)
+    {
+        if (_cardMap.TryGetValue(id, out var card) && MachineNavigation.IsLocal(card.Machine))
+            await OpenWindowsAppAsync(id);
+        else
+            await ShowDetailsAsync(id);
+    }
 
     private async Task ShowConnectionDetailsAsync(Guid machineId, string message)
     {
@@ -458,16 +472,22 @@ internal sealed partial class MainWindow : Window
                 _cardMap.Remove(id);
                 layoutChanged = true;
             }
-            foreach (var machine in machines.OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase))
+            foreach (var machine in MachineNavigation.Order(machines, m => m))
             {
                 if (!_cardMap.TryGetValue(machine.MachineId, out var card))
                 {
-                    card = new MachineCard(machine, async () => await ShowDetailsAsync(machine.MachineId));
+                    card = new MachineCard(machine, async () => await ActivateMachineAsync(machine.MachineId));
+                    var details = new MenuFlyoutItem { Text = "Machine details" };
+                    details.Click += async (_, _) => await ShowDetailsAsync(machine.MachineId);
+                    var menu = new MenuFlyout();
+                    menu.Items.Add(details);
+                    card.Button.ContextFlyout = menu;
                     _cardMap.Add(machine.MachineId, card);
                     _cards.Children.Add(card.Button);
                     layoutChanged = true;
                 }
-                if (card.Machine.Name != machine.Name) layoutChanged = true;
+                if (MachineNavigation.Name(card.Machine) != MachineNavigation.Name(machine) ||
+                    MachineNavigation.IsLocal(card.Machine) != MachineNavigation.IsLocal(machine)) layoutChanged = true;
                 card.Update(machine);
             }
             _empty.Visibility = machines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -496,7 +516,7 @@ internal sealed partial class MainWindow : Window
         _cards.ColumnDefinitions.Clear();
         _cards.RowDefinitions.Clear();
         for (var i = 0; i < columns; i++) _cards.ColumnDefinitions.Add(new ColumnDefinition());
-        var ordered = _cardMap.Values.OrderBy(c => c.Machine.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        var ordered = MachineNavigation.Order(_cardMap.Values, c => c.Machine).ToArray();
         for (var i = 0; i < (ordered.Length + columns - 1) / columns; i++)
             _cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         for (var i = 0; i < ordered.Length; i++)
@@ -552,9 +572,11 @@ internal sealed partial class MainWindow : Window
         _closeDialogForNavigation = false;
         _dialogFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var connections = _connections;
+        var local = MachineNavigation.IsLocal(card.Machine);
         var name = new TextBox
         {
-            Header = "Display name (blank uses hostname)", Text = card.Machine.DisplayName ?? "",
+            Header = local ? "Display name (local computer is always shown as local)" : "Display name (blank uses hostname)",
+            Text = card.Machine.DisplayName ?? "",
             MaxLength = 128, PlaceholderText = card.Machine.MachineName
         };
         var note = new TextBox
@@ -631,6 +653,7 @@ internal sealed partial class MainWindow : Window
         content.Children.Add(Text("Sessions", 18));
         content.Children.Add(sessions);
         content.Children.Add(validation);
+        var connectionStart = content.Children.Count;
         content.Children.Add(Text("Windows App connection", 18));
         content.Children.Add(Text("Use the assigned Dev Box mapping, not the reported hostname or display name."));
         content.Children.Add(Text("Only Save mapping commits your selection after verifying a fresh connection. Refresh connection and Open use the saved mapping."));
@@ -649,6 +672,12 @@ internal sealed partial class MainWindow : Window
         {
             content.Children.Add(action);
             if (action == cached) content.Children.Add(cachedTime);
+        }
+        if (local)
+        {
+            foreach (var control in content.Children.Skip(connectionStart)) control.Visibility = Visibility.Collapsed;
+            content.Children.Add(Text("This computer is shown as local. Return to local minimizes only Windows App sessions. " +
+                "Reporting uses the normal Client and configured dashboard HTTPS URL; no Dev Box mapping is required."));
         }
         var transcriptSettings = Text(TranscriptReceiverDescription());
         content.Children.Add(Text("Detailed conversations", 18));
@@ -693,9 +722,9 @@ internal sealed partial class MainWindow : Window
         detailsLayout.Children.Add(footer);
         var saveDetails = new Button { Content = "Save details" };
         var removeMachine = new Button { Content = "Remove" };
-        var remote = new Button { Content = "Remote" };
+        var remote = new Button { Content = local ? "Return to local" : "Remote" };
         var closeDetails = new Button { Content = "Close" };
-        ToolTipService.SetToolTip(remote, "Connect or reuse the existing Windows App session.");
+        ToolTipService.SetToolTip(remote, local ? "Minimize Windows App sessions only." : "Connect or reuse the existing Windows App session.");
         var detailActions = new StackPanel
         {
             Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8
@@ -748,7 +777,7 @@ internal sealed partial class MainWindow : Window
                 refresh.IsEnabled &= state.Mapping is not null;
                 clear.IsEnabled &= state.Mapping is not null;
                 cached.IsEnabled &= state.CanOpenLastKnown;
-                cached.Visibility = cachedTime.Visibility = state.Mapping?.LastKnownConnectionUri is not null
+                cached.Visibility = cachedTime.Visibility = !local && state.Mapping?.LastKnownConnectionUri is not null
                     ? Visibility.Visible : Visibility.Collapsed;
                 cachedTime.Text = $"Retrieved locally: {state.LastRefresh ?? "Never"}";
                 refreshed.Text = $"Last successful refresh: {state.LastRefresh ?? "Never"}";
@@ -761,7 +790,8 @@ internal sealed partial class MainWindow : Window
                 progress.Text = connectionMessage ?? state.Message;
                 cancel.Visibility = connectionBusy ? Visibility.Visible : Visibility.Collapsed;
                 cancel.IsEnabled = connectionBusy;
-                name.IsEnabled = note.IsEnabled = machineExists && !busy;
+                note.IsEnabled = machineExists && !busy;
+                name.IsEnabled = !local && machineExists && !busy;
                 saveDetails.IsEnabled = removeMachine.IsEnabled = SettingsSelected() && machineExists && !busy;
                 closeDetails.IsEnabled = !savingDetails;
                 clearTranscript.IsEnabled = SettingsSelected() && machineExists && !busy;
@@ -863,7 +893,7 @@ internal sealed partial class MainWindow : Window
         };
         dialog.Opened += (_, _) =>
         {
-            if (connections.State(id).Mapping is null || connectionMessage is not null)
+            if (!local && (connections.State(id).Mapping is null || connectionMessage is not null))
             {
                 picker.StartBringIntoView();
                 picker.Focus(FocusState.Programmatic);
@@ -1096,7 +1126,8 @@ internal sealed partial class MainWindow : Window
             general.Children.Add(startup);
             generalHelp.Children.Add(Text("When enabled, minimizing shows an always-on-top vertical list of 64 x 64 computer tiles. " +
                 "Hover over a tile to see its full machine card and note. " +
-                "Select a tile to open its configured Dev Box in Windows App. Use the notification-area icon to restore the dashboard. Closing hides it in the notification area. " +
+                "Select a tile to open its configured Dev Box in Windows App, or local to minimize only Windows App sessions. " +
+                "The local computer appears first after its normal Client reports. Use the notification-area icon to restore the dashboard. Closing hides it in the notification area. " +
                 "The receiver stays running. Use Exit to stop it."));
             var generalTab = AddSection("General", general, generalHelp);
             var network = new StackPanel { Spacing = 14 };
@@ -1406,7 +1437,7 @@ internal sealed class MachineCard
         _mapping.TextTrimming = TextTrimming.CharacterEllipsis;
         Button = new Button
         {
-            Content = miniature ? _icon : CreateFullContent(),
+            Content = miniature ? CreateCompactContent() : CreateFullContent(),
             Padding = new Thickness(miniature ? 4 : 24),
             CornerRadius = new CornerRadius(miniature ? 4 : 18),
             Background = _background,
@@ -1434,6 +1465,21 @@ internal sealed class MachineCard
         }
         Button.Click += (_, _) => activate();
         Update(machine);
+    }
+
+    private Grid CreateCompactContent()
+    {
+        _name.FontSize = 10;
+        _name.MaxLines = 1;
+        _name.TextWrapping = TextWrapping.NoWrap;
+        _name.TextAlignment = TextAlignment.Center;
+        var content = new Grid { RowSpacing = 2 };
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.Children.Add(_name);
+        Grid.SetRow(_icon, 1);
+        content.Children.Add(_icon);
+        return content;
     }
 
     private Grid CreateFullContent()
@@ -1473,9 +1519,12 @@ internal sealed class MachineCard
     public void Update(MachineView machine)
     {
         Machine = machine;
-        _name.Text = machine.Name;
+        var local = MachineNavigation.IsLocal(machine);
+        var name = MachineNavigation.Name(machine);
+        _name.Text = name;
         _status.Text = machine.State == AgentState.Waiting ? "Waiting" : StatusText(machine.State);
-        _mapping.Text = DevBoxMappingPresentation.TileText(machine.WindowsAppConnection);
+        _mapping.Text = local ? "Return to local - minimize Windows App sessions" :
+            DevBoxMappingPresentation.TileText(machine.WindowsAppConnection);
         var now = DateTimeOffset.UtcNow;
         _activity.Text = MachineCardPresentation.Activity(machine, now);
         _footer.Text = MachineCardPresentation.Footer(machine, now);
@@ -1485,8 +1534,9 @@ internal sealed class MachineCard
         AutomationProperties.SetName(_connectionIcon, connectionStatus);
         ToolTipService.SetToolTip(_connectionIcon, connectionStatus);
         var summary = online ? $"{connectionStatus}, {StatusText(machine.State)}" : connectionStatus;
-        AutomationProperties.SetName(Button, _miniature ? $"{WindowsAppConnectionController.LaunchLabel(machine.Name)}, {summary}"
-            : $"{machine.Name}, {summary}. {_activity.Text}. {_mapping.Text}. {_footer.Text}. Open machine details.");
+        AutomationProperties.SetName(Button, local ? $"local, {summary}. Minimize Windows App sessions only."
+            : _miniature ? $"{WindowsAppConnectionController.LaunchLabel(name)}, {summary}"
+            : $"{name}, {summary}. {_activity.Text}. {_mapping.Text}. {_footer.Text}. Open machine details.");
         if (_hoverCard is not null && _hoverNote is not null)
         {
             _hoverCard.Update(machine);
@@ -1495,7 +1545,7 @@ internal sealed class MachineCard
         }
         else
         {
-            var tooltip = $"{machine.Name} — {summary}\n{_mapping.Text}";
+            var tooltip = $"{name} — {summary}\n{_mapping.Text}";
             if (!string.IsNullOrWhiteSpace(machine.Note)) tooltip += $"\n\nNote: {machine.Note}";
             ToolTipService.SetToolTip(Button, tooltip);
         }

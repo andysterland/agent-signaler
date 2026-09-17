@@ -32,7 +32,8 @@ internal sealed class WindowsAppConnectionController(
     WindowsAppLauncher launcher,
     WindowsAppOperationGate gate,
     Func<bool>? catalogBusy = null,
-    Action<RuntimeCommitState>? sideEffect = null)
+    Action<RuntimeCommitState>? sideEffect = null,
+    Func<Guid, bool>? isLocal = null)
 {
     private readonly object sync = new();
     private readonly Dictionary<Guid, WindowsAppConnectionState> states = [];
@@ -53,13 +54,14 @@ internal sealed class WindowsAppConnectionController(
         lock (sync)
         {
             if (pending.ContainsKey(id)) return;
+            var ready = mapping is not null || isLocal?.Invoke(id) == true;
             if (!states.TryGetValue(id, out var previous))
-                states[id] = new(mapping, mapping is null ? "Not configured" : "Ready", "");
+                states[id] = new(mapping, ready ? "Ready" : "Not configured", "");
             else if (previous.Mapping != mapping)
                 states[id] = previous with
                 {
                     Mapping = mapping,
-                    Status = mapping is null ? "Not configured" : previous.Status == "Not configured" ? "Ready" : previous.Status
+                    Status = !ready ? "Not configured" : previous.Status == "Not configured" ? "Ready" : previous.Status
                 };
         }
     }
@@ -102,6 +104,13 @@ internal sealed class WindowsAppConnectionController(
         var token = work.Cancellation.Token;
         try
         {
+            if (operation is WindowsAppOperation.Open or WindowsAppOperation.OpenLastKnown && isLocal?.Invoke(id) == true)
+            {
+                await Task.Run(() => launcher.ReturnToLocal(id, token), token).ConfigureAwait(false);
+                const string localMessage = "Returned to the local computer. Windows App sessions were minimized; other applications were left unchanged.";
+                SetState(id, State(id) with { Status = "Ready", Message = localMessage, Operation = null });
+                return new(true, localMessage);
+            }
             var disposition = WindowsAppActivationDisposition.NoExistingWindow;
             // Installation file access and SQLite may perform synchronous I/O before their
             // first await. Keep those, and process startup, off the WinUI thread.

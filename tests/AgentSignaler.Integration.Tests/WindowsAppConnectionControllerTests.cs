@@ -99,6 +99,26 @@ public sealed class WindowsAppConnectionControllerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task LocalCompactActionSkipsLaunchProgressAndOnlyRestoresDetailsOnFailure(bool succeeded)
+    {
+        var h = new Harness();
+        var events = new List<string>();
+        var actions = new WindowsAppConnectionActions(h.Controller,
+            () => { events.Add("refresh"); return Task.CompletedTask; }, () => false,
+            () => events.Add("restore"), _ => events.Add("error"),
+            (_, _) => { events.Add("details"); return Task.CompletedTask; },
+            _ => throw new InvalidOperationException("Local must not show launch progress."),
+            id => { Assert.Equal(h.Id, id); events.Add("local"); return Task.FromResult(new WindowsAppOperationResult(succeeded, "Local result")); },
+            id => id == h.Id);
+        var result = await actions.OpenWindowsAppAsync(h.Id, compact: true);
+        Assert.Equal(succeeded, result.Succeeded);
+        Assert.Equal(!succeeded, result.RestoreDetails);
+        Assert.Equal(succeeded ? ["local", "refresh"] : new[] { "local", "refresh", "restore", "error", "details" }, events);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task DetailsAndCompactReuseStoredDevBoxWithoutRefreshingOrRestoringDashboard(bool compact)
     {
         var h = new Harness { Stored = ConnectionTestData.CachedMapping with { DevBoxName = "mapped-not-machine-name" } };
@@ -873,7 +893,15 @@ public sealed class WindowsAppConnectionControllerTests
         Assert.DoesNotContain("_store?.Dispose()", main);
         Assert.Contains("Func<Guid, Task> connect", compact);
         Assert.Contains("tile.Card.Button.IsEnabled = tile.Connect.IsEnabled = !_isBusy(id)", compact);
-        Assert.Contains("WindowsAppConnectionController.LaunchLabel(machine.Name)", main);
+        Assert.Contains("WindowsAppConnectionController.LaunchLabel(name)", main);
+        Assert.Contains("MachineNavigation.Name(machine)", main);
+        Assert.Contains("MachineNavigation.Order(_cardMap.Values, c => c.Machine)", main);
+        Assert.Contains("MachineNavigation.Order(machines, machine => machine)", compact);
+        Assert.Contains("new MachineCard(machine, async () => await ActivateMachineAsync(machine.MachineId))", main);
+        Assert.Matches(@"MachineNavigation.IsLocal\(card.Machine\)\)\s*await OpenWindowsAppAsync\(id\);", main);
+        Assert.Contains("new MenuFlyoutItem { Text = \"Machine details\" }", main);
+        Assert.Contains("details.Click += async (_, _) => await ShowDetailsAsync(machine.MachineId)", main);
+        Assert.Contains("MachineNavigation.IsLocal(machine) ? \"Return to local\" : \"Connect\"", compact);
         Assert.Contains("Content = \"Save mapping\"", main);
         Assert.Contains("RunConnectionAsync(WindowsAppOperation.Map)", main);
         Assert.Contains("ExecuteRuntimeConnectionAsync(id, operation, ReadSelection())", main);
@@ -1025,6 +1053,7 @@ public sealed class WindowsAppConnectionControllerTests
 
     private sealed class FakePlatform(ConcurrentQueue<string> events) : IWindowsAppPlatform
     {
+        public void MinimizeSessions() => throw new InvalidOperationException("Must not minimize remote connections.");
         public List<string> Launched { get; } = [];
         public WindowsAppFailure? Failure;
         public bool Reuse;

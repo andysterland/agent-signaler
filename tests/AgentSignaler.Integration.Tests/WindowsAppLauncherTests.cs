@@ -531,6 +531,7 @@ public sealed partial class WindowsAppLauncherTests
 
     private sealed class FakePlatform : IWindowsAppPlatform
     {
+        public void MinimizeSessions() => throw new InvalidOperationException("Must not minimize remote connections.");
         public bool Available = true;
         public int ProtocolCalls;
         public Func<string, WindowsAppActivationDisposition>? Probe;

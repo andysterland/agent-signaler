@@ -200,6 +200,7 @@ public sealed class RpcCapabilityTests
 
     private sealed class SyntheticPlatform : IWindowsAppPlatform
     {
+        public void MinimizeSessions() => throw new InvalidOperationException("Must not minimize remote connections.");
         public int Activations;
         public int Reuses;
         public Action? OnActivate;

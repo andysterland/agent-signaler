@@ -10,6 +10,68 @@ namespace AgentSignaler.Dashboard.Core.Tests;
 
 public sealed class DashboardRuntimeTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalOpenMinimizesWithoutMappingAndPreservesReportedState(bool lastKnown)
+    {
+        var platform = new FakePlatform();
+        await using var fixture = new Fixture(new() { WindowsAppPlatform = platform });
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        var id = await fixture.AddMachineAsync(machineName: Environment.MachineName);
+        var before = runtime.GetMachine(id);
+        Assert.Null(before.State.Machine.WindowsAppConnection);
+        var result = await runtime.WindowsAppAsync(id,
+            lastKnown ? WindowsAppOperation.OpenLastKnown : WindowsAppOperation.Open, null, false,
+            runtime.HostInstanceId, before.Revision);
+        Assert.True(result.Succeeded);
+        Assert.Equal(RuntimeCommitState.Committed, result.CommitState);
+        Assert.Equal(1, platform.Minimizations);
+        Assert.Contains("local computer", result.Snapshot!.State.Message);
+        Assert.Equal(before.State.Machine, runtime.GetMachine(id).State.Machine);
+        Assert.False(runtime.Connections!.IsBusy(id));
+    }
+
+    [Fact]
+    public async Task LocalMinimizeFailureIsReportedAndCanBeRetried()
+    {
+        var platform = new FakePlatform
+        {
+            BeforeMinimize = () => throw new WindowsAppConnectionException(WindowsAppFailure.MinimizeFailed)
+        };
+        await using var fixture = new Fixture(new() { WindowsAppPlatform = platform });
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        var id = await fixture.AddMachineAsync(machineName: Environment.MachineName);
+        var result = await runtime.WindowsAppAsync(id, WindowsAppOperation.Open, null, false,
+            runtime.HostInstanceId, runtime.GetMachine(id).Revision);
+        Assert.False(result.Succeeded);
+        Assert.Equal(RuntimeCommitState.Unknown, result.CommitState);
+        Assert.Contains("could not minimize", runtime.Connections!.State(id).Message);
+        Assert.False(runtime.Connections.IsBusy(id));
+        platform.BeforeMinimize = null;
+        Assert.True((await runtime.WindowsAppAsync(id, WindowsAppOperation.Open, null, false,
+            runtime.HostInstanceId, runtime.GetMachine(id).Revision)).Succeeded);
+    }
+
+    [Fact]
+    public async Task CancelledOrStaleLocalOpenDoesNotMinimize()
+    {
+        var platform = new FakePlatform();
+        await using var fixture = new Fixture(new() { WindowsAppPlatform = platform });
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        var id = await fixture.AddMachineAsync(machineName: Environment.MachineName);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        Assert.False((await runtime.WindowsAppAsync(id, WindowsAppOperation.Open, null, false,
+            runtime.HostInstanceId, runtime.GetMachine(id).Revision, cancelled.Token)).Succeeded);
+        Assert.Equal(1004, (await runtime.WindowsAppAsync(id, WindowsAppOperation.Open, null, false,
+            runtime.HostInstanceId, runtime.GetMachine(id).Revision + 1)).Error!.Code);
+        Assert.Equal(0, platform.Minimizations);
+    }
+
     [Fact]
     public async Task FailedImmediatePrivacyOptOutCannotBeUndoneByUnrelatedSettingsSave()
     {
@@ -1133,6 +1195,9 @@ public sealed class DashboardRuntimeTests
     }
     private sealed class FakePlatform : IWindowsAppPlatform
     {
+        public int Minimizations;
+        public Action? BeforeMinimize;
+        public void MinimizeSessions() { BeforeMinimize?.Invoke(); Minimizations++; }
         public Action? BeforeActivate { get; set; }
         public bool IsProtocolAvailable() => true;
         public WindowsAppActivationDisposition TryActivateExisting(string name) => WindowsAppActivationDisposition.NoExistingWindow;
@@ -1158,12 +1223,13 @@ public sealed class DashboardRuntimeTests
             clock = options?.TimeProvider ?? TimeProvider.System;
             Runtime = new(Lease, (options ?? new()) with { ReceiverPortOverride = 0 });
         }
-        public async Task<Guid> AddMachineAsync(AgentEvent kind = AgentEvent.UserPromptSubmitted, Guid? machineId = null)
+        public async Task<Guid> AddMachineAsync(AgentEvent kind = AgentEvent.UserPromptSubmitted, Guid? machineId = null,
+            string machineName = "synthetic")
         {
             var id = machineId ?? Guid.NewGuid();
             await Runtime.Store!.AcceptAsync(new StatusRequest
             {
-                MachineId = id, MachineName = "synthetic", Client = "copilot-cli", ClientVersion = "1.0",
+                MachineId = id, MachineName = machineName, Client = "copilot-cli", ClientVersion = "1.0",
                 EventId = Guid.NewGuid(), SessionId = "session", Event = kind, ReportedAtUtc = clock.GetUtcNow()
             });
             await Runtime.RefreshMachinesAsync();

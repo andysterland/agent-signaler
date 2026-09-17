@@ -76,7 +76,7 @@ internal sealed class CompactWindow : Window
     public void Update(IEnumerable<MachineView> machines, ElementTheme theme, WindowId dashboardId)
     {
         _tiles.RequestedTheme = theme;
-        var ordered = machines.OrderBy(machine => machine.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        var ordered = MachineNavigation.Order(machines, machine => machine).ToArray();
         var ids = ordered.Select(machine => machine.MachineId).ToHashSet();
         foreach (var id in _cards.Keys.Where(id => !ids.Contains(id)).ToArray())
         {
@@ -93,6 +93,7 @@ internal sealed class CompactWindow : Window
                 _cards.Add(machine.MachineId, tile);
             }
             tile.Card.Update(machine);
+            tile.Connect.Text = MachineNavigation.IsLocal(machine) ? "Return to local" : "Connect";
             UpdateConnectionAvailability(machine.MachineId, tile);
             if (_tiles.Children.Count <= i || _tiles.Children[i] != tile.Container)
             {

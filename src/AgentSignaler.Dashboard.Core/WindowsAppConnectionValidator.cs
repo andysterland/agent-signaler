@@ -6,7 +6,7 @@ internal enum WindowsAppFailure
 {
     MissingMapping, InvalidMapping, ProtocolMissing, CliUnsupported, SignInRequired,
     CliUnavailable, TimedOut, AccountMismatch, DevBoxUnavailable, ApiUnavailable,
-    MalformedResponse, UnsafeUri, ActivationFailed, PersistenceFailed, Busy, DiscoveryLimitExceeded
+    MalformedResponse, UnsafeUri, ActivationFailed, PersistenceFailed, Busy, DiscoveryLimitExceeded, MinimizeFailed
 }
 
 internal sealed class WindowsAppConnectionException(WindowsAppFailure failure, string? diagnosticDetail = null) : Exception(MessageFor(failure))
@@ -36,6 +36,7 @@ internal sealed class WindowsAppConnectionException(WindowsAppFailure failure, s
         WindowsAppFailure.DiscoveryLimitExceeded => "Discovery exceeded the supported resource limit.",
         WindowsAppFailure.UnsafeUri => "The service returned an unsafe or unsupported connection URI.",
         WindowsAppFailure.ActivationFailed => "Windows could not activate the Windows App connection. Check Windows App and retry.",
+        WindowsAppFailure.MinimizeFailed => "Windows could not minimize all Windows App sessions. Check Windows App and retry.",
         WindowsAppFailure.PersistenceFailed => "The refreshed connection could not be saved. Check local storage and retry.",
         WindowsAppFailure.Busy => "A connection operation is already running for this machine.",
         _ => "The connection is unavailable."

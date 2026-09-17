@@ -8,6 +8,77 @@ namespace AgentSignaler.Integration.Tests;
 
 public sealed partial class WindowsAppLauncherTests
 {
+    [Fact]
+    public void ReturnToLocalMinimizesEverySessionButSkipsGoneAndAlreadyMinimizedWindows()
+    {
+        var windows = new FakeWindows
+        {
+            Candidates = [1, 2, 3, 4],
+            Exists = window => window != 2,
+            Minimized = window => window == 3,
+            Title = _ => throw new InvalidOperationException("Must not match a single Dev Box title.")
+        };
+        var platform = new WindowsAppPlatform(
+            () => throw new InvalidOperationException("Must not probe registration."),
+            _ => throw new InvalidOperationException("Must not launch."), windows);
+        platform.MinimizeSessions();
+        Assert.Equal(new[] { "enumerate", "minimized:1", "minimize:1", "minimized:3", "minimized:4", "minimize:4" }, windows.Events);
+    }
+
+    [Fact]
+    public void ReturnToLocalWithNoSessionsDoesNotLaunchAnything()
+    {
+        var windows = new FakeWindows();
+        new WindowsAppPlatform(activate: _ => throw new InvalidOperationException("Must not launch."),
+            windows: windows).MinimizeSessions();
+        Assert.Equal(new[] { "enumerate" }, windows.Events);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReturnToLocalAttemptsRemainingSessionsAndReportsFailure(bool throws)
+    {
+        var windows = new FakeWindows
+        {
+            Candidates = [1, 2],
+            OnMinimize = window => window == 1
+                ? throws ? throw new Win32Exception("private window data") : false : true
+        };
+        var platform = new WindowsAppPlatform(windows: windows);
+        var error = Assert.Throws<WindowsAppConnectionException>(platform.MinimizeSessions);
+        Assert.Equal(WindowsAppFailure.MinimizeFailed, error.Failure);
+        Assert.DoesNotContain("private", error.Message);
+        Assert.Contains("minimize:2", windows.Events);
+        windows.OnMinimize = _ => true;
+        platform.MinimizeSessions();
+    }
+
+    [Fact]
+    public void ReturnToLocalReportsEnumerationFailureAndPropagatesProgrammingErrors()
+    {
+        var windows = new FakeWindows { OnEnumerate = () => throw new Win32Exception() };
+        var platform = new WindowsAppPlatform(windows: windows);
+        Assert.Equal(WindowsAppFailure.MinimizeFailed,
+            Assert.Throws<WindowsAppConnectionException>(platform.MinimizeSessions).Failure);
+        windows.OnEnumerate = () => throw new InvalidOperationException();
+        Assert.Throws<InvalidOperationException>(platform.MinimizeSessions);
+    }
+
+    [Fact]
+    public void ReturnToLocalSkipsWindowsThatDisappearDuringMinimization()
+    {
+        var gone = false;
+        var windows = new FakeWindows
+        {
+            Candidates = [1],
+            Exists = _ => !gone,
+            OnMinimize = _ => { gone = true; return false; }
+        };
+        new WindowsAppPlatform(windows: windows).MinimizeSessions();
+        Assert.Contains("minimize:1", windows.Events);
+    }
+
     [Theory]
     [InlineData("devbox-name", "devbox-name")]
     [InlineData("DEVBOX-NAME - Windows App", "devbox-name")]
@@ -341,6 +412,7 @@ public sealed partial class WindowsAppLauncherTests
         public Func<nint, bool> Exists = _ => true;
         public Func<nint, bool> Minimized = _ => false;
         public Func<nint, bool> OnRestore = _ => true;
+        public Func<nint, bool> OnMinimize = _ => true;
         public Func<nint, bool> OnForeground = _ => true;
         public List<string> Events { get; } = [];
         public IReadOnlyList<nint> Enumerate() { Events.Add("enumerate"); return OnEnumerate?.Invoke() ?? Candidates; }
@@ -348,6 +420,7 @@ public sealed partial class WindowsAppLauncherTests
         public bool IsWindow(nint window) => Exists(window);
         public bool IsMinimized(nint window) { Events.Add($"minimized:{window}"); return Minimized(window); }
         public bool Restore(nint window) { Events.Add($"restore:{window}"); return OnRestore(window); }
+        public bool Minimize(nint window) { Events.Add($"minimize:{window}"); return OnMinimize(window); }
         public bool BringToForeground(nint window) { Events.Add($"foreground:{window}"); return OnForeground(window); }
     }
 }

@@ -89,6 +89,23 @@ conversation data never exists on disk: the agent host's own transcript input,
 OS paging/hibernation, and external crash capture are outside this storage policy.
 Do not paste transcript content into persistent notes or diagnostic evidence.
 
+### Local computer
+
+Run Configurator on the dashboard computer using the same public Dev Tunnel
+HTTPS URL and normal Client as on remote computers. Once it reports, Dashboard
+recognizes its reported hostname (case-insensitive match to the dashboard host)
+and displays it as **local**, first in both the compact list and computer tiles.
+No extra client, loopback reporting shortcut, or Dev Box mapping is needed.
+
+Click **local** to minimize all visible Windows App remote-session (`msrdc`)
+windows on the current desktop. Other applications and the dashboard remain
+unchanged; this does not invoke Windows' minimize-all/show-desktop command or
+disconnect sessions. With no sessions open, the action does nothing.
+Right-click its full-size tile and choose **Machine details** to view status,
+notes, and transcripts. A saved display name does not change its local role.
+Hostname recognition is a navigation convenience, not authentication; reporting
+computers should have distinct hostnames.
+
 ### Computer details: Settings and Transcript
 
 Computer details has fixed **Settings** and **Transcript** tabs. Settings opens
@@ -290,7 +307,9 @@ waiting, green for succeeded, red for failed, and neutral gray for idle/offline.
 of the main dashboard's **Compact view** density setting. Minimizing shows only a
 vertical list of 64 x 64 tiles (Windows logical pixels), always on top at the
 top-right of the dashboard's monitor work area, without a title bar or toolbar.
-Tiles retain their status colors, connectivity icons, and computer names; hover
+Tiles show the saved display name (or hostname when blank) in small, centered text
+above the status icon; the local computer remains labeled **local**. Long names
+are shortened with an ellipsis. Tiles retain their status colors; hover
 for the full name/status and saved note. To add or edit a note, open the computer
 tile in the main dashboard, enter **Note/description**, and select **Save details**.
 Notes are saved locally across restarts; clear the field and save to remove a note.

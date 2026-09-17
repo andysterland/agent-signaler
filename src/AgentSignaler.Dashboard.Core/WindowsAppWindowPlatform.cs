@@ -45,6 +45,7 @@ internal interface ITopLevelWindowPlatform
     bool IsWindow(nint window);
     bool IsMinimized(nint window);
     bool Restore(nint window);
+    bool Minimize(nint window);
     bool BringToForeground(nint window);
 }
 
@@ -94,6 +95,14 @@ internal sealed class WindowsAppWindowPlatform : ITopLevelWindowPlatform
     public bool Restore(nint window) => ShowWindowAsync(window, 9);
     public bool BringToForeground(nint window) => SetForegroundWindow(window);
 
+    public bool Minimize(nint window)
+    {
+        // Recheck ownership in case the enumerated handle has been reused.
+        if (!BelongsToRemoteDesktopClient(window, GetRemoteDesktopClientProcessIds()) ||
+            !IsWindowVisible(window)) return true;
+        return ShowWindowAsync(window, 6);
+    }
+
     private static HashSet<uint> GetRemoteDesktopClientProcessIds()
     {
         var processIds = new HashSet<uint>();
@@ -129,6 +138,10 @@ internal sealed class WindowsAppWindowPlatform : ITopLevelWindowPlatform
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsIconic(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint window);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

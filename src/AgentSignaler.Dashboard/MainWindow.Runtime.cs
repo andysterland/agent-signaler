@@ -30,7 +30,10 @@ internal sealed partial class MainWindow
                 _runtime.HostInstanceId, machine.Revision);
             return result.Succeeded
                 ? new(true, result.Snapshot!.State.Message)
-                : new(false, RuntimeFailureMessage(result.Error!));
+                : new(false, MachineNavigation.IsLocal(machine.State.Machine) && result.Error!.Code == 1010 &&
+                    operation is WindowsAppOperation.Open or WindowsAppOperation.OpenLastKnown
+                    ? new WindowsAppConnectionException(WindowsAppFailure.MinimizeFailed).Message
+                    : RuntimeFailureMessage(result.Error!));
         }
         catch (RuntimeCommandException error) { return new(false, RuntimeFailureMessage(error.Error)); }
     }

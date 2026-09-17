@@ -130,7 +130,8 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
                 connections = new(async (id, ct) =>
                     (await store.GetMachinesAsync(ct).ConfigureAwait(false)).FirstOrDefault(m => m.MachineId == id)?.WindowsAppConnection,
                     PersistMappingAsync, ClearMappingAsync, cli, resolver, launcher, gate,
-                    () => catalogController.State.IsBusy, TrackSideEffect);
+                    () => catalogController.State.IsBusy, TrackSideEffect,
+                    id => MachineNavigation.IsLocal(GetMachine(id).State.Machine));
                 connections.Changed += UpdateWindowsState;
                 status.Publish(Status.State with { StorageAvailable = true, Stage = "receiver" });
                 server = new(store, Receiver.State.Port, () => ConnectionTestReceived?.Invoke(), new DashboardServerOptions

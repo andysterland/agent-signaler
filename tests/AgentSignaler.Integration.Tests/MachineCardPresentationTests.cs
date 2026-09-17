@@ -91,14 +91,27 @@ public sealed class MachineCardPresentationTests
     }
 
     [Fact]
-    public void CompactContentIsGlyphOnlyAndFullContentIncludesMachineInformation()
+    public void CompactContentShowsSmallNameAboveGlyphAndFullContentIncludesMachineInformation()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "AgentSignaler.slnx")))
             root = root.Parent;
         Assert.NotNull(root);
         var main = File.ReadAllText(Path.Combine(root.FullName, "src", "AgentSignaler.Dashboard", "MainWindow.cs"));
-        Assert.Contains("Content = miniature ? _icon : CreateFullContent()", main);
+        Assert.Contains("Content = miniature ? CreateCompactContent() : CreateFullContent()", main);
+        var compactStart = main.IndexOf("private Grid CreateCompactContent()", StringComparison.Ordinal);
+        var compactEnd = main.IndexOf("private Grid CreateFullContent()", compactStart, StringComparison.Ordinal);
+        var compact = main[compactStart..compactEnd];
+        Assert.Contains("_name.FontSize = 10", compact);
+        Assert.Contains("_name.MaxLines = 1", compact);
+        Assert.Contains("_name.TextWrapping = TextWrapping.NoWrap", compact);
+        Assert.Contains("_name.TextAlignment = TextAlignment.Center", compact);
+        Assert.Contains("content.Children.Add(_name)", compact);
+        Assert.Contains("Grid.SetRow(_icon, 1)", compact);
+        Assert.Contains("content.Children.Add(_icon)", compact);
+        Assert.Contains("_name.TextTrimming = TextTrimming.CharacterEllipsis", main);
+        Assert.Contains("var name = MachineNavigation.Name(machine)", main);
+        Assert.Contains("_name.Text = name", main);
         Assert.Contains("var appearance = MachineCardAppearance.For(state)", main);
         Assert.Contains("heading.Children.Add(_connectionIcon)", main);
         Assert.Contains("heading.Children.Add(_name)", main);
