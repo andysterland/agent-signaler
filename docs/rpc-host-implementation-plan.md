@@ -1,5 +1,12 @@
 # Agent Signaler RPC Host Implementation Plan
 
+> **Design superseded:** The
+> [Dashboard-hosted RPC plan](dashboard-hosted-rpc-implementation-plan.md)
+> replaces this document's standalone executable and distribution design with
+> an opt-in Dashboard endpoint. This document remains historical; the new plan
+> is not implemented yet and does not inherit the unattended execution contract
+> below.
+
 ## Problem and approach
 
 Add a foreground, self-contained Windows executable named
