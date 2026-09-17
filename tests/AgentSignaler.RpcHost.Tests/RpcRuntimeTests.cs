@@ -576,7 +576,17 @@ internal static class TestDirectory
     }
     public static void Delete(string path)
     {
-        if (System.IO.Directory.Exists(path)) System.IO.Directory.Delete(path, recursive: true);
+        var cleanup = System.Diagnostics.Stopwatch.StartNew();
+        while (System.IO.Directory.Exists(path))
+        {
+            try { System.IO.Directory.Delete(path, recursive: true); }
+            catch (IOException error) when ((error.HResult & 0xffff) is 32 or 33 &&
+                cleanup.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                // Terminated fixture processes can retain file handles briefly during kernel cleanup.
+                Thread.Sleep(25);
+            }
+        }
         var parent = Path.GetDirectoryName(path)!;
         if (System.IO.Directory.Exists(parent) && !System.IO.Directory.EnumerateFileSystemEntries(parent).Any())
         {
