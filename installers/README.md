@@ -352,10 +352,13 @@ is an existing accepted-Azure **bundle installation** blocker, not evidence that
 application MSIs cannot be built. Fresh publish/build/ICE outcomes remain separate.
 
 The manual **Release MSIs** GitHub Actions workflow publishes all three
-application MSIs, the standalone RpcHost EXE and checksums. It selects the highest published release tag
-matching `vMAJOR.MINOR.PATCH`, increments the patch component, and passes that
-version into the application and MSI builds, so a source version change is not
-required before release. Runs are serialized, default to prereleases, and will
+application MSIs, the standalone RpcHost EXE and checksums. By default it selects
+the highest published release tag matching `vMAJOR.MINOR.PATCH` and increments
+the patch component. The optional `version` input selects an explicit
+`MAJOR.MINOR.PATCH` instead; it must be within MSI limits and newer than every
+published release. The selected version is passed into the application and MSI
+builds, so a source version change is not required before release.
+Runs are serialized, default to prereleases, and will
 not replace an existing release. Development packages are unsigned: hashes do
 not authenticate the publisher. Use trusted release sources and sign packages
 before distribution.

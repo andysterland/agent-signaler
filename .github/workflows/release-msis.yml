@@ -3,6 +3,11 @@ name: Release MSIs
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: Optional MSI version (MAJOR.MINOR.PATCH); blank increments the latest release
+        required: false
+        default: ""
+        type: string
       prerelease:
         description: Mark the GitHub Release as a prerelease
         required: true
@@ -29,6 +34,7 @@ jobs:
       AGENT_SIGNALER_LIVE_TUNNEL_TEST: "0"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
+      RELEASE_REQUESTED_VERSION: ${{ inputs.version }}
       RELEASE_PRERELEASE: ${{ inputs.prerelease }}
       RELEASE_UNSIGNED_CONFIRMED: ${{ inputs.confirm_unsigned }}
       GH_TOKEN: ${{ github.token }}
@@ -93,13 +99,28 @@ jobs:
             }
           }
 
-          if ($null -eq $highest) {
+          if ($null -ne $highest -and
+              ($highest.Major -gt 255 -or $highest.Minor -gt 255 -or $highest.Patch -gt 65535)) {
+            throw "Highest release version v$($highest.Major).$($highest.Minor).$($highest.Patch) exceeds MSI limits."
+          }
+
+          if (-not [string]::IsNullOrEmpty($env:RELEASE_REQUESTED_VERSION)) {
+            . .\scripts\UpdaterPolicy.ps1
+            $requested = ConvertTo-AgentSignalerVersion $env:RELEASE_REQUESTED_VERSION
+            if ($null -ne $highest -and
+                $requested -le [version]"$($highest.Major).$($highest.Minor).$($highest.Patch)") {
+              throw 'The requested version must be newer than every published release.'
+            }
+            $next = [pscustomobject]@{
+              Major = $requested.Major
+              Minor = $requested.Minor
+              Patch = $requested.Build
+            }
+          }
+          elseif ($null -eq $highest) {
             $next = [pscustomobject]@{ Major = 0L; Minor = 0L; Patch = 1L }
           }
           else {
-            if ($highest.Major -gt 255 -or $highest.Minor -gt 255 -or $highest.Patch -gt 65535) {
-              throw "Highest release version v$($highest.Major).$($highest.Minor).$($highest.Patch) exceeds MSI limits."
-            }
             if ($highest.Patch -eq 65535) {
               throw "Cannot increment v$($highest.Major).$($highest.Minor).$($highest.Patch): the MSI patch limit is 65535."
             }
@@ -115,7 +136,7 @@ jobs:
             throw "Release v$releaseVersion already exists; existing releases are never replaced."
           }
           "RELEASE_VERSION=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Next release version: $releaseVersion"
+          Write-Host "Selected release version: $releaseVersion"
       - name: Audit repository contents
         shell: powershell
         run: .\scripts\Test-PublicRepository.ps1
