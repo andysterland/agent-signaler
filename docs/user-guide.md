@@ -372,12 +372,21 @@ computer appears automatically while minimized. Closing to tray and background
 startup do not show the compact window. Disable the setting to retain minimize-to-tray
 behavior. The receiver and status refresh continue in either mode.
 
-Each compact tile has one 4 x 4 logical-pixel status square per connected Copilot,
+Each compact tile has one 4 x 4 logical-pixel status square per visible connected Copilot,
 in the same source/scope/session order as the list. Squares are indicators, not
 tiny buttons; the accessible card summary and Copilots list provide text labels.
 Ten fit per row with 1-pixel spacing in a 50-pixel region. All 64 sessions fit in
 seven rows; tile width remains 64 pixels and height grows as needed. Scrolling
 and work-area bounds still apply. Offline/zero-session tiles show no squares.
+
+Between-turn waits (session started, turn completed, or execution stopped) hide
+from the compact indicators after five minutes without session activity. A new
+activity event automatically restores the indicator and resets the timeout;
+machine heartbeats and other sessions do not reset it. Executing sessions,
+explicit permission/input requests, errors, and waits with unknown legacy event
+metadata remain visible. This is only a display filter: sessions stay tracked,
+the full Copilots list and machine aggregate state are unchanged, and no history
+is removed.
 
 ### Windows App and Dev Box connections
 

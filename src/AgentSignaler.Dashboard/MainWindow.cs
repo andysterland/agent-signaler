@@ -1553,7 +1553,7 @@ internal sealed class MachineCard
         _mapping.Text = local ? "Return to local - minimize Windows App sessions" :
             DevBoxMappingPresentation.TileText(machine.WindowsAppConnection);
         var now = DateTimeOffset.UtcNow;
-        var sessionLayout = CompactSessionPresentation.Project(machine, now);
+        var sessionLayout = CompactSessionPresentation.Project(machine, now, hideInactive: _miniature);
         if (_miniature)
         {
             _sessionIndicators.Children.Clear();
