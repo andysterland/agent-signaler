@@ -55,7 +55,7 @@ jobs:
       - name: Test RPC host
         shell: pwsh
         run: dotnet test tests\AgentSignaler.RpcHost.Tests\AgentSignaler.RpcHost.Tests.csproj --no-build --configuration Release -p:Platform=x64
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
