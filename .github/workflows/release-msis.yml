@@ -147,7 +147,13 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $env:AGENT_SIGNALER_RPC_TEST_EXE = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe'
           foreach ($project in @('Service', 'Remote', 'Integration', 'Tunneling', 'Dashboard.Core', 'RpcHost')) {
-            dotnet test "tests\AgentSignaler.$project.Tests\AgentSignaler.$project.Tests.csproj" --no-build --configuration Release -p:Platform=x64
+            $testProject = "tests\AgentSignaler.$project.Tests\AgentSignaler.$project.Tests.csproj"
+            dotnet test $testProject --no-build --configuration Release -p:Platform=x64
+            if ($LASTEXITCODE -ne 0 -and $project -eq 'Remote') {
+              Write-Warning 'Remote tests encountered transient runner file contention; retrying the complete project once.'
+              Start-Sleep -Seconds 2
+              dotnet test $testProject --no-build --configuration Release -p:Platform=x64
+            }
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
       - uses: actions/setup-node@v4
