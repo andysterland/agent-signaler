@@ -73,7 +73,7 @@ public sealed class SessionStore(string path, DiagnosticLog log,
 
     public LocalReport UpdateReport(AgentEvent? kind, HookData? hook, DateTimeOffset now)
     {
-        using var held = AtomicFile.Acquire(path + ".lock", TimeSpan.FromMilliseconds(180));
+        using var held = AtomicFile.Acquire(path + ".lock", TimeSpan.FromSeconds(1));
         StoredRemoteState stored;
         var retired = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         byte[]? legacyBytes = null;
