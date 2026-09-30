@@ -10,7 +10,6 @@
     <InternalsVisibleTo Include="AgentSignaler.RpcHost" />
     <InternalsVisibleTo Include="AgentSignaler.Integration.Tests" />
     <InternalsVisibleTo Include="AgentSignaler.Dashboard.Core.Tests" />
-    <InternalsVisibleTo Include="AgentSignaler.RpcHost.Tests" />
     <InternalsVisibleTo Include="AgentSignaler.Dashboard.Core.Tests.ProcessFixture" />
   </ItemGroup>
 </Project>

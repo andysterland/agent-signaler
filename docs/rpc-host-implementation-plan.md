@@ -94,7 +94,7 @@ can guarantee successful execution despite arbitrary environmental failures.
 If an already-provisioned disposable environment can run a deferred check
 non-interactively and safely, record its actual evidence; never require creating
 accounts or changing the shared workstation to obtain it. Browser test tooling
-belongs under `tests\AgentSignaler.RpcHost.Web.Tests`, not a production web UI.
+is not a production web UI.
 
 The final handoff must identify changed files, artifact paths and hashes,
 automated results, baseline failures, deferred checks, and remaining operational

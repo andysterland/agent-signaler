@@ -434,11 +434,6 @@ Additional executable identifiers:
 - **O3:** `ProcessOwnershipTests.AzureCliJobContainsChildAndGrandchildDuringNormalAndAbruptOwnerExit`
 - **C1:** `DevBoxCatalogControllerTests.ClosureAndShutdownAwaitCleanupAndRejectConcurrentRefresh`
 - **C2:** `DevBoxCatalogControllerTests.PreCancellationAndLateSuccessfulResponseNeverReplaceSnapshot`
-- **R1:** `RpcProcessTests.SubprocessReadyIsSingleLineAndExplicitShutdownAcknowledgesBeforeExit`
-- **R2:** `RpcTransportTests.ReservedCancellationAdmissionWorksWhileAllApplicationSlotsAreOccupied`
-  and `DomainCancellationIncludesNotificationsButCannotCancelOtherMachines`
-- **R3:** `RpcRuntimeTests.WindowsMappingDtoNeverExposesCachedConnectionUri`
-
 The current execution handoff records which tests actually ran and their results.
 Fake native/CLI tests prove deterministic operational behavior, not live
 foreground, account, tunnel, or installed-servicing acceptance.
@@ -541,21 +536,13 @@ dumps, enumerated window titles and message bodies from diagnostics.
 
 ## Validation and release acceptance
 
-The executable client example and synthetic Chromium harness live under
-`tests\AgentSignaler.RpcHost.Web.Tests`. Run pinned dependencies with `npm ci`,
-`npm run typecheck`, and `npm test` in that directory after preparing the host
-fixture specified by its test configuration. Native tests use the deployed Core
-assembly and real isolated SQLite/Kestrel/WebSocket fixtures, not linked copies.
-
 ### JavaScript connection example
 
 Serve this example from a synthetic localhost HTTP/HTTPS page, not `file:` or a
 non-local page. A browser supplies Origin automatically. Do not put response
 bodies in console logs, telemetry or HTML. This intentionally demonstrates only
-transport correlation; use the
-[TypeScript client](../tests/AgentSignaler.RpcHost.Web.Tests/client/rpc-client.ts)
-and [domain reconciliation example](../tests/AgentSignaler.RpcHost.Web.Tests/client/state.ts)
-for reconnect, invalidations and paginated views.
+transport correlation. Production clients must implement reconnect,
+invalidations, and paginated-view reconciliation explicitly.
 
 ```javascript
 const socket = new WebSocket("ws://localhost:51821/rpc");

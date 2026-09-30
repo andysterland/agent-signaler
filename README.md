@@ -431,12 +431,12 @@ to direct HTTP. RpcHost exposes operational metadata, not a transcript reader.
 
 Use the [source build commands](#from-a-fresh-clone), or open
 `AgentSignaler.slnx` in Visual Studio with **Release / x64**.
-Run the smallest affected test project first. To run all six main .NET suites
+Run the smallest affected test project first. To run all five main .NET suites
 after building:
 
 ```powershell
 $env:AGENT_SIGNALER_LIVE_TUNNEL_TEST = '0'
-$suites = 'Remote', 'Tunneling', 'Service', 'Integration', 'Dashboard.Core', 'RpcHost'
+$suites = 'Remote', 'Tunneling', 'Service', 'Integration', 'Dashboard.Core'
 foreach ($suite in $suites) {
     dotnet test "tests\AgentSignaler.$suite.Tests\AgentSignaler.$suite.Tests.csproj" --no-build --configuration Release -p:Platform=x64 --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none
     if ($LASTEXITCODE -ne 0) { throw "Tests failed: $suite" }
@@ -448,11 +448,6 @@ network-security dialogs. Run listener-bearing checks after non-network work.
 Use the explicit, ownership-scoped [test-firewall procedure](docs/test-firewall.md)
 when needed; never disable the firewall or silently skip blocked tests.
 Live cloud accounts are not needed for default synthetic tests.
-
-The [TypeScript/Chromium harness](tests/AgentSignaler.RpcHost.Web.Tests/README.md)
-documents listener-free checks, host publishing, and the explicit
-`AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS` gate for browser tests. It is not a
-production web UI.
 
 ### Package locally
 

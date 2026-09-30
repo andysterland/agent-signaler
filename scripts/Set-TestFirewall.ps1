@@ -11,7 +11,6 @@ Set-StrictMode -Version Latest
 $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $stateDirectory = Join-Path $root 'artifacts\test-firewall'
 $receiptPath = Join-Path $stateDirectory 'last-operation.clixml'
-$published = Join-Path $root 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe'
 function HashText([string] $Value) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value.ToLowerInvariant())))).Replace('-', '') }
@@ -41,7 +40,6 @@ $relativePrograms = @(
     "tests\AgentSignaler.Service.Tests\bin\x64\$Configuration\net10.0\testhost.exe",
     "tests\AgentSignaler.Integration.Tests\bin\x64\$Configuration\$windows\testhost.exe",
     "tests\AgentSignaler.Dashboard.Core.Tests\bin\x64\$Configuration\$windows\testhost.exe",
-    "tests\AgentSignaler.RpcHost.Tests\bin\x64\$Configuration\$windows\testhost.exe",
     "src\AgentSignaler.RpcHost\bin\x64\$Configuration\$windows\win-x64\AgentSignaler.RpcHost.exe",
     'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe',
     '.rpc-test-work\published-exe\exe-only\AgentSignaler.RpcHost.exe',
@@ -52,7 +50,7 @@ $expected = @($relativePrograms | ForEach-Object {
     [pscustomobject]@{ Name = "$group.$((HashText $program).Substring(0,16)).$Profile"; Program = $program }
 })
 if ($Action -eq 'Enable') {
-    foreach ($item in $expected | Select-Object -First 6) {
+    foreach ($item in $expected | Select-Object -First 5) {
         if (-not (Test-Path -LiteralPath $item.Program -PathType Leaf)) {
             throw "Build/publish $Configuration x64 before setup. Missing executable: $($item.Program)"
         }
@@ -88,8 +86,7 @@ if ($OwnedBlockRulesCsv) {
     foreach ($entry in Import-Csv -LiteralPath $OwnedBlockRulesCsv) {
         if ($entry.Action -ne 'Block' -or $entry.Profile -ne 'Public' -or $entry.Protocol -notin @('6','17') -or
             ($entry.Program -notmatch ('^' + $temporaryPattern) -and
-             $entry.Program -inotmatch ('^' + [regex]::Escape((Join-Path $root "src\AgentSignaler.RpcHost\bin\x64\$Configuration\$windows\win-x64\AgentSignaler.RpcHost.exe")) + '$') -and
-             $entry.Program -inotmatch ('^' + [regex]::Escape((Join-Path $root "tests\AgentSignaler.RpcHost.Tests\bin\x64\$Configuration\$windows\testhost.exe")) + '$'))) {
+             $entry.Program -inotmatch ('^' + [regex]::Escape((Join-Path $root "src\AgentSignaler.RpcHost\bin\x64\$Configuration\$windows\win-x64\AgentSignaler.RpcHost.exe")) + '$'))) {
             throw 'Cleanup manifest contains a path or rule outside the verified test-only scope.'
         }
         $match = @($rules | Where-Object Name -CEQ $entry.Name)
@@ -183,8 +180,7 @@ if ($needsChange -and -not $administrator) {
     }
 }
 if (-not $Elevated -and $Action -eq 'Enable') {
-    $env:AGENT_SIGNALER_RPC_TEST_EXE = $published
-    $env:AGENT_SIGNALER_RPC_HOST_EXE = $published
+
     Write-Host 'Test access configured. Published-EXE variables set in this terminal. Tests always use fixed EXE fixture paths. Unchanged rules need no elevation.'
 } elseif ($Action -eq 'Remove') {
     Write-Host 'Owned test allow rules removed; unrelated rules preserved.'

@@ -13,7 +13,7 @@ firewall helper runs elevated, never the tests. On machines with multiple active
 network categories, explicitly select one with `-Profile Public`, `Private`, or
 `Domain`. The default is the single active category, not all profiles.
 
-Eight exact executable paths receive inbound **TCP from 127.0.0.1 only**.
+Seven exact executable paths receive inbound **TCP from 127.0.0.1 only**.
 Ports are unrestricted because fixtures allocate ephemeral ports. The rules do
 not grant LAN/Internet ingress, UDP, edge traversal, or access to other programs.
 IPv6 loopback remains covered by Windows' normal loopback handling; `::1` is not
@@ -23,7 +23,7 @@ settings, or persistent environment variables are changed.
 
 Paths are scoped to this checkout and configuration:
 
-- Service, Integration, Dashboard.Core and RpcHost `testhost.exe` build outputs.
+- Service, Integration and Dashboard.Core `testhost.exe` build outputs.
 - The built RpcHost application and published RpcHost EXE.
 - `.rpc-test-work\published-exe\exe-only\AgentSignaler.RpcHost.exe`
 - `artifacts\rpchost-publish-tests\firewall-prepared\exe-only\AgentSignaler.RpcHost.exe`
@@ -41,15 +41,11 @@ target framework or active network profile requires matching setup. Run with
 `-Configuration Debug` for Debug outputs.
 
 Setup verifies existing owned-rule properties and is idempotent. Rerunning it
-with unchanged rules does not request elevation. It also sets
-`AGENT_SIGNALER_RPC_TEST_EXE` and `AGENT_SIGNALER_RPC_HOST_EXE` in the current
-terminal only. In a new terminal, rerun setup or set those variables explicitly
-to the published EXE.
+with unchanged rules does not request elevation.
 
 ```powershell
 .\scripts\Set-TestFirewall.ps1 -Action Status
 .\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
-dotnet test tests\AgentSignaler.RpcHost.Tests\AgentSignaler.RpcHost.Tests.csproj --no-build --configuration Release -p:Platform=x64 --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none
 ```
 
 Run potentially blocking network tests last, after other builds and checks.

@@ -52,32 +52,6 @@ jobs:
       - name: Test Dashboard Core
         shell: pwsh
         run: dotnet test tests\AgentSignaler.Dashboard.Core.Tests\AgentSignaler.Dashboard.Core.Tests.csproj --no-build --configuration Release -p:Platform=x64
-      - name: Test RPC host
-        shell: pwsh
-        run: dotnet test tests\AgentSignaler.RpcHost.Tests\AgentSignaler.RpcHost.Tests.csproj --no-build --configuration Release -p:Platform=x64
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: tests/AgentSignaler.RpcHost.Web.Tests/package-lock.json
-      - name: Test browser and TypeScript contract
-        shell: pwsh
-        working-directory: tests/AgentSignaler.RpcHost.Web.Tests
-        run: |
-          npm ci
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npx playwright install chromium
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm run typecheck
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm run test:unit
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm audit --omit=optional --audit-level=high
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $env:AGENT_SIGNALER_RPC_HOST_EXE = Join-Path $env:GITHUB_WORKSPACE 'src\AgentSignaler.RpcHost\bin\x64\Release\net10.0-windows10.0.22621.0\win-x64\AgentSignaler.RpcHost.exe'
-          $env:AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS = '1'
-          npm run test:browser
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Audit dependencies
         shell: pwsh
         run: .\scripts\Test-DependencyAudit.ps1

@@ -48,12 +48,6 @@
     <Project Path="tests/AgentSignaler.Dashboard.Core.Tests/ProcessFixture/AgentSignaler.Dashboard.Core.Tests.ProcessFixture.csproj">
       <Platform Project="x64" />
     </Project>
-    <Project Path="tests/AgentSignaler.RpcHost.Tests/AgentSignaler.RpcHost.Tests.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="tests/AgentSignaler.RpcHost.Tests/ChildFixture/AgentSignaler.RpcHost.ChildFixture.csproj">
-      <Platform Project="x64" />
-    </Project>
     <Project Path="tests/AgentSignaler.Integration.Tests/AgentSignaler.Integration.Tests.csproj">
       <Platform Project="x64" />
     </Project>

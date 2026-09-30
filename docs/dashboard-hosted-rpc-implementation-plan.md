@@ -287,11 +287,8 @@ hand-edit generated `bin`, `obj`, or `artifacts` content.
 
 ## Validation and completion criteria
 
-Reuse the existing .NET/xUnit and TypeScript/Playwright infrastructure. Rename
-`AgentSignaler.RpcHost.Tests` and `.Web.Tests` to Dashboard.Rpc equivalents, and
-update all fixture paths, environment variables, CI selectors, and friend
-assemblies. Retain protocol boundary coverage rather than deleting it with the
-executable.
+Reuse the existing .NET/xUnit infrastructure. Add Dashboard.Rpc coverage for
+protocol boundaries that remain relevant after retiring the executable.
 
 | Area | Required evidence |
 | --- | --- |

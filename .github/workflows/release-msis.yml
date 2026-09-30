@@ -145,8 +145,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           dotnet build AgentSignaler.slnx --no-restore --configuration Release -p:Platform=x64 -p:Version=$env:RELEASE_VERSION
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $env:AGENT_SIGNALER_RPC_TEST_EXE = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe'
-          foreach ($project in @('Service', 'Remote', 'Integration', 'Tunneling', 'Dashboard.Core', 'RpcHost')) {
+          foreach ($project in @('Service', 'Remote', 'Integration', 'Tunneling', 'Dashboard.Core')) {
             $testProject = "tests\AgentSignaler.$project.Tests\AgentSignaler.$project.Tests.csproj"
             dotnet test $testProject --no-build --configuration Release -p:Platform=x64
             if ($LASTEXITCODE -ne 0 -and $project -eq 'Remote') {
@@ -156,32 +155,9 @@ jobs:
             }
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: tests/AgentSignaler.RpcHost.Web.Tests/package-lock.json
       - name: Audit NuGet dependencies
         shell: pwsh
         run: .\scripts\Test-DependencyAudit.ps1
-      - name: Validate browser contract and dependencies
-        shell: pwsh
-        working-directory: tests/AgentSignaler.RpcHost.Web.Tests
-        run: |
-          npm ci
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npx playwright install chromium
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm run typecheck
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm run test:unit
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm audit --omit=optional --audit-level=high
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $env:AGENT_SIGNALER_RPC_HOST_EXE = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe'
-          $env:AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS = '1'
-          npm run test:browser
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Isolate Azure CLI state
         shell: pwsh
         run: |

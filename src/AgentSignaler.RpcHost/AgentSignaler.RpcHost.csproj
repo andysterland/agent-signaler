@@ -14,6 +14,5 @@
     <ProjectReference Include="..\AgentSignaler.Contracts\AgentSignaler.Contracts.csproj" />
     <ProjectReference Include="..\AgentSignaler.Service\AgentSignaler.Service.csproj" />
     <ProjectReference Include="..\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
-    <InternalsVisibleTo Include="AgentSignaler.RpcHost.Tests" />
   </ItemGroup>
 </Project>
