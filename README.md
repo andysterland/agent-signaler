@@ -9,10 +9,12 @@ their own local clients can use the standalone WebSocket JSON-RPC host instead.
 
 > [!IMPORTANT]
 > This is an early Windows-only project, not a production-certified monitoring
-> service. Releases may be unsigned, and live IDE, cloud, installer, and UI
-> acceptance remains incomplete. Read the [acceptance record](docs/ACCEPTANCE.md)
-> and [security policy](SECURITY.md). The conversation prototype requires external
-> informed permission before distribution/use; the app does not collect it.
+> service. The release workflow signs first-party binaries and MSI packages, but
+> local builds, CI artifacts, and historical releases may be unsigned. Live IDE,
+> cloud, installer, and UI acceptance remains incomplete. Read the
+> [acceptance record](docs/ACCEPTANCE.md) and [security policy](SECURITY.md).
+> The conversation prototype requires external informed permission before
+> distribution/use; the app does not collect it.
 
 ## Screenshots and demo
 
@@ -122,7 +124,19 @@ Get-Content .\SHA256SUMS.txt
 ```
 
 Checksums detect mismatches; they do not substitute for a trusted publisher or
-signature. Do not assume an unsigned prerelease is a supported production release.
+signature. The release notes identify whether a package was produced by the
+signed release workflow. Verify signed packages before installation:
+
+```powershell
+Get-AuthenticodeSignature `
+    .\AgentSignaler.Dashboard.msi, `
+    .\AgentSignaler.Remote.msi, `
+    .\AgentSignaler.RpcHost.msi, `
+    .\AgentSignaler.RpcHost.exe
+```
+
+Do not assume an unsigned local, CI, historical, or prerelease build is a
+supported production release.
 
 Run the selected MSI interactively as the intended Windows user. Dashboard and
 Remote install per-user. RpcHost additionally requires elevation for its

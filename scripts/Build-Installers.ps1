@@ -4,6 +4,7 @@ param(
     [string] $Configuration = 'Release',
     [string] $Version = '1.0.20',
     [switch] $SkipPublish,
+    [switch] $PublishOnly,
     [switch] $NoRestore,
     [switch] $ApplicationMsisOnly,
     [switch] $SkipRpcHostSmoke,
@@ -19,6 +20,10 @@ if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
 $parts = $Version.Split('.')
 if ([long]$parts[0] -gt 255 -or [long]$parts[1] -gt 255 -or [long]$parts[2] -gt 65535) {
     throw 'MSI versions must be no greater than 255.255.65535.'
+}
+if ($PublishOnly -and ($SkipPublish -or $ApplicationMsisOnly -or
+        -not [string]::IsNullOrWhiteSpace($DestinationPath))) {
+    throw 'PublishOnly cannot be combined with SkipPublish, ApplicationMsisOnly, or DestinationPath.'
 }
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -91,6 +96,11 @@ if (-not $SkipPublish) {
     Merge-PublishedApplication $relayStage $remote
     Merge-PublishedApplication $clientStage $remote
     Remove-Item -LiteralPath $staging -Recurse -Force
+}
+
+if ($PublishOnly) {
+    Write-Host 'Published Dashboard, Remote, and RpcHost application payloads for signing. Installer packaging was skipped.'
+    return
 }
 
 New-Item -ItemType Directory -Path $msiOutput -Force | Out-Null

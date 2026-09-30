@@ -352,16 +352,23 @@ is an existing accepted-Azure **bundle installation** blocker, not evidence that
 application MSIs cannot be built. Fresh publish/build/ICE outcomes remain separate.
 
 The manual **Release MSIs** GitHub Actions workflow publishes all three
-application MSIs, the standalone RpcHost EXE and checksums. By default it selects
-the highest published release tag matching `vMAJOR.MINOR.PATCH` and increments
-the patch component. The optional `version` input selects an explicit
-`MAJOR.MINOR.PATCH` instead; it must be within MSI limits and newer than every
-published release. The selected version is passed into the application and MSI
-builds, so a source version change is not required before release.
-Runs are serialized, default to prereleases, and will
-not replace an existing release. Development packages are unsigned: hashes do
-not authenticate the publisher. Use trusted release sources and sign packages
-before distribution.
+application MSIs, the standalone RpcHost EXE and checksums. It runs on the
+repository-scoped signing runner, signs first-party application binaries before
+WiX packages them, signs the resulting MSIs, and verifies the publisher before
+release creation. By default it selects the highest published release tag
+matching `vMAJOR.MINOR.PATCH` and increments the patch component. The optional
+`version` input selects an explicit `MAJOR.MINOR.PATCH` instead; it must be
+within MSI limits and newer than every published release. The selected version
+is passed into the application and MSI builds, so a source version change is not
+required before release. Runs are serialized, default to prereleases, and will
+not replace an existing release. Local builds, CI artifacts, and historical
+releases may remain unsigned; hashes do not authenticate the publisher.
+
+The signing runner requires Windows x64, PowerShell 5.1 and 7, .NET 8 and the
+SDK selected by `global.json`, Azure CLI, Node.js/npm, and the NuGet package
+provider used by the Artifact Signing action. The runner is repository-scoped
+and carries the `artifact-signing` label. Azure CLI state is isolated under the
+job's temporary directory and removed after signing.
 
 RpcHost's automatic gates compile the native MSI action, execute fake
 install/repair/upgrade/uninstall and failure/rollback transitions, run updater

@@ -13,14 +13,10 @@ on:
         required: true
         default: true
         type: boolean
-      confirm_unsigned:
-        description: I understand these MSIs are unsigned
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release-msis-${{ github.repository }}
@@ -28,7 +24,8 @@ concurrency:
 
 jobs:
   build-and-release:
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, artifact-signing]
+    environment: artifact-signing
     timeout-minutes: 75
     env:
       AGENT_SIGNALER_LIVE_TUNNEL_TEST: "0"
@@ -36,8 +33,8 @@ jobs:
       DOTNET_NOLOGO: "1"
       RELEASE_REQUESTED_VERSION: ${{ inputs.version }}
       RELEASE_PRERELEASE: ${{ inputs.prerelease }}
-      RELEASE_UNSIGNED_CONFIRMED: ${{ inputs.confirm_unsigned }}
       GH_TOKEN: ${{ github.token }}
+      AZURE_CONFIG_DIR: ${{ runner.temp }}\agent-signaler-azure
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,10 +45,6 @@ jobs:
       - name: Validate release request
         shell: pwsh
         run: |
-          if ($env:RELEASE_UNSIGNED_CONFIRMED -ne 'true') {
-            throw 'Publishing requires explicit confirmation that the MSIs are unsigned.'
-          }
-
           $releaseRecords = & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" `
             --jq '.[] | [.tag_name, .draft] | @tsv'
           if ($LASTEXITCODE -ne 0) {
@@ -140,9 +133,9 @@ jobs:
       - name: Audit repository contents
         shell: powershell
         run: .\scripts\Test-PublicRepository.ps1
-      - name: Build and validate installers
+      - name: Publish application payloads
         shell: powershell
-        run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -ApplicationMsisOnly
+        run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -PublishOnly
       - name: Build and test release contracts
         shell: pwsh
         run: |
@@ -181,6 +174,92 @@ jobs:
           $env:AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS = '1'
           npm run test:browser
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Create application signing catalog
+        shell: pwsh
+        run: |
+          $publishRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish'
+          $catalog = Join-Path $publishRoot 'signing-catalog.txt'
+          $files = @(Get-ChildItem -LiteralPath $publishRoot -File -Recurse |
+            Where-Object {
+              $_.Name -like 'AgentSignaler.*' -and
+              $_.Extension -in @('.exe', '.dll')
+            })
+          if ($files.Count -eq 0) {
+            throw 'No first-party application binaries were found to sign.'
+          }
+          $files | ForEach-Object {
+            './' + ([IO.Path]::GetRelativePath($publishRoot, $_.FullName) -replace '\\', '/')
+          } | Set-Content -LiteralPath $catalog -Encoding ascii
+      - name: Sign application binaries
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-catalog: ${{ github.workspace }}\artifacts\publish\signing-catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Build and validate installers
+        shell: powershell
+        run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -SkipPublish -ApplicationMsisOnly
+      - name: Sign MSI packages
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\artifacts\msi
+          files-folder-filter: AgentSignaler.*.msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify release signatures
+        shell: pwsh
+        run: |
+          $publishRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish'
+          $targets = @(
+            Get-Content -LiteralPath (Join-Path $publishRoot 'signing-catalog.txt') |
+              ForEach-Object { Join-Path $publishRoot $_ }
+          )
+          $msis = @(Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\msi') `
+            -File -Filter 'AgentSignaler.*.msi' |
+            Select-Object -ExpandProperty FullName)
+          if ($msis.Count -ne 3) {
+            throw "Expected three Agent Signaler MSI packages, found $($msis.Count)."
+          }
+          $targets += $msis
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target
+            $publisher = if ($null -eq $signature.SignerCertificate) {
+              $null
+            }
+            else {
+              $signature.SignerCertificate.GetNameInfo(
+                [Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+                $false)
+            }
+            if ($signature.Status -ne 'Valid' -or
+                $publisher -ne 'Andy Sterland' -or
+                $null -eq $signature.TimeStamperCertificate) {
+              throw "Signature verification failed for $target`: $($signature.Status)"
+            }
+          }
+      - name: Clear Azure signing session
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath $env:AZURE_CONFIG_DIR) {
+            az logout
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Remove-Item -LiteralPath $env:AZURE_CONFIG_DIR -Recurse -Force
+          }
       - name: Prepare release assets and notes
         shell: pwsh
         run: |
@@ -206,10 +285,9 @@ jobs:
             "$hash  $_"
           } | Set-Content -LiteralPath (Join-Path $release 'SHA256SUMS.txt') -Encoding ascii
           @"
-          > [!WARNING]
-          > These MSI packages are **unsigned development releases**. Windows may display
-          > SmartScreen, publisher, or reputation warnings. Verify the SHA-256 checksums
-          > before use and do not treat these packages as signed production artifacts.
+          > [!IMPORTANT]
+          > The MSI packages and first-party executable payloads are signed and timestamped.
+          > Verify the publisher and SHA-256 checksums before installation.
 
           Agent Signaler $env:RELEASE_VERSION was built and validated by GitHub Actions
           from commit ``$env:GITHUB_SHA``.
@@ -221,7 +299,7 @@ jobs:
           - ``AgentSignaler.RpcHost.msi`` - per-user headless RPC host with mandatory MSI-owned Private receiver firewall rule; servicing requires MSI elevation
           - ``AgentSignaler.RpcHost.exe`` - standalone single-file host; firewall setup is manual
           - ``AgentSignaler.RpcHost.NOTICES.txt`` - redistribution license/notices accompanying the standalone EXE
-          - ``SHA256SUMS.txt`` - SHA-256 checksums for the unsigned MSIs, RpcHost EXE and notices
+          - ``SHA256SUMS.txt`` - SHA-256 checksums for the signed MSIs, RpcHost EXE and notices
 
           RpcHost is explicitly launched, never registered at sign-in. Stop the installed
           host before servicing. Its loopback control is unauthenticated: unrelated localhost
