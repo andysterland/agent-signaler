@@ -4,8 +4,7 @@
 
 Agent Signaler combines a WinUI dashboard, a persistent reporting Client, and
 user-level hooks for Copilot CLI and candidate Visual Studio/VS Code integrations.
-Use full-size computer cards or compact always-on-top tiles. Developers building
-their own local clients can use the standalone WebSocket JSON-RPC host instead.
+Use full-size computer cards or compact always-on-top tiles.
 
 > [!IMPORTANT]
 > This is an early Windows-only project, not a production-certified monitoring
@@ -33,7 +32,6 @@ current application screenshots or demo recordings are included.*
 - [Installation](#installation)
 - [Usage: your first reporting computer](#usage-your-first-reporting-computer)
 - [Common workflows](#common-workflows)
-- [Headless RPC host](#headless-rpc-host)
 - [Configuration](#configuration)
 - [Security and privacy](#security-and-privacy)
 - [Development](#development)
@@ -52,7 +50,6 @@ between development computers, or waiting for a long-running task to need input.
 | Compact monitoring | Always-on-top tiles with computer names, an aggregate state glyph, and wrapping 4 x 4 logical-pixel indicators for connected Copilots. |
 | Dev Box navigation | Explicit mappings, connection refresh, and reuse of matching Windows App windows before launching another connection. |
 | Deliberate integration setup | Previewed hook/configuration changes, ownership checks, and transactional recovery. |
-| Choice of receiver | WinUI Dashboard or a self-contained headless EXE using the same operational runtime and data. |
 
 Session state is **last observed**, not proof an IDE process is still running.
 Hook silence does not expire a waiting session while the Client remains online.
@@ -62,7 +59,7 @@ Configured IDE hooks are not automatically verified host compatibility.
 
 All commands below use **PowerShell on Windows**, from the repository root unless
 another directory is specified. Windows 11 x64 is the supported project baseline;
-Dashboard and RpcHost target Windows build **22621 or later**. macOS, Linux, WSL,
+Dashboard targets Windows build **22621 or later**. macOS, Linux, WSL,
 containers, and remote IDE extension hosts are not supported integration targets.
 
 | Purpose | Requirements |
@@ -73,7 +70,6 @@ containers, and remote IDE extension hosts are not supported integration targets
 | Report real Copilot activity | Copilot CLI **1.0.80+** and an account authorized to use it, or an eligible local IDE/profile. IDE versions and events need independent verification; see [compatibility evidence](docs/user-guide.md#ide-compatibility-evidence-september-15-2026). |
 | Internet sharing, optional | Microsoft Dev Tunnels CLI **1.0.2030+fc9273aa0f**, a valid Microsoft-signed executable, and an explicitly signed-in account. Unsupported CLI versions fail visibly. |
 | Dev Box navigation, optional | Azure CLI **2.90.0+**, an authorized Azure account and Dev Box, and Windows App **2.0.804.0+**. Automatic discovery needs Azure Resource Manager read access to Dev Centers. Discovery by Dev Center name additionally needs the `devcenter` extension. |
-| Browser contract tests, optional | Node.js **22.18.0+**, npm, and the harness's pinned Playwright/Chromium dependencies. |
 
 LAN status monitoring needs no Azure or Dev Tunnels account. Merely registering
 and viewing a reporting computer does not require a live Copilot session.
@@ -111,8 +107,6 @@ for available builds and their acceptance notes. Use matching versions:
 | --- | --- |
 | `AgentSignaler.Dashboard.msi` | The monitoring computer. |
 | `AgentSignaler.Remote.msi` | Each reporting computer; includes Configurator, Relay, and Client. Also install here to report the monitoring computer itself. |
-| `AgentSignaler.RpcHost.msi` | A computer using the headless host instead of Dashboard. |
-| `AgentSignaler.RpcHost.exe` | A manually managed standalone host; retain its accompanying `AgentSignaler.RpcHost.NOTICES.txt`. |
 
 Download the selected assets and `SHA256SUMS.txt` from the **same release**.
 Compare file hashes with that manifest before opening the installers:
@@ -130,17 +124,14 @@ signed release workflow. Verify signed packages before installation:
 ```powershell
 Get-AuthenticodeSignature `
     .\AgentSignaler.Dashboard.msi, `
-    .\AgentSignaler.Remote.msi, `
-    .\AgentSignaler.RpcHost.msi, `
-    .\AgentSignaler.RpcHost.exe
+    .\AgentSignaler.Remote.msi
 ```
 
 Do not assume an unsigned local, CI, historical, or prerelease build is a
 supported production release.
 
 Run the selected MSI interactively as the intended Windows user. Dashboard and
-Remote install per-user. RpcHost additionally requires elevation for its
-MSI-owned receiver firewall rule. The application MSIs do not install optional
+Remote install per-user. The application MSIs do not install optional
 Azure/Dev Tunnels/Windows App prerequisites.
 
 After installing Dashboard and Remote, start them with:
@@ -258,61 +249,26 @@ limitations](docs/user-guide.md#windows-app-and-dev-box-connections).
 
 ### Update installed applications
 
-From a clone, run the updater as the **non-elevated installing user**:
+Refresh the clone to the matching Dashboard/Remote release revision first; both
+`scripts\Update-AgentSignaler.ps1` and `scripts\UpdaterPolicy.ps1` must come from
+that revision. Then run the updater as the **non-elevated installing user**:
 
 ```powershell
 .\scripts\Update-AgentSignaler.ps1 -WhatIf
 .\scripts\Update-AgentSignaler.ps1 -Apps Remote
 ```
 
-The preview does not install updates. The updater handles installed Dashboard,
-Remote, and RpcHost MSIs; it is not a first-install command. Stop RpcHost explicitly
-before servicing it. Standalone EXEs are updated manually. Review the
+The preview does not install updates. The updater handles installed Dashboard
+and Remote MSIs; it is not a first-install command. Review the
 [installer guide](installers/README.md) before upgrading or changing versions.
 
-## Headless RPC host
-
-RpcHost exposes non-visual Dashboard operations through WebSocket JSON-RPC 2.0.
-It is not a web dashboard; a production browser/WebView UI is out of scope.
-
-Publish and start it from a clone:
-
-```powershell
-dotnet publish src\AgentSignaler.RpcHost\AgentSignaler.RpcHost.csproj --configuration Release -p:Platform=x64 --runtime win-x64 --self-contained true --output artifacts\publish\rpchost
-.\artifacts\publish\rpchost\AgentSignaler.RpcHost.exe --rpc-port 51821
-```
-
-Exit Dashboard first when using the same data directory. Expect one JSON stdout
-line identifying `transportReady`, port, protocol version, and `hostInstanceId`.
-This means the control transport is available, not that receiver/cloud startup
-has succeeded.
-
-Connect to `ws://localhost:51821/rpc` from an accepted localhost HTTP/HTTPS origin.
-A minimal request is:
-
-```json
-{"jsonrpc":"2.0","id":"status-1","method":"system.getStatus","params":{}}
-```
-
-The response correlates with `id: "status-1"` and reports runtime lifecycle state
-or a JSON-RPC error. The [protocol guide](docs/rpc-host-protocol.md) includes a
-JavaScript connection example, API methods, typed-client examples, and errors.
-State uses independent domain snapshots and invalidation/refetch notifications,
-not globally atomic snapshots or replay history.
-
-**RPC is unauthenticated.** Unrelated localhost pages and native clients,
-including other local users supplying an accepted Origin, can control the host.
-This includes executable-path changes and destructive operations. Never expose
-or tunnel RPC port **51821**; it is separate from receiver port **51820**.
-
-Parent exit or WebSocket disconnection does not stop RpcHost. Use Ctrl+C in its
-console or an acknowledged `system.shutdown` request. Only one supported
-Dashboard/RpcHost can own a canonical data directory across Windows sessions.
-
-The single EXE may extract native libraries into the per-user .NET bundle cache.
-The RpcHost MSI always provisions an exact-EXE, receiver-port, Private-profile
-firewall rule; it does not open RPC. Standalone users manage receiver firewall
-access manually. Neither distribution adds sign-in startup or starts automatically.
+Older updater copies cannot read the reduced release manifest; refreshing only
+the entry script is insufficient. The current updater does not accept historical
+release manifests. If scripts cannot be refreshed, manually install the matching
+signed Dashboard and Remote MSIs. Follow the [retirement and updater-transition
+guide](docs/rpc-host-retirement.md) for legacy installations and ownership-verified
+manual cleanup. Updating source or supported packages does not uninstall retired
+products or clean up their script-created firewall rules.
 
 ## Configuration
 
@@ -322,21 +278,19 @@ JSON edits. Both use `%LOCALAPPDATA%\AgentSignaler` by default.
 | Setting | Location and behavior |
 | --- | --- |
 | Receiver port | `Port` in `dashboard-settings.json`; default `51820`, valid `1024..65535`. |
-| RPC port | `RpcPort` in Dashboard settings; default `51821`. RpcHost's optional `--rpc-port` overrides it without saving. Must differ from the receiver port. |
 | Network mode and sharing | `ConnectionMode` defaults to Dev Tunnel mode; `AutoStartSharing` defaults to `true`. Configure through Dashboard's Network and Internet sharing tabs. |
 | Appearance | `Compact`, `ShowCompactViewWhenMinimized`, and `Theme` (`System`, `Light`, or `Dark`). |
 | Optional tools/discovery | `DevTunnelCliPath`, `AzureCliPath`, and either `DevBoxSubscriptionId` or `DevCenterName`. Paths must identify trusted executables; change running paths by saving and restarting. |
-| Remote connection | `dashboardBaseUrl` in `remote.json`; a root URL without credentials, a path, query, or fragment. Use the receiver URL, never the RPC URL. |
+| Remote connection | `dashboardBaseUrl` in `remote.json`; the Dashboard receiver's root URL without credentials, a path, query, or fragment. |
 | Heartbeat | `heartbeatIntervalSeconds` in `remote.json`; default `300`, valid `60..3600` in whole-minute increments. Managed offline detection is twice the interval plus 60 seconds. |
 | Hook selection | Configurator manages `relayPath` and `integrations` in `remote.json` together with owned hook files. |
 | Conversation details | Remote v5 `detailedReportingEnabled` and receiver `ReceiveDetailedConversations` both default to `true`. Disable explicitly for status-only use. HTTP/LAN and legacy remote v1-v4 remain status-only. |
-| Windows sign-in | Separate explicit Dashboard/Client startup controls; RpcHost has no sign-in registration. Client's setting manages an owned current-user Startup shortcut. |
+| Windows sign-in | Separate explicit Dashboard/Client startup controls. Client's setting manages an owned current-user Startup shortcut. |
 
 Dashboard settings use PascalCase JSON fields; remote configuration uses camelCase.
 Do not hand-change schema versions or copy a live database to bypass ownership.
 Port/mode/CLI-path changes require restart; the running URL may differ from saved
-settings until then. RpcHost receiver-port changes also require matching MSI
-firewall maintenance, not a runtime firewall operation.
+settings until then.
 
 ### Environment variables
 
@@ -344,9 +298,8 @@ No environment variable is required for normal GUI setup.
 
 | Variable | Purpose |
 | --- | --- |
-| `AGENT_SIGNALER_DATA_DIR` | Absolute application data-directory override. RpcHost also accepts `--data-directory`; if both are set, they must resolve to the same directory. |
+| `AGENT_SIGNALER_DATA_DIR` | Absolute application data-directory override. |
 | `COPILOT_HOME` | Copilot CLI home used to discover its effective hook location; this is not the Agent Signaler data directory. |
-| `DOTNET_BUNDLE_EXTRACT_BASE_DIR` | Optional .NET native-library extraction cache for the single-file host; use a private writable/executable directory. |
 | `AGENT_SIGNALER_GITHUB_TOKEN` | Optional updater credential for private release access. Use an existing authorized secret source; never put it in source, screenshots, or command examples. |
 | `AGENT_SIGNALER_LIVE_TUNNEL_TEST` | Keep `0` for ordinary development; `1` enables explicitly authorized live-tunnel testing. |
 
@@ -365,8 +318,7 @@ Remove-Item Env:\AGENT_SIGNALER_DATA_DIR
 ```
 
 Process-only overrides do not automatically configure sign-in launches or MSI
-servicing. See the [user guide](docs/user-guide.md) and
-[RPC settings contract](docs/rpc-host-protocol.md#settings-compatibility).
+servicing. See the [user guide](docs/user-guide.md).
 
 ## Security and privacy
 
@@ -412,11 +364,13 @@ flowchart LR
     Receiver --> Memory[Bounded volatile conversation store]
     Receiver --> Core[Shared Dashboard runtime]
     Core --> Dashboard[WinUI Dashboard]
-    Core --> RPC[Separate loopback JSON-RPC host]
 ```
 
 Client is the sole managed network reporter. Relay never starts it or falls back
-to direct HTTP. RpcHost exposes operational metadata, not a transcript reader.
+to direct HTTP. Dashboard is the sole receiver host. Dashboard Core retains the
+canonical data-directory lease, receiver, SQLite store, settings, tunnel lifecycle,
+local state, and operational workflows. Only one Dashboard process, including
+across Windows sessions, can own a canonical data directory.
 
 | Area | Projects |
 | --- | --- |
@@ -424,7 +378,7 @@ to direct HTTP. RpcHost exposes operational metadata, not a transcript reader.
 | Hooks, configuration, reporting | `AgentSignaler.Remote`, `Relay`, `Client`, `Configurator` |
 | Receiver and persistence | `AgentSignaler.Service` |
 | Shared operations and cloud adapters | `AgentSignaler.Dashboard.Core`, `AgentSignaler.Tunneling` |
-| Presentation/control | `AgentSignaler.Dashboard`, `AgentSignaler.RpcHost` |
+| Presentation and operational UI | `AgentSignaler.Dashboard` |
 | Packaging and verification | `installers`, `scripts`, and domain-specific projects under `tests` |
 
 ### Build and test
@@ -449,6 +403,20 @@ Use the explicit, ownership-scoped [test-firewall procedure](docs/test-firewall.
 when needed; never disable the firewall or silently skip blocked tests.
 Live cloud accounts are not needed for default synthetic tests.
 
+To pre-authorize installed and developer-built Dashboard receivers
+without accepting a runtime firewall prompt, preview and apply the exact rules:
+
+```powershell
+.\scripts\Set-ApplicationFirewall.ps1 -DashboardPort 51820 -WhatIf
+.\scripts\Set-ApplicationFirewall.ps1 -DashboardPort 51820
+```
+
+Pass the actual saved Dashboard receiver port; the script does not guess when
+enabling rules. Private rules allow that port for trusted LAN/VPN use.
+Public rules allow `127.0.0.1` only and do not expose the receiver to other
+devices. Use `-Action Status` or `-Action Remove` to inspect or remove only
+rules owned by this script.
+
 ### Package locally
 
 With native installer build tools available:
@@ -458,12 +426,12 @@ With native installer build tools available:
 .\scripts\Build-Installers.ps1 -Version 1.0.19 -ApplicationMsisOnly
 ```
 
-This publishes apps, builds and inspects the three MSIs, and runs packaging
-checks without installing or publishing a release. It includes listener-bearing
-RpcHost smoke checks. Outputs are under `artifacts\publish` and `artifacts\msi`.
+This publishes apps, builds and inspects the Dashboard and Remote MSIs, and runs
+packaging checks without installing or publishing a release. Outputs are under
+`artifacts\publish` and `artifacts\msi`.
 Omit `-ApplicationMsisOnly` to also build the prerequisite bundle, which downloads
 verified prerequisite payloads. See [installer documentation](installers/README.md)
-for deferred smoke testing and native/servicing gates.
+for packaging and native/servicing gates.
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md): preserve ownership, cancellation,
 privacy, and rollback; use isolated fixtures; document what was not verified.
@@ -482,7 +450,7 @@ Read the [user guide](docs/user-guide.md), [support policy](SUPPORT.md), and
 | No computer card after Test connection | Expected: explicitly apply configuration and start Client. |
 | Internet startup fails | Check the qualified CLI, explicit sign-in, and Settings > Prerequisite; there is no automatic LAN fallback. |
 | Hooks configured but no activity | Confirm Client is running and inspect the actual IDE/profile's hook support. Configured does not mean verified. |
-| RpcHost cannot start | Exit the current data-directory owner or choose a free `--rpc-port`; do not delete live lock/state files. |
+| Dashboard data directory is in use | Exit the Dashboard process that owns it, including in another Windows session; do not delete live lock/state files. |
 | Installed update fails | Use the installing user's non-elevated terminal and review the installer/updater guide. |
 
 Use [GitHub Issues](https://github.com/andysterland/agent-signaler/issues) for

@@ -41,7 +41,7 @@ public sealed record IntegrationPlan(RemoteConfiguration Config, string ConfigPa
             "HTTP is unencrypted and unauthenticated; use only a trusted LAN or VPN.");
 }
 
-public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
+public sealed partial class IntegrationManager(IIntegrationTaskScheduler scheduler,
     Func<RemoteConfiguration, CancellationToken, Task<bool>> verifyDelivery,
     IIntegrationStartup? startup = null, IIntegrationRuntime? runtime = null)
 {
@@ -465,20 +465,7 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
         using var held = AtomicFile.Acquire(configPath + ".integration.lock", TimeSpan.FromSeconds(1));
         var journalPath = RemovalJournalPath(configPath, transactionId);
         if (!File.Exists(journalPath)) return;
-        var journal = JsonSerializer.Deserialize<IntegrationRemovalJournal>(AtomicFile.ReadBounded(journalPath, 524288), Protocol.Json)
-            ?? throw new InvalidDataException("Invalid removal journal.");
-        var manifest = JsonSerializer.Deserialize<IntegrationManifest>(journal.ManifestBytes, Protocol.Json)
-            ?? throw new InvalidDataException("Invalid journal ownership.");
-        ValidateStartupManifest(manifest, configPath);
-        if (!SamePath(journal.ConfigPath, configPath) || !SamePath(journal.HookPath, manifest.HookPath) ||
-            journal.TaskName != ScheduledTaskDefinition.Name(manifest.MachineId) ||
-            (journal.HookBytes is not null && Hash(journal.HookBytes) != manifest.HookHash) ||
-            (journal.TaskXml is not null && !ScheduledTaskDefinition.IsOwned(journal.TaskXml, manifest.MachineId, manifest.RelayPath, configPath)) ||
-            journal.StartupName != manifest.StartupName ||
-            (journal.StartupCommand is not null && journal.StartupCommand != manifest.StartupCommand))
-            throw new InvalidDataException("Removal journal ownership mismatch.");
-        IntegrationStartup.ValidateJournalStates(journal.StartupStateBefore, journal.StartupStateAfter,
-            journal.StartupCommand, null);
+        var (journal, _) = ReadLegacyRemovalJournal(AtomicFile.ReadBounded(journalPath, 524288), configPath);
         var task = scheduler.ReadXml(journal.TaskName);
         if (task is not null && task != journal.TaskXml)
             throw new InvalidDataException("Task changed during uninstall; rollback will not overwrite it.");
@@ -507,6 +494,27 @@ public sealed class IntegrationManager(IIntegrationTaskScheduler scheduler,
         foreach (var pair in originals)
             if (pair.Value is not null) AtomicFile.Write(pair.Key, pair.Value);
         File.Delete(journalPath);
+    }
+
+    private static (IntegrationRemovalJournal Journal, IntegrationManifest Manifest) ReadLegacyRemovalJournal(
+        byte[] bytes, string configPath)
+    {
+        var journal = JsonSerializer.Deserialize<IntegrationRemovalJournal>(bytes, Protocol.Json)
+            ?? throw new InvalidDataException("Invalid removal journal.");
+        var manifest = journal.ManifestBytes is null ? null :
+            JsonSerializer.Deserialize<IntegrationManifest>(journal.ManifestBytes, Protocol.Json);
+        if (manifest is null) throw new InvalidDataException("Invalid journal ownership.");
+        ValidateStartupManifest(manifest, configPath);
+        if (!SamePath(journal.ConfigPath, configPath) || !SamePath(journal.HookPath, manifest.HookPath) ||
+            journal.TaskName != ScheduledTaskDefinition.Name(manifest.MachineId) ||
+            (journal.HookBytes is not null && Hash(journal.HookBytes) != manifest.HookHash) ||
+            (journal.TaskXml is not null && !ScheduledTaskDefinition.IsOwned(journal.TaskXml, manifest.MachineId, manifest.RelayPath, configPath)) ||
+            journal.StartupName != manifest.StartupName ||
+            (journal.StartupCommand is not null && journal.StartupCommand != manifest.StartupCommand))
+            throw new InvalidDataException("Removal journal ownership mismatch.");
+        IntegrationStartup.ValidateJournalStates(journal.StartupStateBefore, journal.StartupStateAfter,
+            journal.StartupCommand, null);
+        return (journal, manifest);
     }
 
     private static async Task<T> Bounded<T>(Func<CancellationToken, Task<T>> action, CancellationToken token)

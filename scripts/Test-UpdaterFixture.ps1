@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string] $FixturePath,
-    [string[]] $Apps = @('Dashboard', 'Remote', 'RpcHost')
+    [ValidateSet('Dashboard', 'Remote')]
+    [string[]] $Apps = @('Dashboard', 'Remote')
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -11,6 +12,7 @@ $fixture = Get-Content -LiteralPath $FixturePath -Raw | ConvertFrom-Json
 if ($fixture.Schema -cne 'AgentSignaler.UpdaterFixture.v1') { throw 'Not a synthetic updater fixture.' }
 $version = ConvertTo-AgentSignalerVersion $fixture.Version
 $checksums = Read-AgentSignalerChecksums $fixture.Checksums
+Assert-AgentSignalerReleaseAssets $fixture.Assets
 $downloads = 0
 $plans = @(
     foreach ($app in ($Apps | Select-Object -Unique)) {
@@ -36,13 +38,7 @@ $plans = @(
         $package = Assert-AgentSignalerPackageMetadata $properties $asset.Template $asset.SummaryFlags $app
         $decision = Get-AgentSignalerUpdateDecision (ConvertTo-AgentSignalerVersion $inventory.Version) $package.Version $version
         if ($decision -ne 'Upgrade') { continue }
-        $port = $null
-        if ($app -eq 'RpcHost') {
-            $directory = Assert-AgentSignalerRpcHostInventory $inventory $fixture.UserSid $fixture.LocalAppData
-            Assert-AgentSignalerRpcHostNotInUse $directory $fixture.Processes
-            $port = [int]$inventory.ReceiverPort
-        }
-        [pscustomobject]@{ App = $app; Version = $package.Version.ToString(); ReceiverPort = $port }
+        [pscustomobject]@{ App = $app; Version = $package.Version.ToString() }
     }
 )
 [pscustomobject]@{ Plans = $plans; Downloads = $downloads; ServicingCalls = 0; ProcessStarts = 0; FirewallChanges = 0 }

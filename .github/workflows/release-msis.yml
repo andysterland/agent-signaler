@@ -174,7 +174,8 @@ jobs:
         run: |
           $publishRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish'
           $catalog = Join-Path $publishRoot 'signing-catalog.txt'
-          $files = @(Get-ChildItem -LiteralPath $publishRoot -File -Recurse |
+          $payloads = @('dashboard', 'remote') | ForEach-Object { Join-Path $publishRoot $_ }
+          $files = @(Get-ChildItem -LiteralPath $payloads -File -Recurse |
             Where-Object {
               $_.Name -like 'AgentSignaler.*' -and
               $_.Extension -in @('.exe', '.dll')
@@ -198,14 +199,25 @@ jobs:
       - name: Build and validate installers
         shell: powershell
         run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -SkipPublish -ApplicationMsisOnly
+      - name: Create MSI signing catalog
+        shell: pwsh
+        run: |
+          $msiRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\msi'
+          $names = @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi')
+          foreach ($name in $names) {
+            if (-not (Test-Path -LiteralPath (Join-Path $msiRoot $name) -PathType Leaf)) {
+              throw "Missing application package: $name"
+            }
+          }
+          $names | ForEach-Object { ".\$_" } |
+            Set-Content -LiteralPath (Join-Path $msiRoot 'signing-catalog.txt') -Encoding ascii
       - name: Sign MSI packages
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\artifacts\msi
-          files-folder-filter: AgentSignaler.*.msi
+          files-catalog: ${{ github.workspace }}\artifacts\msi\signing-catalog.txt
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -217,12 +229,8 @@ jobs:
             Get-Content -LiteralPath (Join-Path $publishRoot 'signing-catalog.txt') |
               ForEach-Object { Join-Path $publishRoot $_ }
           )
-          $msis = @(Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\msi') `
-            -File -Filter 'AgentSignaler.*.msi' |
-            Select-Object -ExpandProperty FullName)
-          if ($msis.Count -ne 3) {
-            throw "Expected three Agent Signaler MSI packages, found $($msis.Count)."
-          }
+          $msis = @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi') |
+            ForEach-Object { Join-Path $env:GITHUB_WORKSPACE "artifacts\msi\$_" }
           $targets += $msis
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature -LiteralPath $target
@@ -253,23 +261,17 @@ jobs:
       - name: Prepare release assets and notes
         shell: pwsh
         run: |
-          $release = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
-          New-Item -ItemType Directory -Path $release -Force | Out-Null
+          $release = Join-Path $env:GITHUB_WORKSPACE ('artifacts\release\' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $release | Out-Null
+          "RELEASE_DIRECTORY=$release" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $assets = @(
             'AgentSignaler.Dashboard.msi',
-            'AgentSignaler.Remote.msi',
-            'AgentSignaler.RpcHost.msi'
+            'AgentSignaler.Remote.msi'
           )
           foreach ($asset in $assets) {
             Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "artifacts\msi\$asset") `
               -Destination (Join-Path $release $asset)
           }
-          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\AgentSignaler.RpcHost.exe') `
-            -Destination (Join-Path $release 'AgentSignaler.RpcHost.exe')
-          $assets += 'AgentSignaler.RpcHost.exe'
-          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\rpchost\THIRD-PARTY-NOTICES.txt') `
-            -Destination (Join-Path $release 'AgentSignaler.RpcHost.NOTICES.txt')
-          $assets += 'AgentSignaler.RpcHost.NOTICES.txt'
           $assets | ForEach-Object {
             $hash = (Get-FileHash -LiteralPath (Join-Path $release $_) -Algorithm SHA256).Hash
             "$hash  $_"
@@ -286,15 +288,30 @@ jobs:
 
           - ``AgentSignaler.Dashboard.msi`` - dashboard installation
           - ``AgentSignaler.Remote.msi`` - remote Dev Box installation
-          - ``AgentSignaler.RpcHost.msi`` - per-user headless RPC host with mandatory MSI-owned Private receiver firewall rule; servicing requires MSI elevation
-          - ``AgentSignaler.RpcHost.exe`` - standalone single-file host; firewall setup is manual
-          - ``AgentSignaler.RpcHost.NOTICES.txt`` - redistribution license/notices accompanying the standalone EXE
-          - ``SHA256SUMS.txt`` - SHA-256 checksums for the signed MSIs, RpcHost EXE and notices
+          - ``SHA256SUMS.txt`` - SHA-256 checksums for the signed Dashboard and Remote MSIs
 
-          RpcHost is explicitly launched, never registered at sign-in. Stop the installed
-          host before servicing. Its loopback control is unauthenticated: unrelated localhost
-          pages and native clients, including other local users, can control it.
-          Actual elevated install/repair/upgrade/uninstall/rollback and clean-image execution
+          ### Updater transition and manual retirement
+
+          Refresh the repository to this release revision before updating. Both
+          ``scripts\Update-AgentSignaler.ps1`` and ``scripts\UpdaterPolicy.ps1`` must
+          come from this revision; replacing only the entry script is insufficient.
+          Old updater copies require retired assets in the checksum manifest and reject
+          this Dashboard/Remote-only release even with ``-Apps Remote``. The new updater
+          rejects historical manifests containing retired assets; do not use it until
+          this matching reduced release is published. If scripts cannot be refreshed,
+          manually install these signed Dashboard and Remote MSIs instead.
+
+          The standalone RpcHost is retired; no automatic uninstall or migration is
+          performed. Stop the exact installed host and remove it manually through Windows
+          Installed Apps as the original installing user, approving its MSI elevation.
+          Preserve shared Dashboard settings, SQLite data, and tunnel identity. Script-created
+          firewall rules require separate ownership-verified cleanup with the previously
+          reviewed helper; MSI removal does not remove them. See the
+          [retirement record](https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/docs/rpc-host-retirement.md)
+          for the final historical release, stable MSI identity, and manual cleanup sequence.
+          Historical releases remain available for manual recovery only.
+
+          Actual install/repair/upgrade/uninstall/rollback and clean-image execution
           are **Not run - deferred release acceptance**; read-only gates do not prove them.
 
           Review the [acceptance record](https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/docs/ACCEPTANCE.md)
@@ -304,14 +321,11 @@ jobs:
       - name: Publish GitHub Release
         shell: pwsh
         run: |
-          $release = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
+          $release = $env:RELEASE_DIRECTORY
           $arguments = @(
             'release', 'create', "v$env:RELEASE_VERSION",
             (Join-Path $release 'AgentSignaler.Dashboard.msi'),
             (Join-Path $release 'AgentSignaler.Remote.msi'),
-            (Join-Path $release 'AgentSignaler.RpcHost.msi'),
-            (Join-Path $release 'AgentSignaler.RpcHost.exe'),
-            (Join-Path $release 'AgentSignaler.RpcHost.NOTICES.txt'),
             (Join-Path $release 'SHA256SUMS.txt'),
             '--repo', $env:GITHUB_REPOSITORY,
             '--target', $env:GITHUB_SHA,

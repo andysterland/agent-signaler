@@ -112,37 +112,6 @@ public sealed partial class DashboardRuntime
         }
     }
 
-    public DomainSnapshot<RuntimePage<RuntimeSession>> GetSessions(Guid id, int offset = 0, int limit = 100,
-        long? expectedRevision = null)
-    {
-        lock (machineSync)
-        {
-            var machine = GetMachine(id);
-            ValidatePage(offset, limit, expectedRevision, machine.Revision);
-            return new(HostInstanceId, "machines", machine.Revision, Page(machine.State.Sessions, offset, limit), machine.IsStale);
-        }
-    }
-
-    public DomainSnapshot<RuntimeNote> GetNote(Guid id, int offset = 0, int length = 16384, long? expectedRevision = null)
-    {
-        lock (machineSync)
-        {
-            var machine = GetMachine(id);
-            var note = machine.State.Machine.Note ?? "";
-            if (offset < 0 || offset > note.Length || length is < 1 or > 16384)
-                throw new RuntimeCommandException(new(1001, "note", false));
-            if (offset > 0 && offset < note.Length && char.IsLowSurrogate(note[offset]) && char.IsHighSurrogate(note[offset - 1]))
-                throw new RuntimeCommandException(new(1001, "offset", false));
-            ValidateExpectedPage(offset, expectedRevision, machine.Revision);
-            var count = Math.Min(length, note.Length - offset);
-            if (count > 0 && offset + count < note.Length && char.IsHighSurrogate(note[offset + count - 1]) &&
-                char.IsLowSurrogate(note[offset + count])) count--;
-            if (count == 0 && offset < note.Length) throw new RuntimeCommandException(new(1011, "length", false));
-            return new(HostInstanceId, "machines", machine.Revision,
-                new(note.Substring(offset, count), note.Length, offset + count < note.Length ? offset + count : null), machine.IsStale);
-        }
-    }
-
     private static RuntimePage<T> Page<T>(IReadOnlyList<T> items, int offset, int limit)
     {
         if (offset > items.Count) throw new RuntimeCommandException(new(1001, "offset", false));

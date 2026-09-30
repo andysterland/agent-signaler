@@ -213,6 +213,7 @@
                                 <StackPanel Spacing="10" MaxWidth="400">
                                     <TextBlock Text="Preview settings changes shows the exact planned changes without writing files. Apply settings always builds a fresh preview and asks for confirmation; a separate preview is optional." TextWrapping="Wrap" />
                                     <TextBlock Text="Recover an interrupted integration transaction to restore its prior owned files and startup settings. Clean up legacy diagnostic hooks before applying if diagnostic cleanup is pending. Changed user files are preserved." TextWrapping="Wrap" />
+                                    <TextBlock Text="After a completed MSI uninstall or reinstall, use Complete finished uninstall to clear a verified leftover removal journal. Wait for Windows Installer to finish first. This does not restore hooks, change saved settings, or start Client." TextWrapping="Wrap" />
                                     <TextBlock Text="Uninstall integration removes this user's owned integrations and stops Client. The persistent machine UUID is retained. Each maintenance action asks for confirmation." TextWrapping="Wrap" />
                                 </StackPanel>
                             </ToolTip>
@@ -223,6 +224,7 @@
                             <Button x:Name="PreviewButton" Content="Preview settings changes" Click="Preview_Click" />
                             <TextBox x:Name="PreviewBox" Header="Exact change preview" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="220" MaxHeight="520" FontFamily="Consolas" />
                             <Button x:Name="RecoverIntegrationButton" Content="Recover interrupted integration transaction..." Click="RecoverIntegration_Click" />
+                            <Button x:Name="CompleteUninstallButton" Content="Complete finished uninstall..." Click="CompleteUninstall_Click" />
                             <Button x:Name="RecoverVerificationButton" Content="Clean up legacy diagnostic hooks..." Click="RecoverVerification_Click" />
                             <Button x:Name="UninstallButton" Content="Uninstall integration..." Click="Uninstall_Click" />
                         </StackPanel>

@@ -251,12 +251,15 @@ public sealed partial class MultiTargetIntegrationManager
         File.Delete(path);
     }
 
-    private static MultiTargetIntegrationJournal ReadJournal(string path, string configPath)
+    private static MultiTargetIntegrationJournal ReadJournal(string path, string configPath) =>
+        ReadJournal(AtomicFile.ReadBounded(path, 16777216), configPath);
+
+    private static MultiTargetIntegrationJournal ReadJournal(byte[] bytes, string configPath)
     {
-        var journal = JsonSerializer.Deserialize<MultiTargetIntegrationJournal>(
-            AtomicFile.ReadBounded(path, 16777216), Protocol.Json) ?? throw new InvalidDataException("Invalid recovery journal.");
+        var journal = JsonSerializer.Deserialize<MultiTargetIntegrationJournal>(bytes, Protocol.Json)
+            ?? throw new InvalidDataException("Invalid recovery journal.");
         if (journal.Version != 2 || !Same(journal.ConfigPath, configPath) ||
-            journal.Changes.Count > 130 ||
+            journal.Changes is null || journal.Changes.Count > 130 || journal.Changes.Any(c => c is null) ||
             journal.Changes.Select(c => Canonical(c.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != journal.Changes.Count)
             throw new InvalidDataException("Recovery journal scope mismatch.");
         var manifestChange = journal.Changes.SingleOrDefault(c => Same(c.Path, ManifestPath(configPath)))
@@ -266,14 +269,14 @@ public sealed partial class MultiTargetIntegrationManager
                 ?? throw new InvalidDataException("Invalid recovery manifest.")).ToArray();
         if (manifests.Length == 0) throw new InvalidDataException("Missing recovery ownership.");
         var identity = manifests[0].MachineId;
-        var allowedPaths = manifests.SelectMany(Artifacts).Select(a => Canonical(a.Path))
-            .Append(Canonical(configPath)).Append(Canonical(ManifestPath(configPath))).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var manifest in manifests)
         {
-            IntegrationManager.ValidateStartupManifest(manifest, configPath);
+            ValidateManifest(manifest, ManifestPath(configPath), configPath);
             if (manifest.MachineId != identity || manifest.Version is not (1 or 2))
                 throw new InvalidDataException("Recovery manifest identity mismatch.");
         }
+        var allowedPaths = manifests.SelectMany(Artifacts).Select(a => Canonical(a.Path))
+            .Append(Canonical(configPath)).Append(Canonical(ManifestPath(configPath))).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (journal.Changes.Any(c => !allowedPaths.Contains(Canonical(c.Path))) ||
             journal.StartupName != IntegrationStartup.Name(configPath) ||
             journal.TaskName != ScheduledTaskDefinition.Name(identity) ||

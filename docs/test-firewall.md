@@ -1,6 +1,6 @@
 # Repeatable local network tests
 
-Build the Release/x64 test projects and publish RpcHost before setup. Run from
+Build the Release/x64 test projects before setup. Run from
 the repository root in an ordinary, unelevated PowerShell terminal:
 
 ```powershell
@@ -9,11 +9,13 @@ the repository root in an ordinary, unelevated PowerShell terminal:
 ```
 
 The second command requests one UAC approval if rules need to change. Only the
-firewall helper runs elevated, never the tests. On machines with multiple active
-network categories, explicitly select one with `-Profile Public`, `Private`, or
-`Domain`. The default is the single active category, not all profiles.
+firewall helper runs elevated, never the tests. By default the script creates
+matching Private and Public rules. Both remain limited to IPv4 loopback. Use
+`-Profile Private`, `Public`, or `Domain` to select a narrower or different
+profile explicitly.
 
-Seven exact executable paths receive inbound **TCP from 127.0.0.1 only**.
+Three exact executable paths receive inbound **TCP from 127.0.0.1 only** on
+both Private and Public profiles by default (six rules).
 Ports are unrestricted because fixtures allocate ephemeral ports. The rules do
 not grant LAN/Internet ingress, UDP, edge traversal, or access to other programs.
 IPv6 loopback remains covered by Windows' normal loopback handling; `::1` is not
@@ -24,20 +26,10 @@ settings, or persistent environment variables are changed.
 Paths are scoped to this checkout and configuration:
 
 - Service, Integration and Dashboard.Core `testhost.exe` build outputs.
-- The built RpcHost application and published RpcHost EXE.
-- `.rpc-test-work\published-exe\exe-only\AgentSignaler.RpcHost.exe`
-- `artifacts\rpchost-publish-tests\firewall-prepared\exe-only\AgentSignaler.RpcHost.exe`
-
-The last two paths are static by default. Their fixtures take exclusive file
-leases, refuse unexpected existing directories, and clean up their own copies.
-Concurrent runs of the same EXE-only fixture in one checkout fail instead of
-overwriting each other; serialize those runs or use separate checkouts.
-Other per-test state remains isolated. Browser tests already use the static
-published EXE, so they do not need another copy or rule.
 
 Rules are path-based, not binary-hash-pinned: subsequent builds at these exact
 paths retain the same loopback permission. Changing checkout, configuration,
-target framework or active network profile requires matching setup. Run with
+target framework or selected network profiles requires matching setup. Run with
 `-Configuration Debug` for Debug outputs.
 
 Setup verifies existing owned-rule properties and is idempotent. Rerunning it
@@ -45,7 +37,6 @@ with unchanged rules does not request elevation.
 
 ```powershell
 .\scripts\Set-TestFirewall.ps1 -Action Status
-.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
 ```
 
 Run potentially blocking network tests last, after other builds and checks.
@@ -64,16 +55,67 @@ and completion status in `artifacts\test-firewall\last-operation.clixml`.
 To remove only rules created by this script (one UAC approval if necessary):
 
 ```powershell
-.\scripts\Set-TestFirewall.ps1 -Action Remove -Profile Public
+.\scripts\Set-TestFirewall.ps1 -Action Status
+.\scripts\Set-TestFirewall.ps1 -Action Remove -WhatIf
+.\scripts\Set-TestFirewall.ps1 -Action Remove
+.\scripts\Set-TestFirewall.ps1 -Action Status
 ```
 
-An optional `-OwnedBlockRulesCsv <absolute-path>` can remove previously verified
-test-created blocks during Enable, in the same elevation. The CSV must contain
-`Name,Program,Protocol,Profile,Action`, with exact unique rule identities, TCP/UDP,
-Public and Block. Only the narrowly recognized legacy test paths are eligible;
-current rule/application/port/address properties must still match. A changed
-record is an error, not permission to delete it. Never reuse an obsolete
-manifest after someone has changed its rules.
+These commands cover Private and Public in the current checkout's Release
+configuration. Repeat with `-Configuration Debug` or `-Profile Domain` only where
+previously used. `-Profile Public` limits an operation to Public rules. The
+current helper never deletes Windows application-consent block rules.
 
-This is developer-only setup. It is not shipped as a RpcHost runtime elevation
-helper and does not replace MSI-owned production receiver provisioning.
+## Explicit Dashboard receiver access
+
+Application access is separate from developer test access. The Dashboard's
+existing explicit **Private** receiver-rule workflow remains available in its
+Network settings. For script-managed installed/developer Dashboard copies,
+preview the exact receiver port before approving setup:
+
+```powershell
+.\scripts\Set-ApplicationFirewall.ps1 -Action Status
+.\scripts\Set-ApplicationFirewall.ps1 -DashboardPort 51820 -WhatIf
+.\scripts\Set-ApplicationFirewall.ps1 -DashboardPort 51820
+```
+
+Use the port configured in Dashboard, not necessarily the example `51820`.
+`-Scope Installed`, `Developer`, or `Both` (default) selects the desired
+executable paths; `-Configuration Debug` selects Debug developer output. Only
+existing selected executables are provisioned. At most four rules cover two
+exact Dashboard paths:
+
+- Private: inbound TCP on the explicit receiver port; LAN senders are allowed.
+- Public: inbound TCP on that same port **from 127.0.0.1 only**.
+
+No UDP, edge traversal, Public/LAN access, or Domain rule is added. A Private
+rule does not authenticate senders, change Dashboard's bind mode, or make a
+loopback-bound receiver reachable from the LAN. Use LAN mode only on a trusted
+network. The script neither starts applications nor elevates the Dashboard.
+
+Rules are owned by the invoking user's exact group and verified path/profile,
+port, address and other rule properties. `Enable` reconciles the **entire
+script-owned application group**, removing stale rules outside the selected
+scope/configuration. `Remove` removes that entire verified group, not just the
+paths selected by `-Scope`; `Status` inspects the group without requiring
+executables or ports. Review this scope before approval:
+
+```powershell
+.\scripts\Set-ApplicationFirewall.ps1 -Action Remove -WhatIf
+.\scripts\Set-ApplicationFirewall.ps1 -Action Remove
+.\scripts\Set-ApplicationFirewall.ps1 -Action Status
+```
+
+Modifying runs save receipts in
+`artifacts\application-firewall\last-operation.clixml`. Both helpers preserve
+unrelated rules, refuse changed owned rules, carry a checked plan through
+elevation, and attempt rollback on failure. Preserve receipts before another
+operation overwrites them; inspect incomplete operations rather than retrying
+blindly. `Status` and `-WhatIf` do not change firewall rules or request elevation.
+
+For earlier installations, follow the [manual retirement release
+notes](rpc-host-retirement.md) **before replacing previously used helpers**.
+Current helpers deliberately do not provide historical cleanup capability, and
+an unsupported executable in the application group fails closed rather than
+being automatically removed. This setup does not replace MSI-owned or
+Dashboard-managed receiver rules.

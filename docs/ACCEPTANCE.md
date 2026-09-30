@@ -20,7 +20,7 @@ offline tests. Use MC01-MC09 in `MANUAL-TEST-PLAN.md`:
   waiting wins over other sessions' resumes, success and failure. Leave a question
   quiet beyond the heartbeat deadline while Client remains online.
 - Verify session-specific accepted event/timestamp labels and unknown legacy
-  metadata, with no prompt/response content in status persistence or RPC v1.
+  metadata, with no prompt/response content in status persistence.
 - Verify source/session/stream transcript drill-in, retained-ended access, stable
   list selection, Back, tab hiding and immediate text invalidation.
 - Inspect 0/1/10/11/64 compact indicators at supported DPI and small work areas;
@@ -35,14 +35,12 @@ The focused offline UI/runtime validation includes:
 
 - `SessionPresentationTests`: identity/order, accepted event timestamps, legacy
   unknown metadata, offline/ended indicators, and session-only revision changes.
-- `RpcSessionProjectionTests` and `RpcProtocolTests`: direct in-process RPC
-  execution, strict existing DTO allowlist, waiting and stale pagination.
 - `CopilotsControllerTests`, `CompactSessionPresentationTests`,
   `TranscriptViewControllerTests`, `TranscriptDetailsSourceTests`,
   `MachineCardPresentationTests`, and `MachineCardAppearanceTests`: metadata-only
   rows, retained streams, cancellation/invalidation and complete indicator layout.
 
-Run only these inspected offline selectors rather than entire runtime/RPC or
+Run only these inspected offline selectors rather than entire runtime or
 integration suites that initialize real listeners. Native rendering and
 production host capture remain separate release gates even when these pass.
 
@@ -53,7 +51,6 @@ production host capture remain separate release gates even when these pass.
   warning remains; no compiler errors were reported.
 - Service: 374 selected tests passed; Remote: 45 selected tests passed.
 - Dashboard.Core: 6 session projection/revision tests passed.
-- RpcHost: 43 in-process protocol/projection tests passed.
 - Integration: 111 selected Copilots, transcript-controller and compact-card
   tests passed, including unrelated-stream/partial-expiry selection regressions.
 - No network listeners, external-service tests, live tunnel tests, application
@@ -62,31 +59,30 @@ production host capture remain separate release gates even when these pass.
 - Legacy Idle tombstones and enriched session-end observations are excluded
   from connected indicators. No silence-based session expiry was introduced.
 
-## RpcHost release acceptance
+## Dashboard release acceptance
 
-The [RPC protocol](rpc-host-protocol.md) separates required deterministic
-automated gates from interactive release acceptance. Do not treat configuration
-assertions, fake CLI/native adapters or a queued workflow as live verification.
-The execution handoff records actual automated results, artifact hashes, source
-SHA and publication status separately from this checklist.
+Keep deterministic automated gates separate from interactive release acceptance.
+Do not treat configuration assertions, fake CLI/native adapters or a queued
+workflow as live verification.
+Record actual automated results, artifact hashes, source SHA and publication
+status separately from this checklist.
 
 | Check | Status |
 | --- | --- |
-| Supported WebView/browser shell and real origin policy | Not run - deferred release acceptance |
 | Real Azure account login/permissions and Dev Tunnel lifecycle | Not run - deferred release acceptance |
 | Real Windows App mapping, reuse, sign-in and foreground denial | Not run - deferred release acceptance |
-| Dashboard visual/tray parity and second interactive Windows session | Not run - deferred release acceptance |
+| Dashboard visual/tray behavior and canonical data-directory lease across a second interactive Windows session | Not run - deferred release acceptance |
 | Clean supported Windows image without .NET/Windows App SDK | Not run - deferred release acceptance |
-| Disposable-VM MSI install/upgrade/repair/uninstall/rollback | Not run - deferred release acceptance |
-| UAC approve/deny, silent insufficient privilege and intended-user elevation | Not run - deferred release acceptance |
-| Mandatory exact Private receiver rule, port maintenance, foreign-rule preservation and rollback | Not run - deferred release acceptance |
-| Parent-exit/forced termination/port collision repeated in production launcher | Not run - deferred release acceptance |
+| Disposable-VM Dashboard/Remote MSI install/upgrade/repair/uninstall/rollback | Not run - deferred release acceptance |
+| Explicit Dashboard Private receiver-rule setup, UAC approve/deny, foreign-rule preservation and rollback | Not run - deferred release acceptance |
+| Dashboard receiver startup, shutdown, port collision and LAN/loopback binding | Not run - deferred release acceptance |
 
-RpcHost intentionally accepts unauthenticated control from unrelated localhost
-pages and native clients, including other local users supplying Origin. This
-accepted risk includes executable-path changes, diagnostics and destructive
-operations. Neither Origin nor the single-controller lease authenticates a user.
-Do not use the endpoint across a trust boundary.
+The Dashboard report receiver does not authenticate senders; anonymous Dev
+Tunnel sharing encrypts transport without authenticating reports. Retain the
+bounded receiver behavior and trusted-LAN requirements during acceptance.
+Follow the [retirement guide](rpc-host-retirement.md) for legacy installed-product
+removal, separate ownership-verified script-rule cleanup and the matching updater
+refresh. Source removal does not establish that any machine was cleaned up.
 
 ## Detailed-conversation prototype release gates — pending
 

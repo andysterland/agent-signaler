@@ -5,7 +5,6 @@
   <Folder Name="/installers/">
     <Project Path="installers/AgentSignaler.Dashboard/AgentSignaler.Dashboard.wixproj"><Build Project="false" /></Project>
     <Project Path="installers/AgentSignaler.Remote/AgentSignaler.Remote.wixproj"><Build Project="false" /></Project>
-    <Project Path="installers/AgentSignaler.RpcHost/AgentSignaler.RpcHost.wixproj"><Build Project="false" /></Project>
     <Project Path="installers/AgentSignaler.DevTunnelsPrerequisite/AgentSignaler.DevTunnelsPrerequisite.wixproj"><Build Project="false" /></Project>
     <Project Path="installers/AgentSignaler.Dashboard.Bundle/AgentSignaler.Dashboard.Bundle.wixproj"><Build Project="false" /></Project>
   </Folder>
@@ -23,9 +22,6 @@
       <Platform Project="x64" />
     </Project>
     <Project Path="src/AgentSignaler.Dashboard.Core/AgentSignaler.Dashboard.Core.csproj">
-      <Platform Project="x64" />
-    </Project>
-    <Project Path="src/AgentSignaler.RpcHost/AgentSignaler.RpcHost.csproj">
       <Platform Project="x64" />
     </Project>
     <Project Path="src/AgentSignaler.Relay/AgentSignaler.Relay.csproj">

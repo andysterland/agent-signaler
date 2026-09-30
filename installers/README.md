@@ -18,20 +18,13 @@ Use this script rather than a normal solution build to create installers.
 | `artifacts\bundle\AgentSignaler.Dashboard.Setup.exe` | Dashboard setup with optional prerequisites |
 | `artifacts\msi\AgentSignaler.Dashboard.msi` | Dashboard only |
 | `artifacts\msi\AgentSignaler.Remote.msi` | Client, Configurator, and Relay |
-| `artifacts\msi\AgentSignaler.RpcHost.msi` | Per-user headless host and mandatory MSI-owned receiver firewall rule |
-| `artifacts\publish\rpchost\AgentSignaler.RpcHost.exe` | Standalone single-file headless host |
 | `artifacts\msi\AgentSignaler.DevTunnelsPrerequisite.msi` | Dev Tunnels prerequisite for the bundle |
 
 Useful options:
 
 ```powershell
-# Build all three application MSIs and the RpcHost EXE (no bundle or prerequisites).
+# Build both application MSIs (no bundle or prerequisites).
 .\scripts\Build-Installers.ps1 -Version 1.0.19 -ApplicationMsisOnly
-
-# Stage build/read-only/pure gates before a separately scheduled listener test.
-# This does not waive the required EXE smoke gate.
-.\scripts\Build-Installers.ps1 -Version 1.0.19 -ApplicationMsisOnly -SkipRpcHostSmoke
-.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
 
 # Also copy validated application MSIs and the bundle to a trusted release folder.
 .\scripts\Build-Installers.ps1 -Version 1.0.19 -DestinationPath C:\Releases\AgentSignaler
@@ -42,13 +35,16 @@ requested version. Use `-NoRestore` when the required SDK/package assets already
 exist to build and inspect fresh publish output without restoring dependencies.
 Increment the three-part version for every release; keep
 UpgradeCodes unchanged. Downgrades are blocked.
+Publishing refreshes only the Dashboard/Remote payload directories and uses a
+unique merge-staging directory. Packaging, signing, inspection, copying, and CI
+uploads select only the two application packages explicitly; unrelated historical
+output is not a release input and is not broadly deleted. Release asset staging
+uses a fresh run-specific directory.
 
 ## Install
 
-Install as the intended Windows user. All three application packages are per-user.
-Dashboard and Remote retain their non-elevated installation behavior. RpcHost
-requires Windows Installer elevation for its mandatory machine firewall rule;
-it does not become a per-machine application.
+Install as the intended Windows user. Both application packages are per-user
+and retain their non-elevated installation behavior.
 
 1. Install **Dashboard** first, using `AgentSignaler.Dashboard.Setup.exe`, or the
    Dashboard MSI if you manage prerequisites separately.
@@ -56,107 +52,6 @@ it does not become a per-machine application.
 3. Open Configurator, review the settings, and approve **Apply** to enable remote
    reporting and Client startup at user sign-in. Installing the MSI alone does
    not enable these integrations.
-
-### RpcHost installation and firewall ownership
-
-RpcHost is an alternative to the Dashboard, not another reporter. Its MSI installs
-only the self-contained EXE and license/notices under
-`%LOCALAPPDATA%\Programs\AgentSignaler\RpcHost`. Its stable UpgradeCode is
-`{A8D1F2A9-762B-4B2C-A5A3-451463D743B2}`. Product codes follow the existing WiX
-major-upgrade pattern. It never launches the host, registers sign-in startup,
-installs a service, signs in, or changes shared settings/SQLite/tunnel identity.
-Azure CLI, Dev Tunnels CLI and Windows App remain external prerequisites.
-
-Start the MSI as the intended original user, and approve its Windows Installer
-UAC request. Do not start it under a different administrator's profile.
-Silent servicing requires an already authorized elevated context for that same
-user; denial, unavailable elevation, or firewall-policy failure fails servicing.
-The build authoring step clears WiX 4's summary no-elevation bit while retaining
-absent `ALLUSERS`; the read-only MSI gate checks both properties. This is explicit
-per-user/elevated-firewall authoring, not runtime elevation.
-
-The required rule is enabled inbound TCP, **Private only**, scoped to the exact
-installed EXE and one receiver port. It never includes the RPC port, Public or
-Domain profiles, edge traversal, all programs, or all local ports. It is installed
-in both LAN and Internet-sharing modes. The rule is unnecessary while the receiver
-is loopback-only, but is provisioned for later LAN use; it cannot widen binding.
-
-`RECEIVERPORT` uses an explicit validated property first. On servicing, an existing
-MSI-owned port is preserved; on first installation, a valid `Port` from the
-installing user's default `dashboard-settings.json` is used, or 51820 only when
-that file is absent. Malformed settings require an explicit property. Ports must
-be 1024–65535 and differ from the configured RPC port (default 51821). No settings
-are written. For an authorized maintenance operation in a disposable environment:
-
-```powershell
-msiexec.exe /i AgentSignaler.RpcHost.msi RECEIVERPORT=51822
-```
-
-Servicing errors identify a fixed diagnostic stage and, for failed Windows COM
-calls, the HRESULT. Port guidance is shown only for `port-configuration` failures;
-do not change valid ports in response to an unrelated servicing failure. Preserve
-the verbose MSI log (`/L*v "<log path>"`). Diagnostics do not include raw exception
-text, user identities, paths, settings contents, or custom-action data.
-
-Capture of SID, default settings/data directory and installation path precedes
-elevation. Redirected LocalAppData and reparse-point installation paths are
-rejected rather than guessing an administrator's or aliased profile. Custom data
-directories and later runtime port changes never silently update the rule.
-RpcHost reports the recorded/effective port mismatch; rerun explicit MSI
-maintenance to change the owned rule. Metadata is not proof firewall policy permits
-traffic.
-For same-product `/i ... RECEIVERPORT=<port>` maintenance, the installer explicitly
-schedules `REINSTALL=Main` with registry rewrite mode `u` before costing (preserving
-any supplied repair modes). Merely changing a formatted registry value would leave
-an already-installed component untouched. This rewrites only the four installer-owned
-HKCU metadata entries, including the receiver-port mirror; Windows Installer rolls
-them back with the component transaction if maintenance fails. The native transaction
-independently restores the prior protected metadata/rule. No shared settings are reset,
-and the updater reads the committed mirror so later upgrades retain the maintained port.
-
-The embedded native MSI DLL is the sole elevated implementation; no per-user
-writable application EXE is used as a helper. The generic WiX firewall extension
-does not supply this protected per-user ownership/snapshot contract; the narrow
-native action implements rule validation and compensating rollback together
-instead of layering unchecked extension writes over it. The rule identity includes the
-product and user SID, with exact path/port/profile ownership. Protected HKLM
-metadata and a bounded transaction journal authorize replacement/removal;
-the firewall description uses semicolons because Windows rejects `|` in that
-field. Protected metadata and journal serialization retain their existing format.
-HKCU `Software\AgentSignaler\Installer\RpcHost` mirrors `UpgradeCode`,
-`InstallDirectory`, `UserSid`, and DWORD `ReceiverPort` for runtime diagnostics.
-Unexpected edits or duplicate/foreign rule names fail closed without overwriting
-Dashboard or foreign rules. Repair restores a missing proven-owned rule, upgrades
-replace it, uninstall removes only the proven-owned rule, and rollback restores
-the prior rule/metadata. Required cleanup errors are not success.
-
-Stop the **exact installed RpcHost in every Windows session** before install,
-repair, upgrade or uninstall. Servicing checks path/file identity, disables
-Restart Manager shutdown/restart, never sends unauthenticated TCP shutdown and
-never kills or restarts the host. A concurrent relaunch can still make Windows
-Installer's file replacement fail; keep it stopped until servicing completes.
-
-Standalone EXEs are manually managed and are never discovered/replaced by the
-updater. Administrators configure their LAN firewall rule manually, for the exact
-EXE and effective receiver TCP port on Private only; never open the RPC port.
-Use the [RPC protocol guide](..\docs\rpc-host-protocol.md) for launch and security
-details. Control is unauthenticated: any allowed localhost page or native client,
-including other local Windows users, can control the host.
-
-The single-file EXE bundles .NET/ASP.NET and SQLite. .NET extracts native libraries
-into its per-user bundle cache by default. `DOTNET_BUNDLE_EXTRACT_BASE_DIR` can
-select a private user-writable cache; do not use a shared/untrusted directory.
-Concurrent extraction uses the runtime's bundle identity/coordination, not an
-application-created global cache. Unwritable or invalid extraction paths cause
-startup failure rather than a missing-library fallback. Symbols are optional and
-not installed; the MSI includes the exact restored dependency license/notices.
-Bundle extraction happens in the .NET native bootstrapper before managed `Main`.
-An extraction failure therefore has no readiness record and may use SDK-native
-exit codes and stderr containing cache paths, rather than the managed host's
-documented exit-code/sanitized-diagnostic contract. Launchers must treat this as
-bootstrap failure and keep that stderr private; do not forward it as sanitized
-RPC diagnostics. The automated extraction test proves bounded failure, not
-normalization of pre-entrypoint runtime diagnostics.
 
 ### Detailed-conversation prototype deployment
 
@@ -205,8 +100,6 @@ Run in **non-elevated PowerShell 5.1 or later**, as the original installing user
 # Update only the remote package.
 .\scripts\Update-AgentSignaler.ps1 -Apps Remote
 
-# RpcHost upgrades preserve the MSI-owned receiver port and require MSI elevation.
-.\scripts\Update-AgentSignaler.ps1 -Apps RpcHost -WhatIf
 ```
 
 The updater uses the newest non-draft GitHub Release, **including prereleases**,
@@ -217,13 +110,21 @@ process-level `AGENT_SIGNALER_GITHUB_TOKEN`.
 Only existing current-user installations are updated; equal or older versions
 are skipped. Update Dashboard before migrating remote configuration, and keep
 Client, Configurator, and Relay on the same version.
-RpcHost participates by its distinct MSI upgrade identity, not by scanning
-standalone files. In-use identity failures are explicit, including in `-WhatIf`
-planning. Normal `-WhatIf` may download verified packages to a disposable staging
+Normal `-WhatIf` may download verified packages to a disposable staging
 directory and use the existing private-release credential lookup, but never starts
 application/servicing processes, invokes MSI/elevation, or changes installed
 products/firewall. The synthetic fixture gate does not access real inventory,
 credentials, downloads or user data and does not mutate its fixture.
+
+Before the first Dashboard/Remote-only update, refresh the repository to the
+matching release revision. Both `Update-AgentSignaler.ps1` and `UpdaterPolicy.ps1`
+must be refreshed: old copies reject the reduced checksum manifest even when
+only Remote is selected. The new updater rejects historical manifests with
+retired assets; use it only after the matching reduced release is published.
+If refreshing the scripts is not possible, manually install the signed Dashboard
+and Remote MSIs. See the [retirement release notes](..\docs\rpc-host-retirement.md)
+for manual removal and independent ownership-verified firewall cleanup; the
+updater does not perform retirement or update itself.
 
 Migrate configuration only after that coordinated upgrade: old Clients cannot
 read v5. Loading an old configuration must not silently enable detail. Repair and
@@ -285,11 +186,19 @@ To rerun checks:
 .\scripts\Test-Installers.ps1 -Version 1.0.19
 .\scripts\Test-DashboardBundle.ps1 -Version 1.0.19
 .\scripts\Test-PrerequisiteSecurity.ps1
-.\scripts\Build-RpcHostInstallerActions.ps1
-.\scripts\Test-RpcHostInstaller.ps1 -Version 1.0.19
-.\scripts\Test-RpcHostPublish.ps1 -Version 1.0.19
 .\scripts\Test-Updater.ps1
 ```
+
+Retirement validation (2026-09-30): fresh self-contained 1.0.20 Dashboard and
+Remote payloads were published with `-ApplicationMsisOnly -NoRestore`. The first
+MSI build reported missing WiX restore assets; rerunning with
+`-ApplicationMsisOnly -SkipPublish` restored only the installer projects and
+built both packages. Read-only inspection passed for Dashboard's 674 payload
+files and Remote's 532 payload files. Both builds reported `WIX1105`: system
+policy prevented ICE validation, so ICE is **not** claimed as passed. No
+installer, application listener, signing, upload, or firewall operation ran.
+Updater fixtures passed on PowerShell 5.1 and 7. Synthetic workflow catalog and
+release-staging checks excluded stale retired assets without deleting them.
 
 Bundle inputs are pinned in
 `AgentSignaler.Dashboard.Bundle\Prerequisites.props` and validated for signature,
@@ -300,13 +209,6 @@ Before shipping, resolve the Azure CLI blocker and test clean install, Apply,
 repair, upgrade, uninstall, and failed-servicing rollback in a disposable Windows
 11 x64 account/VM. Confirm unrelated integrations survive and owned integrations
 are cleaned up or restored correctly. These manual checks remain outstanding.
-RpcHost MSI ICE validation is disabled by explicit user decision after machine
-policy blocked it (`WIX1105`). Its WiX project suppresses build-time ICE validation,
-and its inspector no longer invokes ICE or requires it as a release gate. ICE was
-not run successfully and is not claimed as passed. All other RpcHost MSI
-identity, elevation, ownership, sequencing, decompile and full-payload checks
-remain required, as do the other automated and manual acceptance checks.
-Other installer projects' validation settings are unchanged.
 
 ### Transcript packaging inspection scope
 
@@ -351,8 +253,8 @@ skips the bundle/prerequisite build. The `az.cmd` versus required `az.exe` misma
 is an existing accepted-Azure **bundle installation** blocker, not evidence that
 application MSIs cannot be built. Fresh publish/build/ICE outcomes remain separate.
 
-The manual **Release MSIs** GitHub Actions workflow publishes all three
-application MSIs, the standalone RpcHost EXE and checksums. It runs on the
+The manual **Release MSIs** GitHub Actions workflow publishes the Dashboard and
+Remote application MSIs and checksums. It runs on the
 repository-scoped signing runner, signs first-party application binaries before
 WiX packages them, signs the resulting MSIs, and verifies the publisher before
 release creation. By default it selects the highest published release tag
@@ -370,18 +272,14 @@ provider used by the Artifact Signing action. The runner is repository-scoped
 and carries the `artifact-signing` label. Azure CLI state is isolated under the
 job's temporary directory and removed after signing.
 
-RpcHost's automatic gates compile the native MSI action, execute fake
-install/repair/upgrade/uninstall and failure/rollback transitions, run updater
-inventory/download/process fixtures and non-mutating `-WhatIf`, inspect MSI
-tables and extracted payload hashes read-only, and launch only the standalone
-EXE with synthetic isolated data. The EXE-only test performs actual RPC and native
-SQLite writes/reads across restart with an isolated extraction cache. CI/release
-also run Dashboard Core/RpcHost tests, TypeScript checking, Chromium contract tests,
-and dependency/privacy audits.
+Automated updater fixtures cover the reduced release asset set, retired-asset
+rejection, current-user inventory, hash/size, MSI identity/architecture/version,
+no-downgrade/no-op behavior, and non-mutating `-WhatIf`. CI/release also run the
+retained service, remote, integration, tunneling, and Dashboard Core tests plus
+dependency/privacy audits.
 
-**Not run - deferred release acceptance:** actual UAC approve/deny; silent
-insufficient privilege; real firewall creation/repair/port maintenance/removal and
-rollback; MSI install/upgrade/uninstall in a disposable Windows 11 VM; clean-image
-EXE execution without installed .NET/Windows App SDK. Fake/read-only checks do
+**Not run - deferred release acceptance:** MSI install/upgrade/uninstall and
+failed-servicing rollback in a disposable Windows 11 VM; clean-image application
+execution without installed .NET/Windows App SDK. Synthetic/read-only checks do
 not prove these live behaviors. Do not execute generated installers on a shared
 development workstation. Building these files never dispatches a release.

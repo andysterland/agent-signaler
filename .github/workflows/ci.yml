@@ -77,8 +77,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: unsigned-applications
+          if-no-files-found: error
           path: |
             artifacts/msi/AgentSignaler.Dashboard.msi
             artifacts/msi/AgentSignaler.Remote.msi
-            artifacts/msi/AgentSignaler.RpcHost.msi
-            artifacts/publish/rpchost/AgentSignaler.RpcHost.exe

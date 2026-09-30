@@ -57,7 +57,7 @@ internal static class Program
         }
         catch (DashboardOwnershipException)
         {
-            NativeWindow.ShowError("Dashboard or RpcHost already owns this data directory. Exit that process before starting Dashboard. " +
+            NativeWindow.ShowError("Another Dashboard already owns this data directory. Exit that process before starting Dashboard. " +
                 "Older Dashboard versions must be exited and upgraded before sharing state.");
             return 3;
         }

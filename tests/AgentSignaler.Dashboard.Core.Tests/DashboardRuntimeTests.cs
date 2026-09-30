@@ -159,7 +159,7 @@ public sealed class DashboardRuntimeTests
             Assert.True(runtime.Prerequisites.State.Single(item => item.Id == "AzureCli").Result!.Passed);
             Assert.False(PrerequisiteCheck.FromRuntimeResult(busy, RuntimePrerequisiteKind.AzureCli, @"C:\other\az.exe", _ => "Rejected").Passed);
         }
-        finally { runtime.CancelPrerequisites(); }
+        finally { runtime.CancelPrerequisites(RuntimePrerequisiteKind.DevCenterExtension); }
         Assert.Equal(1006, (await occupying).Error!.Code);
     }
 
@@ -312,7 +312,7 @@ public sealed class DashboardRuntimeTests
     }
 
     [Fact]
-    public async Task MachineStateAndRevisionsAreIndependentAndLegacyNotesAreChunkedWithoutRewrite()
+    public async Task MachineStateAndRevisionsAreIndependentAndLegacyNotesRemainUnmodified()
     {
         await using var fixture = new Fixture();
         await fixture.Runtime.InitializeAsync();
@@ -333,15 +333,15 @@ public sealed class DashboardRuntimeTests
         var legacy = new string('n', 40000);
         await runtime.Store!.UpdateDetailsAsync(firstId, "Legacy", legacy);
         await runtime.RefreshMachinesAsync();
-        var chunk = runtime.GetNote(firstId);
-        Assert.Equal(16384, chunk.State.Text.Length);
-        var next = runtime.GetNote(firstId, chunk.State.NextOffset!.Value, expectedRevision: chunk.Revision);
-        var last = runtime.GetNote(firstId, next.State.NextOffset!.Value, expectedRevision: chunk.Revision);
-        Assert.Equal(legacy, chunk.State.Text + next.State.Text + last.State.Text);
-        Assert.Null(last.State.NextOffset);
-        var invalid = await runtime.UpdateMachineAsync(firstId, "New", legacy + "x", runtime.HostInstanceId, chunk.Revision);
+        var current = runtime.GetMachine(firstId);
+        Assert.Equal(legacy, current.State.Machine.Note);
+        var renamed = await runtime.UpdateMachineAsync(firstId, "Renamed", legacy, runtime.HostInstanceId, current.Revision);
+        Assert.True(renamed.Succeeded);
+        Assert.Equal(legacy, renamed.Snapshot!.State.Machine.Note);
+        var invalid = await runtime.UpdateMachineAsync(firstId, "New", legacy + "x", runtime.HostInstanceId, renamed.Snapshot.Revision);
         Assert.Equal(1001, invalid.Error!.Code);
         Assert.Equal(legacy, runtime.GetMachine(firstId).State.Machine.Note);
+        Assert.Equal(legacy, (await runtime.Store.GetMachinesAsync()).Single(machine => machine.MachineId == firstId).Note);
     }
 
     [Fact]
@@ -394,14 +394,11 @@ public sealed class DashboardRuntimeTests
         Assert.Equal(25, page.State.Total);
         Assert.Null(page.State.NextOffset);
         Assert.Equal(page.State.Items.Select(item => item.Machine.MachineId).Order(), page.State.Items.Select(item => item.Machine.MachineId));
-        var pageSize = (sessions.Count + 1) / 2;
         foreach (var machine in page.State.Items)
         {
-            var first = runtime.GetSessions(machine.Machine.MachineId, limit: pageSize);
-            Assert.Equal(pageSize, first.State.NextOffset);
-            var second = runtime.GetSessions(machine.Machine.MachineId, pageSize, pageSize, first.Revision);
-            Assert.Equal(sessions.Count, first.State.Items.Count + second.State.Items.Count);
-            Assert.Null(second.State.NextOffset);
+            Assert.Equal(sessions.Count, machine.Sessions.Count);
+            Assert.Equal(sessions.Select(session => session.SessionId), machine.Sessions.Select(session => session.SessionId));
+            Assert.Equal(machine.Sessions, runtime.GetMachine(machine.Machine.MachineId).State.Sessions);
         }
         await Assert.ThrowsAsync<CapacityException>(() => runtime.Store!.AcceptAsync(template));
     }
@@ -447,26 +444,98 @@ public sealed class DashboardRuntimeTests
     }
 
     [Fact]
-    public async Task SettingsPersistSavedNotOverriddenValuesAndPreserveUnknownAndVisualFields()
+    public async Task SettingsPersistSavedValuesAndPreserveUnknownAndVisualFields()
     {
-        await using var fixture = new Fixture(new() { RpcPortOverride = 55001 }, """
-            {"Port":51820,"RpcPort":55002,"ConnectionMode":0,"AutoStartSharing":false,
+        await using var fixture = new Fixture(json: """
+            {"Port":51820,"ConnectionMode":0,"AutoStartSharing":false,
              "Theme":"Dark","Compact":false,"Future":{"untouched":[1,true,null]}}
             """);
         var runtime = fixture.Runtime;
         var snapshot = runtime.Settings;
-        Assert.Equal(55001, snapshot.State.Effective.RpcPort);
         var updated = await runtime.UpdateSettingsAsync(snapshot.State.Saved with { Port = 54001 },
             runtime.HostInstanceId, snapshot.Revision);
         Assert.True(updated.Succeeded);
-        Assert.Equal(["port", "rpcPort"], updated.Snapshot!.State.RestartRequired);
+        Assert.Equal(["port"], updated.Snapshot!.State.RestartRequired);
         Assert.Equal(51820, updated.Snapshot.State.Effective.Port);
         var saved = DashboardSettings.Load(fixture.Directory);
-        Assert.Equal(55002, saved.RpcPort);
+        Assert.Equal(54001, saved.Port);
         Assert.Equal("Dark", saved.Theme);
         Assert.False(saved.Compact);
         Assert.True(JsonElement.DeepEquals(snapshot.State.Saved.ExtensionData!["Future"], saved.ExtensionData!["Future"]));
         Assert.Equal(1004, (await runtime.UpdateSettingsAsync(saved, runtime.HostInstanceId, snapshot.Revision)).Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("55002", false)]
+    [InlineData("1023", false)]
+    [InlineData("65536", false)]
+    [InlineData("\"invalid\"", false)]
+    [InlineData("null", false)]
+    [InlineData("true", false)]
+    [InlineData("{}", false)]
+    [InlineData("[]", false)]
+    [InlineData("1e100", false)]
+    [InlineData("55002", true)]
+    [InlineData("65536", true)]
+    [InlineData("\"invalid\"", true)]
+    public async Task LegacyRpcPortDoesNotAffectStartupAndIsRemovedOnNextSuccessfulSave(string legacyValue, bool sharing)
+    {
+        var mode = sharing ? DashboardConnectionMode.DevTunnel : DashboardConnectionMode.Lan;
+        var json = $$$"""
+            {"RpcPort":{{{legacyValue}}},"Port":54001,"ConnectionMode":"{{{mode}}}","AutoStartSharing":false,
+             "ReceiveDetailedConversations":false,"Theme":"Dark","Future":{"untouched":[1,true,null]}}
+            """;
+        await using var fixture = new Fixture(new()
+        {
+            TunnelRunner = new FakeTunnelRunner(), TunnelHealthProbe = new FakeProbe()
+        }, json);
+        var runtime = fixture.Runtime;
+        var path = Path.Combine(fixture.Directory, "dashboard-settings.json");
+        Assert.False(runtime.Settings.State.Recovered);
+        Assert.Equal(54001, runtime.Settings.State.Effective.Port);
+        Assert.Equal(mode, runtime.Receiver.State.Mode);
+        Assert.Empty(runtime.Settings.State.RestartRequired);
+        await runtime.InitializeAsync();
+        Assert.Equal(RuntimeLifecycle.Operational, runtime.Status.State.Lifecycle);
+        Assert.Equal(sharing ? DashboardListenerMode.Internet : DashboardListenerMode.Lan, runtime.Server!.ListenerMode);
+        Assert.Equal(json, File.ReadAllText(path));
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        Assert.True((await client.GetAsync($"http://127.0.0.1:{runtime.Receiver.State.Port}/health")).IsSuccessStatusCode);
+        var updated = await runtime.UpdateSettingsAsync(runtime.Settings.State.Saved with { Compact = false },
+            runtime.HostInstanceId, runtime.Settings.Revision);
+        Assert.True(updated.Succeeded);
+        Assert.Empty(updated.Snapshot!.State.RestartRequired);
+        using var saved = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.False(saved.RootElement.TryGetProperty("RpcPort", out _));
+        Assert.Equal(54001, saved.RootElement.GetProperty("Port").GetInt32());
+        Assert.Equal("Dark", saved.RootElement.GetProperty("Theme").GetString());
+        Assert.False(saved.RootElement.GetProperty("Compact").GetBoolean());
+        Assert.True(JsonElement.DeepEquals(runtime.Settings.State.Saved.ExtensionData!["Future"],
+            saved.RootElement.GetProperty("Future")));
+        Assert.True((await runtime.ShutdownAsync()).Clean);
+    }
+
+    [Fact]
+    public async Task LegacyRpcPortRemainsOnDiskWhenSettingsSaveFails()
+    {
+        const string json = """{"RpcPort":"ignored","Theme":"Dark","AutoStartSharing":false}""";
+        await using var fixture = new Fixture(json: json);
+        var runtime = fixture.Runtime;
+        var path = Path.Combine(fixture.Directory, "dashboard-settings.json");
+        using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var result = await runtime.UpdateSettingsAsync(runtime.Settings.State.Saved with { Compact = false },
+                runtime.HostInstanceId, runtime.Settings.Revision);
+            Assert.False(result.Succeeded);
+            Assert.Equal(1008, result.Error!.Code);
+            Assert.Equal(0, runtime.Settings.Revision);
+            Assert.Equal(json, File.ReadAllText(path));
+            Assert.Empty(Directory.GetFiles(fixture.Directory, "*.new"));
+        }
+        Assert.True((await runtime.UpdateSettingsAsync(runtime.Settings.State.Saved,
+            runtime.HostInstanceId, runtime.Settings.Revision)).Succeeded);
+        using var saved = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.False(saved.RootElement.TryGetProperty("RpcPort", out _));
     }
 
     [Fact]
@@ -626,9 +695,13 @@ public sealed class DashboardRuntimeTests
         });
         var runtime = fixture.Runtime;
         var saved = runtime.Settings;
-        var result = await runtime.CheckAllPrerequisitesAsync(@"C:\Unsaved\az.exe", @"C:\Unsaved\devtunnel.exe");
-        Assert.True(result.Succeeded);
-        Assert.All(result.Snapshot!.State, item => Assert.Equal(PrerequisiteCheckState.Passed, item.State));
+        foreach (var kind in Enum.GetValues<RuntimePrerequisiteKind>())
+        {
+            var path = kind is RuntimePrerequisiteKind.AzureCli or RuntimePrerequisiteKind.DevCenterExtension
+                ? @"C:\Unsaved\az.exe" : kind == RuntimePrerequisiteKind.DevTunnel ? @"C:\Unsaved\devtunnel.exe" : null;
+            Assert.True((await runtime.CheckPrerequisiteAsync(kind, path)).Succeeded);
+        }
+        Assert.All(runtime.Prerequisites.State, item => Assert.Equal(PrerequisiteCheckState.Passed, item.State));
         Assert.Equal(2, paths.Count(path => path == @"C:\Unsaved\az.exe"));
         Assert.Contains(@"C:\Unsaved\devtunnel.exe", paths);
         Assert.Equal(saved, runtime.Settings);
@@ -654,32 +727,6 @@ public sealed class DashboardRuntimeTests
     }
 
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    [Fact]
-    public async Task DomainCancellationCancelsCheckAllIncludingItsNotYetAdmittedAzureExtension()
-    {
-        var entered = Signal();
-        var calls = new ConcurrentBag<RuntimePrerequisiteKind>();
-        await using var fixture = new Fixture(new()
-        {
-            Diagnostic = async (kind, _, token) =>
-            {
-                calls.Add(kind);
-                if (kind == RuntimePrerequisiteKind.AzureCli)
-                {
-                    entered.TrySetResult();
-                    await Task.Delay(Timeout.Infinite, token);
-                }
-                return new(true, "Synthetic passed.");
-            }
-        });
-        var pending = fixture.Runtime.CheckAllPrerequisitesAsync();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.Runtime.CancelPrerequisites();
-        var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(1006, result.Error!.Code);
-        Assert.DoesNotContain(RuntimePrerequisiteKind.DevCenterExtension, calls);
-    }
 
     [Fact]
     public async Task ReappearingMachineNeverReusesEarlierEntityRevisions()

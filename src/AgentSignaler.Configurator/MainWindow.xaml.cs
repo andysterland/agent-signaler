@@ -84,6 +84,10 @@ public sealed partial class MainWindow : Window
             else if (File.Exists(IntegrationRecoveryPath))
                 ShowStatus("An integration transaction needs recovery. Preserve its journal and backups, resolve conflicting user edits, then choose Recover interrupted integration transaction.",
                     InfoBarSeverity.Warning, "Integration recovery pending");
+            else if (await Task.Run(() => IntegrationManager.HasPendingUninstall(ConfigPath), windowLifetime.Token))
+                ShowStatus("An uninstall journal is still present. After Windows Installer has finished, use Review & maintenance > Complete finished uninstall. " +
+                    "Do not delete the journal manually or restore removed hooks.",
+                    InfoBarSeverity.Warning, "Uninstall completion pending");
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { ShowError(ex); }
         finally { SetBusy(false); }
@@ -423,7 +427,14 @@ public sealed partial class MainWindow : Window
         {
             if (!File.Exists(IntegrationRecoveryPath))
             {
-                ShowStatus("No pending integration transaction.", InfoBarSeverity.Informational);
+                if (await Task.Run(() => IntegrationManager.HasPendingUninstall(ConfigPath), windowLifetime.Token))
+                {
+                    ShowStatus("An uninstall journal is pending, not an interrupted settings change. After Windows Installer has finished, " +
+                        "choose Complete finished uninstall.", InfoBarSeverity.Warning);
+                    NavigateTo(ReviewTab, CompleteUninstallButton);
+                }
+                else
+                    ShowStatus("No pending integration transaction.", InfoBarSeverity.Informational);
                 return;
             }
             if (!await ConfirmAsync("Restore the interrupted owned integration transaction?",
@@ -453,6 +464,36 @@ public sealed partial class MainWindow : Window
             ShowStatus("Owned integration removed. Persistent machine UUID retained.", InfoBarSeverity.Success);
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { ShowError(ex, tab: ReviewTab, action: UninstallButton); }
+        finally { SetBusy(false); }
+    }
+
+    private async void CompleteUninstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (busy) return;
+        SetBusy(true);
+        InvalidatePreview();
+        try
+        {
+            if (!await Task.Run(() => IntegrationManager.HasPendingUninstall(ConfigPath), windowLifetime.Token))
+            {
+                ShowStatus("No pending uninstall journal.", InfoBarSeverity.Informational);
+                return;
+            }
+            var plan = await Task.Run(() => integration.PreviewCompletedUninstallRecovery(ConfigPath, windowLifetime.Token), windowLifetime.Token);
+            if (closed) return;
+            if (!await ConfirmAsync("Complete a finished uninstall?",
+                plan.Preview + "\n\nConfirm that Windows Installer has finished uninstalling, installing, or repairing Agent Signaler. " +
+                "Only verified completed-uninstall journals are cleared; recovery backups are retained. " +
+                "No hooks, settings, startup entries, or scheduled tasks are changed, and Client is not started.",
+                "Installer finished; complete cleanup")) return;
+            await Task.Run(() => integration.CompleteUninstallRecovery(plan, windowLifetime.Token), windowLifetime.Token);
+            ShowStatus("Completed-uninstall journal cleared. Review your selected integrations, then apply settings.",
+                InfoBarSeverity.Success);
+        }
+        catch (Exception ex) when (RemoteFailure.IsExpected(ex))
+        {
+            ShowError(ex, "Uninstall completion blocked", ReviewTab, CompleteUninstallButton);
+        }
         finally { SetBusy(false); }
     }
 
@@ -502,7 +543,8 @@ public sealed partial class MainWindow : Window
             TestButton.IsEnabled = StartClientButton.IsEnabled = state.CanUseConnection;
         StartClientAtSignInCheckBox.IsEnabled = state.CanUseConnection && startupPreferenceLoaded;
         RelayPathBox.IsEnabled = RefreshButton.IsEnabled = AddLocationButton.IsEnabled = HooksGrid.IsEnabled = PreviewButton.IsEnabled =
-            RecoverVerificationButton.IsEnabled = RecoverIntegrationButton.IsEnabled = UninstallButton.IsEnabled = state.CanChangeIntegration;
+            RecoverVerificationButton.IsEnabled = RecoverIntegrationButton.IsEnabled = CompleteUninstallButton.IsEnabled =
+            UninstallButton.IsEnabled = state.CanChangeIntegration;
         PreviewButton.IsEnabled &= startupPreferenceLoaded;
         ApplyButton.IsEnabled = state.CanApply && startupPreferenceLoaded;
         CancelDiscoveryButton.IsEnabled = state.CanCancelDiscovery;

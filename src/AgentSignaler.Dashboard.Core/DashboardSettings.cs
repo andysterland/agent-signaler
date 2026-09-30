@@ -10,7 +10,6 @@ internal sealed record DashboardSettings
     internal const int MaximumFileBytes = 1024 * 1024;
     private static readonly object writer = new();
     public int Port { get; init; } = 51820;
-    public int RpcPort { get; init; } = 51821;
     public bool Compact { get; init; } = true;
     public bool ShowCompactViewWhenMinimized { get; init; } = true;
     public string Theme { get; init; } = "System";
@@ -35,7 +34,7 @@ internal sealed record DashboardSettings
     public static string DatabasePath => Path.Combine(DataDirectory, "dashboard.db");
 
     public static DashboardSettings Load() => Load(DataDirectory);
-    internal static DashboardSettings Load(string directory, bool rejectInvalidPorts = false)
+    internal static DashboardSettings Load(string directory)
     {
         var path = Path.Combine(directory, "dashboard-settings.json");
         try
@@ -51,28 +50,27 @@ internal sealed record DashboardSettings
                 bytes.Write(buffer, 0, read);
             }
             var json = new UTF8Encoding(false, true).GetString(bytes.GetBuffer(), 0, (int)bytes.Length);
-            return FromJson(json.TrimStart('\uFEFF'), rejectInvalidPorts);
+            return FromJson(json.TrimStart('\uFEFF'));
         }
         catch (FileNotFoundException) { return new(); }
         catch (DirectoryNotFoundException) { return new(); }
     }
 
-    internal static DashboardSettings FromJson(string json, bool rejectInvalidPorts = false)
+    internal static DashboardSettings FromJson(string json)
     {
         if (Encoding.UTF8.GetByteCount(json) > MaximumFileBytes) throw new InvalidDataException("Settings exceed the file limit.");
         using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
         ValidateJson(document.RootElement);
         if (document.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Invalid settings.");
-        if (rejectInvalidPorts)
-            foreach (var name in new[] { "Port", "RpcPort" })
-                if (document.RootElement.TryGetProperty(name, out var port) &&
-                    (port.ValueKind != JsonValueKind.Number || !port.TryGetInt32(out var value) || value is < 1024 or > 65535))
-                    throw new ArgumentException("Invalid configured listener port.");
         var settings = document.RootElement.Deserialize<DashboardSettings>() ?? throw new InvalidDataException("Empty settings.");
         Validate(settings);
-        return settings with { ExtensionData = settings.ExtensionData is null ? null :
-            new SettingsExtensionData(settings.ExtensionData.ToDictionary(p => p.Key, p => p.Value.Clone())) };
+        return settings with { ExtensionData = PreserveExtensionData(settings.ExtensionData) };
     }
+
+    // Ignore only the retired top-level setting; retain all unrelated extension data.
+    private static SettingsExtensionData? PreserveExtensionData(IDictionary<string, JsonElement>? values) =>
+        values is null ? null : new(values.Where(p => p.Key != "RpcPort")
+            .ToDictionary(p => p.Key, p => p.Value.Clone()));
 
     internal sealed class SettingsExtensionData(IDictionary<string, JsonElement> values) : ReadOnlyDictionary<string, JsonElement>(values)
     {
@@ -99,7 +97,7 @@ internal sealed record DashboardSettings
 
     internal static void Validate(DashboardSettings settings)
     {
-        if (settings.Port is < 1024 or > 65535 || settings.RpcPort is < 1024 or > 65535 ||
+        if (settings.Port is < 1024 or > 65535 ||
             settings.Theme is not ("System" or "Light" or "Dark") || !Enum.IsDefined(settings.ConnectionMode) ||
             settings.AzureCliPath is { Length: > 32768 } || settings.DevTunnelCliPath is { Length: > 32768 } ||
             (settings.DevTunnelCliPath is { Length: > 0 } path &&
@@ -129,7 +127,8 @@ internal sealed record DashboardSettings
     internal void Save(string directory)
     {
         Validate(this);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(this, new JsonSerializerOptions { WriteIndented = true });
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(this with { ExtensionData = PreserveExtensionData(ExtensionData) },
+            new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > MaximumFileBytes) throw new InvalidDataException("Settings exceed the file limit.");
         _ = FromJson(Encoding.UTF8.GetString(bytes));
         lock (writer)

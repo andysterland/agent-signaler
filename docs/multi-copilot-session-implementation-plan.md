@@ -132,7 +132,7 @@ guess from the current state or assign the machine's latest event to every row.
 Render application-defined event labels and relative/absolute timestamps.
 Reuse or extract event formatting from `MachineCardPresentation.Activity`.
 No raw payloads, tool arguments, prompts, responses, or transcript excerpts
-are added to status storage, logging, list rows, tooltips, or RPC.
+are added to status storage, logging, list rows, or tooltips.
 
 ## Implementation sequence
 
@@ -185,7 +185,7 @@ No new installer resources, startup registrations, firewall rules, or integratio
 configuration rewrites are expected. Package compatible producer/receiver
 versions and document receiver-first upgrade and rollback requirements.
 
-### 3. Shared runtime and RPC
+### 3. Shared Dashboard runtime
 
 Use `Dashboard.Core\RuntimeContracts.cs` and
 `DashboardRuntime.Machines.cs` to provide one immutable session presentation
@@ -198,12 +198,9 @@ A session change must invalidate the machine/session revision even if the
 aggregate machine state remains Waiting. Review existing structural equality
 and revision-checked pagination so a resumed B is visible while A still waits.
 
-Audit `RpcHost\RuntimeRpcApplication.cs` and the explicit `RpcSession` DTO.
-Existing session-state results must reflect shared waiting semantics. The new
-dashboard event field does not require widening RPC v1: retain its existing DTO
-allowlist unless a separately versioned API addition is deliberately introduced.
-Never serialize internal session models or transcript contents wholesale.
-Preserve independent runtime domain revisions and loopback-only RPC policy.
+Preserve independent runtime domain revisions and the Dashboard's shared waiting
+semantics. Keep the session presentation metadata-only; never serialize transcript
+contents wholesale.
 
 ### 4. Copilots tab and transcript drill-in
 
@@ -276,7 +273,7 @@ color or tiny pointer targets.
 | Lifecycle | Session-end affects only its owner; retained transcripts do not imply connected status; Client Exit and deadline show Offline; new generation does not resurrect prior waits; retry within a run preserves them. |
 | Bounds | 0, 1, 10, 11, and 64 sessions; 65th admission; maximum-length source/session fields; byte-bound pressure; quiet waiter cannot be evicted by busy peers; replay after retirement. |
 | Compatibility | Legacy status/presence and stored snapshots; enriched-version negotiation; strict unknown/duplicate-property rejection; source-safe incompatibility; upgrade and supported rollback. |
-| Runtime/RPC | B's status/event changes while aggregate Waiting is unchanged; session revision advances; stale pagination is rejected; DTO privacy boundary remains intact. |
+| Dashboard runtime | B's status/event changes while aggregate Waiting is unchanged; session revision advances; stale pagination is rejected; session presentation remains metadata-only. |
 | Details | Copilots replaces Transcript tab; distinct event labels/times; status-only operation with transcripts disabled; correct source/session/stream drill-in; Back restores selection; retained-ended access; clear/expiry/removal cancels reads and clears text. |
 | Compact | One square per active session; matching colors/stable order; complete wrapping at capacity; no clipping; empty/offline behavior; keyboard/screen-reader summaries; DPI and small-work-area layout. |
 
@@ -286,7 +283,7 @@ Extend existing suites rather than adding a new runner:
   transcript/store/endpoint cases.
 - Remote: `RemoteTests`, `ClientRuntimeTests`, `ClientDeliveryOrderingTests`,
   `ClientIpcTests`, `SourceTransportTests`, and source-adapter/verification cases.
-- Dashboard.Core/RpcHost: `DashboardRuntimeTests` and `RpcRuntimeTests`.
+- Dashboard.Core: `DashboardRuntimeTests` and `SessionPresentationTests`.
 - Integration: `MachineCardPresentationTests`, `MachineCardAppearanceTests`,
   `TranscriptViewControllerTests`, `TranscriptDetailsSourceTests`, and
   `TranscriptEndToEndTests`; add focused session-list/indicator-layout tests

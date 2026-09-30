@@ -106,7 +106,7 @@ public sealed class SessionPresentationTests
     }
 
     [Fact]
-    public async Task SessionOnlyChangesAdvanceRevisionAndRejectStalePaginationWithoutStartingReceiver()
+    public async Task SessionOnlyChangesAdvanceMachineRevisionWithoutStartingReceiver()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSignaler-session-runtime-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -119,9 +119,9 @@ public sealed class SessionPresentationTests
             var b = Session("b", null, AgentEvent.UserPromptSubmitted);
             var machine = Machine(id, [b, a]);
             runtime.PublishMachines([machine]);
-            var before = runtime.GetSessions(id, limit: 1);
+            var before = runtime.GetMachine(id);
             var settingsRevision = runtime.Settings.Revision;
-            Assert.Equal("a", before.State.Items[0].SessionId);
+            Assert.Equal("a", before.State.Sessions[0].SessionId);
             runtime.PublishMachines([machine with { Sessions = [a, b] }]);
             Assert.Equal(before.Revision, runtime.GetMachine(id).Revision);
             b = StateReducer.Apply(b, b.SessionId, AgentEvent.PostToolUse,
@@ -131,11 +131,9 @@ public sealed class SessionPresentationTests
             Assert.True(after.Revision > before.Revision);
             Assert.Equal(AgentState.Waiting, after.State.Machine.State);
             Assert.Equal(settingsRevision, runtime.Settings.Revision);
-            Assert.Equal(1004, Assert.Throws<RuntimeCommandException>(() =>
-                runtime.GetSessions(id, 1, 1, before.Revision)).Error.Code);
-            var next = runtime.GetSessions(id, 1, 1, after.Revision);
-            Assert.Equal(AgentEvent.PostToolUse, next.State.Items[0].LatestEvent);
-            Assert.Equal(Now.AddSeconds(1), next.State.Items[0].LatestEventAtUtc);
+            Assert.Equal(AgentEvent.PostToolUse, after.State.Sessions[1].LatestEvent);
+            Assert.Equal(Now.AddSeconds(1), after.State.Sessions[1].LatestEventAtUtc);
+            Assert.Equal(AgentEvent.UserPromptSubmitted, before.State.Sessions[1].LatestEvent);
             Assert.Null(runtime.Server);
             runtime.PublishMachines([]);
             Assert.Equal(1002, Assert.Throws<RuntimeCommandException>(() => runtime.GetMachine(id)).Error.Code);

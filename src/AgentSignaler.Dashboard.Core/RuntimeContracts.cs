@@ -40,14 +40,10 @@ public sealed record RuntimeSession(SessionSnapshot Snapshot, AgentState State)
         IsOffline ? "Offline (last known)" : "Connected (observed)";
 }
 public sealed record RuntimeMachine(MachineView Machine, IReadOnlyList<RuntimeSession> Sessions);
-public sealed record RuntimeNote(string Text, int TotalLength, int? NextOffset);
 internal sealed record RuntimeSettings(DashboardSettings Saved, DashboardSettings Effective,
-    bool RpcPortOverridden, IReadOnlyList<string> RestartRequired, bool Recovered);
+    IReadOnlyList<string> RestartRequired, bool Recovered);
 internal sealed record RuntimeReceiver(bool Running, int Port, DashboardConnectionMode Mode,
-    bool ReceiveDetailedConversations, int? InstalledReceiverPort = null)
-{
-    public bool FirewallPortMismatch => InstalledReceiverPort is { } installed && installed != Port;
-}
+    bool ReceiveDetailedConversations);
 internal sealed record RuntimePrerequisite(string Id, string? TestedPath, PrerequisiteCheckState State,
     PrerequisiteDiagnosticResult? Result);
 internal enum RuntimeSharingOperation { Start, Stop, Delete, Logout }
@@ -55,10 +51,7 @@ internal enum RuntimePrerequisiteKind { AzureCli, DevCenterExtension, DevTunnel,
 
 public sealed record DashboardRuntimeOptions
 {
-    public int? RpcPortOverride { get; init; }
-    public bool RejectInvalidSavedPorts { get; init; }
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
-    public int? InstalledReceiverPort { get; init; }
     internal int? ReceiverPortOverride { get; init; }
     internal IAzureCliProcess? AzureCli { get; init; }
     internal IDevBoxCatalogService? CatalogService { get; init; }
@@ -78,7 +71,6 @@ internal sealed class RuntimeDomain<T>(Guid host, string name, T initial, Action
     private readonly object sync = new();
     private DomainSnapshot<T> snapshot = new(host, name, initialRevision, initial);
     public DomainSnapshot<T> Read() { lock (sync) return snapshot; }
-    public TResult Read<TResult>(Func<DomainSnapshot<T>, TResult> read) { lock (sync) return read(snapshot); }
     public DomainSnapshot<T> Publish(T state, bool stale = false, bool force = false)
     {
         DomainSnapshot<T> next;

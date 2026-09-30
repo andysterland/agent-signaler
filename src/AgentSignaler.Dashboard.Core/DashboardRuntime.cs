@@ -9,7 +9,7 @@ using Microsoft.Data.Sqlite;
 
 namespace AgentSignaler.Dashboard;
 
-/// <summary>Shared resource owner for WinUI and RPC; it borrows the entry point's process lease.</summary>
+/// <summary>Dashboard resource owner; it borrows the entry point's process lease.</summary>
 public sealed partial class DashboardRuntime : IAsyncDisposable
 {
     private readonly DashboardResourceLease lease;
@@ -48,7 +48,6 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
     private sealed class CommitTracker { public RuntimeCommitState State; }
     public Guid HostInstanceId { get; } = Guid.NewGuid();
     public event Action<RuntimeInvalidation>? Changed;
-    public event Action<RuntimeStatus>? Ready;
     public event Action<RuntimeError>? Problem;
     public event Action? ConnectionTestReceived;
     public DomainSnapshot<RuntimeStatus> Status => status.Read();
@@ -68,10 +67,9 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
         this.lease = lease ?? throw new ArgumentNullException(nameof(lease));
         if (!lease.IsHeld) throw new DashboardOwnershipException();
         this.options = options ?? new();
-        if (this.options.RpcPortOverride is < 1024 or > 65535) throw new ArgumentException("Invalid RPC port.");
         DashboardSettings saved;
         var recovered = false;
-        try { saved = DashboardSettings.Load(lease.CanonicalDirectory, this.options.RejectInvalidSavedPorts); }
+        try { saved = DashboardSettings.Load(lease.CanonicalDirectory); }
         catch (Exception error) when (IsPersistenceFailure(error) || error is System.Text.DecoderFallbackException)
         {
             saved = DashboardSettings.RecoveryDefaults;
@@ -79,14 +77,13 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
         }
         var effective = saved with
         {
-            RpcPort = this.options.RpcPortOverride ?? saved.RpcPort,
             AzureCliPath = AzureCliInstallation.ResolvePath(saved.AzureCliPath),
             DevTunnelCliPath = string.IsNullOrWhiteSpace(saved.DevTunnelCliPath) ? CliTunnelController.DefaultCliPath : saved.DevTunnelCliPath
         };
-        settings = new(HostInstanceId, "settings", new(saved, effective, this.options.RpcPortOverride.HasValue, [], recovered), Publish);
+        settings = new(HostInstanceId, "settings", new(saved, effective, [], recovered), Publish);
         status = new(HostInstanceId, "system", new(RuntimeLifecycle.TransportReady, "transportReady", false, false, false, false), Publish);
         receiver = new(HostInstanceId, "receiver", new(false, this.options.ReceiverPortOverride ?? effective.Port,
-            effective.ConnectionMode, effective.ReceiveDetailedConversations, this.options.InstalledReceiverPort), Publish);
+            effective.ConnectionMode, effective.ReceiveDetailedConversations), Publish);
         sharing = new(HostInstanceId, "sharing", new(TunnelState.Stopped, "Sharing is stopped."), Publish);
         catalog = new(HostInstanceId, "devboxes", new(null, false, "Not refreshed", "Catalog has not been refreshed."), Publish);
         prerequisites = new(HostInstanceId, "prerequisites", Array.AsReadOnly(Enum.GetValues<RuntimePrerequisiteKind>()
@@ -202,7 +199,6 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
                         ? RuntimeLifecycle.Degraded : RuntimeLifecycle.Operational,
                     Stage = current.Lifecycle == RuntimeLifecycle.Degraded ? current.Stage : "ready"
                 });
-                Ready?.Invoke(Status.State);
             }
         }
     }

@@ -9,8 +9,8 @@ Updates the current user's installed Agent Signaler apps from the latest GitHub 
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [ValidateSet('Dashboard', 'Remote', 'RpcHost')]
-    [string[]] $Apps = @('Dashboard', 'Remote', 'RpcHost'),
+    [ValidateSet('Dashboard', 'Remote')]
+    [string[]] $Apps = @('Dashboard', 'Remote'),
     [Parameter(DontShow = $true)]
     [string] $FixturePath
 )
@@ -33,7 +33,6 @@ if (-not [Environment]::Is64BitOperatingSystem -or
 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 try {
-    $installingUserSid = $identity.User.Value
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     if ($identity.IsSystem -or $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'Run this script from a non-elevated PowerShell as the Windows user who installed the apps.'
@@ -273,65 +272,7 @@ function Stop-OwnedRemoteClient {
     finally { $process.Dispose() }
 }
 
-function Assert-RpcHostProcessInventory([string] $Directory) {
-    if ($null -eq ('AgentSignalerUpdater.FileIdentity' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-namespace AgentSignalerUpdater {
-    public static class FileIdentity {
-        [StructLayout(LayoutKind.Sequential)]
-        private struct Info {
-            public uint Attributes;
-            public System.Runtime.InteropServices.ComTypes.FILETIME Created, Accessed, Written;
-            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
-        }
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
-            IntPtr security, uint disposition, uint flags, IntPtr template);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out Info info);
-        public static bool Same(string a, string b) {
-            using (var first = CreateFile(a, 0x80, 7, IntPtr.Zero, 3, 0, IntPtr.Zero))
-            using (var second = CreateFile(b, 0x80, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
-                Info x, y;
-                if (first.IsInvalid || second.IsInvalid ||
-                    !GetFileInformationByHandle(first, out x) || !GetFileInformationByHandle(second, out y))
-                    return false;
-                return x.Volume == y.Volume && x.IndexHigh == y.IndexHigh && x.IndexLow == y.IndexLow;
-            }
-        }
-    }
-}
-'@
-    }
-    $exe = Join-Path $Directory 'AgentSignaler.RpcHost.exe'
-    $processes = @(
-        foreach ($process in Get-Process) {
-            try {
-                $path = $null
-                try { $path = $process.Path }
-                catch [System.ComponentModel.Win32Exception] { }
-                catch [System.InvalidOperationException] { }
-                [pscustomobject]@{
-                    Name = $process.ProcessName
-                    Path = $path
-                    IdentityAvailable = -not [string]::IsNullOrWhiteSpace($path)
-                    SameFile = -not [string]::IsNullOrWhiteSpace($path) -and [AgentSignalerUpdater.FileIdentity]::Same($path, $exe)
-                }
-            }
-            finally { $process.Dispose() }
-        }
-    )
-    Assert-AgentSignalerRpcHostNotInUse $Directory $processes
-}
-
-$upgradeCodes = @{
-    Dashboard = '{D67CE744-C442-473A-B751-CA70D3CBCA4D}'
-    Remote = '{BFA03A34-37C9-4149-9789-9A68EC2A9C3A}'
-    RpcHost = '{A8D1F2A9-762B-4B2C-A5A3-451463D743B2}'
-}
+$upgradeCodes = $script:AgentSignalerUpgradeCodes
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $staging = $null
 $exitCode = 0
@@ -339,6 +280,7 @@ try {
     $releaseInfo = Get-LatestGitHubRelease
     $release = $releaseInfo.Release
     $assets = @($release.assets)
+    Assert-AgentSignalerReleaseAssets $assets
     $checksumAsset = Get-AgentSignalerReleaseAsset $assets 'SHA256SUMS.txt'
     $updateRoot = Join-Path $env:LOCALAPPDATA 'AgentSignaler\Updates'
     $runId = [guid]::NewGuid().ToString('N')
@@ -369,20 +311,12 @@ try {
                 Write-Host "$app installed: $installed; available: $($package.Version). No upgrade needed."
                 continue
             }
-            $receiverPort = $null
-            if ($app -eq 'RpcHost') {
-                $metadata = Get-ItemProperty -LiteralPath 'HKCU:\Software\AgentSignaler\Installer\RpcHost'
-                $directory = Assert-AgentSignalerRpcHostInventory $metadata $installingUserSid $env:LOCALAPPDATA
-                Assert-RpcHostProcessInventory $directory
-                $receiverPort = [int]$metadata.ReceiverPort
-            }
             [pscustomobject]@{
                 App = $app
                 Installed = $installed
                 Package = $package
                 Source = $source
                 Staged = $null
-                ReceiverPort = $receiverPort
             }
         }
     )
@@ -428,8 +362,7 @@ try {
         if ($approved.App -contains 'Remote') { Stop-OwnedRemoteClient }
 
         foreach ($item in $approved) {
-            # Keep the verified download pinned against replacement through the
-            # Windows Installer elevation handoff and the complete servicing run.
+            # Keep the verified download pinned against replacement throughout servicing.
             $pin = [IO.File]::Open($item.Staged, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
             try {
                 if ((Get-Sha256 $item.Staged) -cne $checksums["AgentSignaler.$($item.App).msi"]) {
@@ -442,11 +375,6 @@ try {
                 $log = Join-Path $logRoot "$runId-$($item.App).log"
                 Write-Host "Updating $($item.App) to $($item.Package.Version). Log: $log"
                 $arguments = "/i `"$($item.Staged)`" /passive /norestart /L*v `"$log`" REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=Disable"
-                if ($item.App -eq 'RpcHost') {
-                    Assert-RpcHostProcessInventory (Join-Path $env:LOCALAPPDATA 'Programs\AgentSignaler\RpcHost')
-                    $arguments += " RECEIVERPORT=$($item.ReceiverPort) MSIDISABLERMRESTART=1"
-                    Write-Warning 'RpcHost requires Windows Installer elevation for its mandatory Private receiver rule. Denial or firewall failure fails servicing; no updater firewall helper is used.'
-                }
                 $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" `
                     -ArgumentList $arguments -Wait -PassThru
                 try {

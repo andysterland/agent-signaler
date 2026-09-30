@@ -30,21 +30,64 @@ public sealed class OwnershipAndSettingsTests
     }
 
     [Theory]
-    [InlineData("""{"RpcPort":1023}""")]
-    [InlineData("""{"RpcPort":65536}""")]
+    [InlineData("""{"Port":1023}""")]
+    [InlineData("""{"Port":65536}""")]
     [InlineData("""{"Port":51820,"Port":51821}""")]
     [InlineData("""{"Future":{"x":1,"x":2}}""")]
+    [InlineData("""{"RpcPort":51821,"RpcPort":"ignored"}""")]
+    [InlineData("""{"RpcPort":{"x":1,"x":2}}""")]
+    [InlineData("""{"RpcPort":"ignored","Port":1023}""")]
+    [InlineData("""{"RpcPort":null,"Theme":"invalid"}""")]
     public void InvalidPortsAndDuplicatePropertiesAreRejected(string json) =>
         Assert.Throws<InvalidDataException>(() => DashboardSettings.FromJson(json));
 
     [Theory]
     [InlineData(1024)]
     [InlineData(65535)]
-    public void ExactPortBoundariesAndOlderDashboardReceiverCollisionsRemainValid(int port)
+    public void ExactReceiverPortBoundariesRemainValid(int port)
     {
-        Assert.Equal(port, DashboardSettings.FromJson($"{{\"RpcPort\":{port}}}").RpcPort);
+        Assert.Equal(port, DashboardSettings.FromJson($"{{\"Port\":{port}}}").Port);
         Assert.Equal(51821, DashboardSettings.FromJson("""{"Port":51821}""").Port);
-        Assert.Equal(51821, DashboardSettings.FromJson("{}").RpcPort);
+        Assert.Equal(51820, DashboardSettings.FromJson("{}").Port);
+    }
+
+    [Fact]
+    public void LegacyRpcPortMigrationPreservesNestedAndCaseVariantExtensionFields()
+    {
+        const string json = """
+            {"RpcPort":"ignored","rpcPort":65536,"Future":{"RpcPort":true,"untouched":[1,null,"value"]},
+             "Theme":"Dark","Port":54001,"ReceiveDetailedConversations":false}
+            """;
+        var settings = DashboardSettings.FromJson(json);
+        Assert.Equal("Dark", settings.Theme);
+        Assert.Equal(54001, settings.Port);
+        Assert.False(settings.ReceiveDetailedConversations);
+        Assert.False(settings.ExtensionData!.ContainsKey("RpcPort"));
+        using var original = JsonDocument.Parse(json);
+        using var saved = JsonDocument.Parse(JsonSerializer.Serialize(settings));
+        Assert.False(saved.RootElement.TryGetProperty("RpcPort", out _));
+        Assert.Equal(65536, saved.RootElement.GetProperty("rpcPort").GetInt32());
+        Assert.True(JsonElement.DeepEquals(original.RootElement.GetProperty("Future"), saved.RootElement.GetProperty("Future")));
+    }
+
+    [Fact]
+    public void SettingsSaveRemovesOnlyTopLevelLegacyRpcPortFromExtensionData()
+    {
+        var path = Path.GetFullPath(Path.Combine("test-artifacts", $"legacy-settings-{Guid.NewGuid():N}"));
+        try
+        {
+            using var document = JsonDocument.Parse("""{"RpcPort":{"ignored":true},"Future":{"RpcPort":42}}""");
+            var settings = new DashboardSettings
+            {
+                ExtensionData = document.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone())
+            };
+            settings.Save(path);
+            using var saved = JsonDocument.Parse(File.ReadAllText(Path.Combine(path, "dashboard-settings.json")));
+            Assert.False(saved.RootElement.TryGetProperty("RpcPort", out _));
+            Assert.Equal(42, saved.RootElement.GetProperty("Future").GetProperty("RpcPort").GetInt32());
+            Assert.Single(Directory.GetFiles(path));
+        }
+        finally { Directory.Delete(path, true); }
     }
 
     [Fact]
@@ -135,9 +178,11 @@ public sealed class OwnershipAndSettingsTests
 
     [Theory]
     [InlineData("""{"Port":1023}""")]
-    [InlineData("""{"RpcPort":65536}""")]
-    [InlineData("""{"RpcPort":"51821"}""")]
-    public async Task RpcStartupDistinguishesInvalidConfiguredPortsFromRecoverableSettings(string json)
+    [InlineData("""{"Port":"51820","RpcPort":51821}""")]
+    [InlineData("""{"Port":65536,"RpcPort":"ignored"}""")]
+    [InlineData("""{"Theme":"invalid"}""")]
+    [InlineData("{")]
+    public async Task InvalidKnownSettingsUseRecoveryDefaultsWithoutRewriting(string json)
     {
         var path = Path.GetFullPath(Path.Combine("test-artifacts", $"ports-{Guid.NewGuid():N}"));
         Directory.CreateDirectory(path);
@@ -145,12 +190,12 @@ public sealed class OwnershipAndSettingsTests
         {
             File.WriteAllText(Path.Combine(path, "dashboard-settings.json"), json);
             using var lease = DashboardResourceLease.Acquire(path, path);
-            Assert.Throws<ArgumentException>(() => new DashboardRuntime(lease, new() { RejectInvalidSavedPorts = true }));
-            File.WriteAllText(Path.Combine(path, "dashboard-settings.json"), "{");
-            var recovered = new DashboardRuntime(lease, new() { RejectInvalidSavedPorts = true });
+            await using var recovered = new DashboardRuntime(lease);
             Assert.True(recovered.Settings.State.Recovered);
             Assert.False(recovered.Settings.State.Saved.AutoStartSharing);
+            Assert.False(recovered.Settings.State.Saved.ReceiveDetailedConversations);
             Assert.True((await recovered.ShutdownAsync()).Clean);
+            Assert.Equal(json, File.ReadAllText(Path.Combine(path, "dashboard-settings.json")));
             Assert.False(File.Exists(Path.Combine(path, "dashboard.db")));
         }
         finally { Directory.Delete(path, true); }

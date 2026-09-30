@@ -11,7 +11,7 @@ namespace AgentSignaler.Dashboard;
 public sealed class DashboardOwnershipException : IOException
 {
     public DashboardOwnershipException() : base(
-        "The Dashboard data directory is already owned. Exit Dashboard or RpcHost, and upgrade older Dashboard versions before retrying.") { }
+        "The Dashboard data directory is already owned. Exit Dashboard, and upgrade older Dashboard versions before retrying.") { }
 }
 
 /// <summary>A process-owned, cross-session lease. Runtimes borrow this handle and never release it.</summary>

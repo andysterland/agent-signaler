@@ -354,6 +354,12 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
     {
         var manifest = IntegrationManager.ReadManifest(path);
         if (manifest is null) return null;
+        ValidateManifest(manifest, path, configPath);
+        return manifest;
+    }
+
+    internal static void ValidateManifest(IntegrationManifest manifest, string path, string configPath)
+    {
         if (manifest.Version is not (1 or 2) || manifest.MachineId == Guid.Empty)
             throw new InvalidDataException("Unsupported ownership manifest.");
         IntegrationManager.ValidateStartupManifest(manifest, configPath);
@@ -369,7 +375,6 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
                     a.OriginalBytes?.Length > 1048576)) ||
                 Same(a.Path, configPath) || Same(a.Path, path)))
             throw new InvalidDataException("Invalid artifact ownership collection.");
-        return manifest;
     }
 
     internal static string Canonical(string path)
@@ -400,17 +405,22 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
     private static void EnsureNoPending(string configPath)
     {
         var directory = Path.GetDirectoryName(configPath)!;
+        if (IntegrationManager.HasPendingUninstall(configPath))
+            throw new InvalidOperationException("An integration uninstall journal is pending. After Windows Installer has finished successfully, " +
+                "use Review & maintenance > Complete finished uninstall. Resolve any pending installer rollback or other integration recovery first.");
         if (HookVerification.HasPendingCleanup(configPath) || File.Exists(RecoveryPath(configPath)) || (Directory.Exists(directory) &&
-            (Directory.EnumerateFiles(directory, "integration-uninstall*.json").Any() ||
-             Directory.EnumerateFiles(directory, "heartbeat-migration-*.json").Any())))
+            Directory.EnumerateFiles(directory, "heartbeat-migration-*.json").Any()))
             throw new InvalidOperationException("Integration recovery or installer servicing is pending. Recover/complete it before creating a preview.");
     }
 
-    private static void CheckFiles(IEnumerable<IntegrationFileChange> changes, bool before = true)
+    private static void CheckFiles(IEnumerable<IntegrationFileChange> changes, bool before = true, CancellationToken token = default)
     {
         foreach (var change in changes)
+        {
+            token.ThrowIfCancellationRequested();
             if (!Equal(Read(Canonical(change.Path)), before ? change.Before : change.After))
                 throw new InvalidDataException($"File changed since preview: {change.Path}. Create a new preview; no concurrent edits will be overwritten.");
+        }
     }
 
     private static bool IsTranscriptPreferenceOnly(MultiTargetIntegrationPlan plan)

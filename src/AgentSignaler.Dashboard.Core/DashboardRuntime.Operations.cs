@@ -72,8 +72,7 @@ public sealed partial class DashboardRuntime
             if ((string.IsNullOrWhiteSpace(next.DevTunnelCliPath) ? CliTunnelController.DefaultCliPath : next.DevTunnelCliPath) != effective.DevTunnelCliPath)
                 restart.Add("devTunnelCliPath");
             if (AzureCliInstallation.ResolvePath(next.AzureCliPath) != effective.AzureCliPath) restart.Add("azureCliPath");
-            if (next.RpcPort != effective.RpcPort) restart.Add("rpcPort");
-            settings.Publish(new(next, effective, current.RpcPortOverridden, restart.AsReadOnly(), false));
+            settings.Publish(new(next, effective, restart.AsReadOnly(), false));
             server?.Transcripts.SetEnabled(Settings.State.Effective.ReceiveDetailedConversations);
             receiver.Publish(Receiver.State with { ReceiveDetailedConversations = Settings.State.Effective.ReceiveDetailedConversations });
             UpdateTranscriptReadiness();
@@ -385,28 +384,6 @@ public sealed partial class DashboardRuntime
             ? AzureCliInstallation.ResolvePath(testedPath) : null;
     }
 
-    internal Task<RuntimeResult<IReadOnlyList<RuntimePrerequisite>>> CheckAllPrerequisitesAsync(
-        string? azureCliPath = null, string? devTunnelCliPath = null, CancellationToken cancellationToken = default) =>
-        RunCommandAsync("prerequisites", ["prerequisiteBatch"], TimeSpan.FromMinutes(3), async (token, _) =>
-        {
-            var azure = CheckAzureSequenceAsync();
-            var results = await Task.WhenAll(azure,
-                CheckPrerequisiteAsync(RuntimePrerequisiteKind.DevTunnel, devTunnelCliPath, token),
-                CheckPrerequisiteAsync(RuntimePrerequisiteKind.WindowsApp, null, token)).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-            var failure = results.FirstOrDefault(result => !result.Succeeded);
-            if (failure?.Error is { } error) throw new RuntimeCommandException(error);
-            return Prerequisites;
-
-            async Task<RuntimeResult<IReadOnlyList<RuntimePrerequisite>>> CheckAzureSequenceAsync()
-            {
-                var first = await CheckPrerequisiteAsync(RuntimePrerequisiteKind.AzureCli, azureCliPath, token).ConfigureAwait(false);
-                if (token.IsCancellationRequested) return first;
-                var second = await CheckPrerequisiteAsync(RuntimePrerequisiteKind.DevCenterExtension, azureCliPath, token).ConfigureAwait(false);
-                return first.Succeeded ? second : first;
-            }
-        }, cancellationToken);
-
     private void SetPrerequisite(RuntimePrerequisiteKind kind, string? path, PrerequisiteCheckState state, PrerequisiteDiagnosticResult? result)
     {
         lock (prerequisiteSync)
@@ -417,10 +394,5 @@ public sealed partial class DashboardRuntime
         }
     }
 
-    internal void CancelPrerequisites(RuntimePrerequisiteKind? kind = null)
-    {
-        if (kind is null) CancelGroup("prerequisites");
-        foreach (var selected in kind is { } one ? [one] : Enum.GetValues<RuntimePrerequisiteKind>())
-            CancelGroup($"prerequisite:{selected}");
-    }
+    internal void CancelPrerequisites(RuntimePrerequisiteKind kind) => CancelGroup($"prerequisite:{kind}");
 }

@@ -41,6 +41,7 @@ function Assert-ApplicationPayloadPath {
     Assert-Msi (-not [IO.Path]::IsPathRooted($RelativePath) -and
         @($segments | Where-Object { $_ -in @('', '.', '..') -or $_.Contains(':') }).Count -eq 0) 'Payload must remain in its application installation directory.'
     $leaf = $segments[-1]
+    Assert-Msi ($leaf -notlike 'AgentSignaler.RpcHost.*') 'Application payload contains a retired product.'
     Assert-Msi ($leaf -notmatch '(?i)\.(jsonl|ndjson|log|db|sqlite|sqlite3|bak|pfx|p12|pem|key)(-wal|-shm)?$' -and
         $leaf -notmatch '(?i)\.Tests\.(dll|pdb|deps\.json|runtimeconfig\.json)$' -and
         $leaf -notmatch '(?i)^(remote|dashboard-settings|session-state|configurator-settings)\.json$' -and
@@ -251,5 +252,3 @@ try {
     }
 }
 finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer) }
-
-& (Join-Path $PSScriptRoot 'Test-RpcHostInstaller.ps1') -Version $Version

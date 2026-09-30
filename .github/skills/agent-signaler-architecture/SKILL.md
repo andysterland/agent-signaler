@@ -15,10 +15,15 @@ Before changing a cross-cutting feature:
    `ClientIpc`, `ClientCoordinator`, and `AgentSignaler.Client`.
 4. Trace receiver and persistence behavior through `DashboardServer`,
    `MachineStore`, and `AgentSignaler.Service`.
-5. Trace presentation in `AgentSignaler.Dashboard`, or configuration ownership
+5. Trace resource ownership, the canonical data-directory lease, settings,
+   receiver/tunnel lifecycle and shared operations in `AgentSignaler.Dashboard.Core`.
+   Dashboard remains the sole receiver host, with one owner per canonical data
+   directory across processes and Windows sessions; do not add a replacement
+   receiver process or network control listener.
+6. Trace presentation in `AgentSignaler.Dashboard`, or configuration ownership
    in `AgentSignaler.Configurator` and Remote integration managers.
-6. Identify installer and migration consequences.
-7. Locate tests for each affected boundary before editing.
+7. Identify installer and migration consequences.
+8. Locate tests for each affected boundary before editing.
 
 Preserve the reporting chain:
 

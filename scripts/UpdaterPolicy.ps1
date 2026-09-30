@@ -2,7 +2,6 @@ Set-StrictMode -Version Latest
 $script:AgentSignalerUpgradeCodes = @{
     Dashboard = '{D67CE744-C442-473A-B751-CA70D3CBCA4D}'
     Remote = '{BFA03A34-37C9-4149-9789-9A68EC2A9C3A}'
-    RpcHost = '{A8D1F2A9-762B-4B2C-A5A3-451463D743B2}'
 }
 
 function ConvertTo-AgentSignalerVersion([string] $Text) {
@@ -21,16 +20,29 @@ function Read-AgentSignalerChecksums([string[]] $Lines) {
     if ($Lines.Count -gt 128) { throw 'Checksum manifest exceeds its entry limit.' }
     $checksums = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($line in $Lines) {
-        if ($line -cmatch '^([A-Fa-f0-9]{64})  (AgentSignaler\.(Dashboard|Remote|RpcHost)\.msi|AgentSignaler\.RpcHost\.(exe|NOTICES\.txt))$') {
+        if ($line -cmatch '^([A-Fa-f0-9]{64})  (AgentSignaler\.(Dashboard|Remote)\.msi)$') {
             if ($checksums.ContainsKey($Matches[2])) { throw 'Duplicate release asset checksum.' }
             $checksums.Add($Matches[2], $Matches[1].ToUpperInvariant())
         }
         elseif (-not [string]::IsNullOrWhiteSpace($line)) { throw 'Unexpected checksum manifest entry.' }
     }
-    foreach ($name in @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi', 'AgentSignaler.RpcHost.msi', 'AgentSignaler.RpcHost.exe')) {
+    foreach ($name in @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi')) {
         if (-not $checksums.ContainsKey($name)) { throw "Checksum manifest is missing $name." }
     }
     return ,$checksums
+}
+
+function Assert-AgentSignalerReleaseAssets($Assets) {
+    $expected = @('AgentSignaler.Dashboard.msi', 'AgentSignaler.Remote.msi', 'SHA256SUMS.txt')
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($asset in $Assets) {
+        if ($expected -cnotcontains [string]$asset.name -or -not $seen.Add([string]$asset.name)) {
+            throw 'Unexpected or duplicate release asset.'
+        }
+    }
+    foreach ($name in $expected) {
+        Get-AgentSignalerReleaseAsset $Assets $name | Out-Null
+    }
 }
 
 function Get-AgentSignalerReleaseAsset($Assets, [string] $Name) {
@@ -44,14 +56,11 @@ function Get-AgentSignalerReleaseAsset($Assets, [string] $Name) {
 }
 
 function Assert-AgentSignalerPackageMetadata($Properties, [string] $Template, [int] $SummaryFlags, [string] $App) {
-    if ($Properties['UpgradeCode'] -cne $script:AgentSignalerUpgradeCodes[$App] -or
+    if (@('Dashboard', 'Remote') -cnotcontains $App -or
+        $Properties['UpgradeCode'] -cne $script:AgentSignalerUpgradeCodes[$App] -or
         $Properties.ContainsKey('ALLUSERS') -or $Template -cnotlike 'x64;*' -or
-        (($SummaryFlags -band 8) -ne 0) -ne ($App -ne 'RpcHost')) {
+        ($SummaryFlags -band 8) -eq 0) {
         throw 'Not the expected architecture, identity, scope or elevation policy.'
-    }
-    if ($App -eq 'RpcHost' -and ($Properties['RPCFIREWALLREQUIRED'] -cne '1' -or
-        $Properties['MSIRESTARTMANAGERCONTROL'] -cne 'Disable' -or $Properties['MSIDISABLERMRESTART'] -cne '1')) {
-        throw 'RpcHost package does not enforce required firewall and no-shutdown servicing.'
     }
     $code = [guid]::Empty
     if (-not [guid]::TryParse($Properties['ProductCode'], [ref]$code) -or $code -eq [guid]::Empty) {
@@ -60,35 +69,6 @@ function Assert-AgentSignalerPackageMetadata($Properties, [string] $Template, [i
     [pscustomobject]@{
         Version = ConvertTo-AgentSignalerVersion $Properties['ProductVersion']
         ProductCode = $Properties['ProductCode']
-    }
-}
-
-function Assert-AgentSignalerRpcHostInventory($Inventory, [string] $UserSid, [string] $LocalAppData) {
-    $expected = [IO.Path]::GetFullPath((Join-Path $LocalAppData 'Programs\AgentSignaler\RpcHost')).TrimEnd('\')
-    $actual = [IO.Path]::GetFullPath([string]$Inventory.InstallDirectory).TrimEnd('\')
-    if ($Inventory.UpgradeCode -cne $script:AgentSignalerUpgradeCodes.RpcHost -or
-        $Inventory.UserSid -cne $UserSid -or
-        -not [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase) -or
-        [string]$Inventory.ReceiverPort -notmatch '^[0-9]{4,5}$' -or
-        [int]$Inventory.ReceiverPort -lt 1024 -or [int]$Inventory.ReceiverPort -gt 65535) {
-        throw 'RpcHost installed-product metadata is missing or inconsistent. Repair as the original installing user.'
-    }
-    return $actual
-}
-
-function Assert-AgentSignalerRpcHostNotInUse([string] $InstallDirectory, $Processes) {
-    $expected = Join-Path $InstallDirectory 'AgentSignaler.RpcHost.exe'
-    foreach ($process in $Processes) {
-        if (-not $process.IdentityAvailable) {
-            if ($process.Name -ieq 'AgentSignaler.RpcHost') {
-                throw 'Cannot verify a RpcHost process identity. Stop the installed host in its owning Windows session and retry.'
-            }
-            continue
-        }
-        if ($process.SameFile -or [string]::Equals([IO.Path]::GetFullPath([string]$process.Path),
-                $expected, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'RpcHost is in use. Explicitly stop the exact installed host in every Windows session before servicing; no shutdown was sent.'
-        }
     }
 }
 
@@ -102,5 +82,5 @@ function Get-AgentSignalerUpdateDecision([version] $Installed, [version] $Availa
 function Get-AgentSignalerServicingOutcome([int] $ExitCode) {
     if ($ExitCode -eq 0) { return 'Completed' }
     if ($ExitCode -eq 3010) { return 'RestartRequired' }
-    throw "Windows Installer servicing failed (exit $ExitCode). Elevation denial and required firewall failures are not successful updates."
+    throw "Windows Installer servicing failed (exit $ExitCode)."
 }

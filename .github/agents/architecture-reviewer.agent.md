@@ -12,6 +12,10 @@ Enforce these invariants:
 
 - Managed reporting follows Relay -> current-user IPC -> Client -> Dashboard.
 - Client remains the sole managed network reporter and tray Exit stops it.
+- Dashboard is the sole receiver host. Dashboard Core preserves the canonical
+  data-directory lease across processes/Windows sessions, receiver, persistence,
+  settings, tunnel lifecycle and shared operational workflows. No replacement
+  receiver process or network control listener is added.
 - Prompts, responses, source, tool arguments, raw payloads, credentials, and raw
   CLI output are never transported, persisted, or logged.
 - Protocol changes update producers, consumers, validation, ordering,

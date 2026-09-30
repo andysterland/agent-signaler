@@ -4,6 +4,10 @@ A Windows 11 x64 dashboard for Copilot CLI and explicitly verified local IDE age
 HTTPS sharing by default, or on an explicitly selected trusted LAN/VPN.
 LAN mode requires no cloud account or service.
 
+Dashboard is the sole receiver host. For older installations, follow the
+[retirement and updater-transition guide](rpc-host-retirement.md); manual product
+removal and ownership-verified firewall cleanup are separate from source updates.
+
 ## Read-only conversation prototype
 
 **External informed consent is a deployment prerequisite.** Before distributing
@@ -796,7 +800,7 @@ Configurator has three fixed, non-closable, non-reorderable tabs:
 | --- | --- |
 | **Connection** | Dashboard URL, heartbeat, Share detailed conversations with its external-consent/PII notice, machine UUID, saved/effective runtime status, Test connection / Cancel test, and Start client. |
 | **Hooks** | Editable remote relay executable location, saved as `relayPath` in `remote.json` when applying settings. Discovered locations with Enable checkboxes and pending-change feedback. Refresh / Cancel discovery and Add custom location. Custom type and path editors appear only for explicitly added rows. |
-| **Review & maintenance** | Optional settings preview, integration transaction recovery, cleanup of legacy diagnostic hooks, and full Uninstall integration. |
+| **Review & maintenance** | Optional settings preview, integration transaction recovery, completion of a finished uninstall, cleanup of legacy diagnostic hooks, and full Uninstall integration. |
 
 Each tab has a **?** help icon at its top right. Hover to read the view's
 instructions. Setup guidance
@@ -815,6 +819,29 @@ Editing does not write hook files. Tabs remain navigable during work; conflictin
 actions are disabled. Apply builds a fresh complete preview and asks for confirmation,
 without requiring a separate Preview or Verification step. Validation returns to
 **Connection** for connection fields or **Hooks** for the offending location.
+
+### Configuration blocked after uninstall or reinstall
+
+An `integration-uninstall*.json` journal can remain after an MSI uninstall.
+The journal preserves rollback information; its presence blocks a new
+configuration preview even when the hooks have already been removed. Ordinary
+**Recover interrupted integration transaction** handles configuration rollback,
+not completion of an MSI removal.
+
+After Windows Installer has completely finished, open **Review & maintenance >
+Complete finished uninstall**. Review the exact journal cleanup and confirm.
+Configurator verifies the journal's ownership and that its recorded files,
+startup state, and legacy task still match the completed removal. It retains
+recovery backups and clears only the completed journal, without modifying saved
+configuration, restoring hooks, or starting Client. Review the integrations
+you want and select **Apply settings** afterward.
+
+If completion reports a conflict, an active installer, or another pending
+recovery operation, keep the journal and backups and resolve that condition
+first. Do not delete journals or run uninstall rollback merely to bypass the
+preview blocker: rollback can restore the removed integration. Older
+Configurator versions do not have the completion action; deploy matching
+updated Remote binaries before using it.
 
 ### Independent CLI / Visual Studio / VS Code integration
 
@@ -1074,9 +1101,9 @@ SQLite reuses freed pages; removal does not promise to shrink the database file.
 
 ### Multi-session upgrade and rollback
 
-Upgrade the receiver (Dashboard or RpcHost) first, then deploy matching
+Upgrade Dashboard first, then deploy matching
 Client/Relay/Configurator binaries. Presence protocol versions are independent
-of configuration, transcript, RPC and local IPC versions. Enriched status
+of configuration, transcript and local IPC versions. Enriched status
 snapshots carry event enums, UTC timestamps and optional saved session titles,
 not conversation bodies. V4 receivers receive projections without titles.
 Source-aware v3 and legacy v2 receivers use explicit legacy projections;
@@ -1099,7 +1126,7 @@ Existing event sidecars and metadata tables remain title-free for older binaries
 If optional titles exceed the bounded snapshot budget, Client omits them with a
 category-only diagnostic rather than blocking status delivery or evicting a live session.
 
-Before the first upgraded launch, stop Dashboard/RpcHost and Client and take
+Before the first upgraded launch, stop Dashboard and Client and take
 a consistent backup of their owned data directories plus matching configuration
 and integration backups. Do not copy a live SQLite database/WAL independently.
 Keep the compatible binaries with the backup. To roll back, stop the upgraded
@@ -1112,7 +1139,9 @@ separately if needed. Do not overwrite an explicit transcript opt-out with a
 backed-up opt-in or automatically restart a previously stopped Client.
 
 Settings and state live under `%LOCALAPPDATA%\AgentSignaler`. Keep this directory
-private to the Windows user. Back up the SQLite database only while the dashboard is
+private to the Windows user. Dashboard Core's canonical data-directory lease
+prevents concurrent Dashboard owners, including across Windows sessions.
+Back up the SQLite database only while the dashboard is
 stopped, or use a SQLite-aware backup process. `tunnel-state.json` retains only
 non-secret resource/owner identity, including pending-create recovery information.
 Do not delete it before cleaning up the corresponding cloud tunnel.

@@ -45,6 +45,22 @@ public sealed class ConfiguratorLayoutSourceTests
         Assert.DoesNotContain("startup.Replace(", source);
     }
 
+    [Fact]
+    public void CompletedUninstallHasASeparateMaintenanceActionFromRollbackRecovery()
+    {
+        var document = XDocument.Load(SourcePath("MainWindow.xaml"));
+        var complete = document.Descendants().Single(element =>
+            (string?)element.Attribute(Xaml + "Name") == "CompleteUninstallButton");
+        var recover = document.Descendants().Single(element =>
+            (string?)element.Attribute(Xaml + "Name") == "RecoverIntegrationButton");
+        Assert.Equal("Button", complete.Name.LocalName);
+        Assert.Equal("Complete finished uninstall...", (string?)complete.Attribute("Content"));
+        Assert.Equal("CompleteUninstall_Click", (string?)complete.Attribute("Click"));
+        Assert.Equal("RecoverIntegration_Click", (string?)recover.Attribute("Click"));
+        Assert.Same(recover.Parent, complete.Parent);
+        Assert.Contains(complete.Ancestors(), element => (string?)element.Attribute(Xaml + "Name") == "ReviewTab");
+    }
+
     private static string SourcePath(string name)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
