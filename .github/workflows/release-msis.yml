@@ -34,7 +34,6 @@ jobs:
       RELEASE_REQUESTED_VERSION: ${{ inputs.version }}
       RELEASE_PRERELEASE: ${{ inputs.prerelease }}
       GH_TOKEN: ${{ github.token }}
-      AZURE_CONFIG_DIR: ${{ runner.temp }}\agent-signaler-azure
     steps:
       - uses: actions/checkout@v4
         with:
@@ -174,6 +173,11 @@ jobs:
           $env:AGENT_SIGNALER_RPC_WEB_NETWORK_TESTS = '1'
           npm run test:browser
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Isolate Azure CLI state
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'agent-signaler-azure'
+          "AZURE_CONFIG_DIR=$config" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Azure login
         uses: azure/login@v3
         with:
@@ -255,7 +259,8 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path -LiteralPath $env:AZURE_CONFIG_DIR) {
+          if (-not [string]::IsNullOrWhiteSpace($env:AZURE_CONFIG_DIR) -and
+              (Test-Path -LiteralPath $env:AZURE_CONFIG_DIR)) {
             az logout
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
             Remove-Item -LiteralPath $env:AZURE_CONFIG_DIR -Recurse -Force
