@@ -53,6 +53,12 @@ try {
     foreach ($name in @('Dashboard', 'Remote')) {
         $msi = Join-Path $root "artifacts\msi\AgentSignaler.$name.msi"
         $publish = Join-Path $root ('artifacts\publish\' + $name.ToLowerInvariant())
+        Assert-Msi (Test-Path -LiteralPath (Join-Path $publish 'AgentSignaler.Discovery.dll') -PathType Leaf) "$name discovery assembly is missing from the self-contained payload."
+        if ($name -eq 'Dashboard') {
+            foreach ($dependency in @('Azure.Identity.dll', 'Azure.Storage.Blobs.dll')) {
+                Assert-Msi (Test-Path -LiteralPath (Join-Path $publish $dependency) -PathType Leaf) "Dashboard discovery dependency is missing: $dependency"
+            }
+        }
         $database = $installer.OpenDatabase($msi, 0)
         try {
             $properties = @{}

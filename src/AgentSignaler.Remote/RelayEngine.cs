@@ -283,6 +283,8 @@ public sealed class RelayEngine(HttpClient? client = null)
 {
     public async Task<bool> SendAsync(RemoteConfiguration config, StatusRequest request, CancellationToken cancellationToken)
     {
+        if (config.IsDiscovery)
+            throw new InvalidOperationException("Private discovery reporting requires the managed Client and an explicitly resolved endpoint.");
         if (Protocol.Validate(request).Count != 0) return false;
         var bytes = JsonSerializer.SerializeToUtf8Bytes(request, Protocol.Json);
         if (bytes.Length > Protocol.MaxBodyBytes) return false;
@@ -400,7 +402,7 @@ public sealed class RelayEngine(HttpClient? client = null)
                 new(ClientIpc.LegacyVersion, probeId is null ? "hook" : "probe", kind, hook, ProbeId: probeId), budget.Token);
             log.Write(response.Accepted ? "hook-accepted-locally" : "client-not-accepting");
             if (probeId is null && response.Accepted && config.Version >= 5 && config.DetailedReportingEnabled &&
-                config.BaseUri.Scheme == Uri.UriSchemeHttps && !budget.IsCancellationRequested)
+                (config.IsDiscovery || config.BaseUri.Scheme == Uri.UriSchemeHttps) && !budget.IsCancellationRequested)
             {
                 using var detailBudget = CancellationTokenSource.CreateLinkedTokenSource(budget.Token);
                 detailBudget.CancelAfter(TimeSpan.FromMilliseconds(200));

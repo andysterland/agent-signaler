@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using AgentSignaler.Contracts;
+using AgentSignaler.Discovery;
 using AgentSignaler.Remote;
 using Xunit;
 
@@ -34,6 +36,46 @@ public sealed class ClientActivationTests : IDisposable
     {
         var platform = new FakePlatform { Owned = true, Response = new(false, "unavailable") };
         await Assert.ThrowsAsync<InvalidOperationException>(() => new ClientIntegrationRuntime(platform).QueryAsync(ConfigPath, default));
+        Assert.Equal(0, platform.Launches);
+    }
+
+    [Fact]
+    public async Task DiscoveryReloadWaitsForBothConfigurationAndCredentialRevisionAcknowledgement()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var config = new RemoteConfiguration { MachineId = Guid.NewGuid() }.WithDiscovery(
+            new(Guid.NewGuid().ToString("N"), new string('a', 64)), Guid.NewGuid(), DiscoveryCodec.ExportPublicKey(key), 7);
+        AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(config, Protocol.Json));
+        var revision = ClientConfigurationRevision.Read(ConfigPath);
+        var statusReads = 0;
+        var platform = new FakePlatform { Owned = true };
+        platform.Reply = request =>
+        {
+            if (request.Command == "status") statusReads++;
+            return new(true, "connected", revision, 300)
+            { EffectiveCredentialRevision = statusReads >= 3 ? 7 : 6 };
+        };
+        var state = await new ClientIntegrationRuntime(platform).ReloadAsync(ConfigPath, default);
+        Assert.Equal(revision, state.EffectiveRevision);
+        Assert.Equal(7, state.EffectiveCredentialRevision);
+        Assert.Equal(3, statusReads);
+        Assert.Equal(0, platform.Launches);
+        Assert.DoesNotContain(platform.Commands, request => request.Command is not ("status" or "reload"));
+    }
+
+    [Fact]
+    public async Task VersionSixDirectTransitionUsesOnlyCoherentConnectionReload()
+    {
+        var config = new RemoteConfiguration { MachineId = Guid.NewGuid() }.WithDashboardUrl("https://synthetic.example/").ToVersion6();
+        AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(config, Protocol.Json));
+        var revision = ClientConfigurationRevision.Read(ConfigPath);
+        var platform = new FakePlatform { Owned = true };
+        platform.Reply = request => request.Command == "transcript-reload"
+            ? new(false, "connection-reload-required") : new(true, "connected", revision, 300);
+        var state = await new ClientIntegrationRuntime(platform).ReloadAsync(ConfigPath, default);
+        Assert.Equal(revision, state.EffectiveRevision);
+        Assert.Single(platform.Commands, request => request.Command == "reload");
+        Assert.DoesNotContain(platform.Commands, request => request.Command == "transcript-reload");
         Assert.Equal(0, platform.Launches);
     }
 
@@ -173,13 +215,14 @@ public sealed class ClientActivationTests : IDisposable
         public string? LaunchedClient;
         public string? LaunchedConfig;
         public ClientIpcResponse Response = new(true, "connected");
+        public Func<ClientIpcRequest, ClientIpcResponse>? Reply;
         public List<ClientIpcRequest> Commands = [];
         public bool IsOwnerRunning(string configPath) => Owned;
         public Task<ClientIpcResponse> SendAsync(string configPath, ClientIpcRequest request, CancellationToken token)
         {
             Commands.Add(request);
             if (request.Command == "stop" && ReleaseOnStop) Owned = false;
-            return Task.FromResult(Response);
+            return Task.FromResult(Reply?.Invoke(request) ?? Response);
         }
         public void Launch(string clientPath, string configPath)
         { Launches++; LaunchedClient = clientPath; LaunchedConfig = configPath; Owned = true; }

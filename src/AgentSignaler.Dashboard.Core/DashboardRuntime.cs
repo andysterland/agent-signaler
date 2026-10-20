@@ -85,6 +85,7 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
         receiver = new(HostInstanceId, "receiver", new(false, this.options.ReceiverPortOverride ?? effective.Port,
             effective.ConnectionMode, effective.ReceiveDetailedConversations), Publish);
         sharing = new(HostInstanceId, "sharing", new(TunnelState.Stopped, "Sharing is stopped."), Publish);
+        discovery = new(HostInstanceId, "discovery", new(false, false, false, "Private discovery is not configured."), Publish);
         catalog = new(HostInstanceId, "devboxes", new(null, false, "Not refreshed", "Catalog has not been refreshed."), Publish);
         prerequisites = new(HostInstanceId, "prerequisites", Array.AsReadOnly(Enum.GetValues<RuntimePrerequisiteKind>()
             .Select(kind => new RuntimePrerequisite(kind.ToString(), null, PrerequisiteCheckState.NotChecked, null)).ToArray()), Publish);
@@ -171,6 +172,7 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
                     {
                         sharing.Publish(value);
                         UpdateTranscriptReadiness();
+                        ObserveDiscoveryTunnel(value);
                     };
                     status.Publish(Status.State with { SharingAvailable = true });
                     if (Settings.State.Saved.ShouldStartSharing)
@@ -181,6 +183,7 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
                 }
                 catch (Exception error) when (IsExpected(error)) { ReportFailure(error, "sharing"); }
             }
+            await InitializeDiscoveryAsync(token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -235,7 +238,8 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
     private static bool IsPersistenceFailure(Exception error) => error is IOException or InvalidDataException or
         UnauthorizedAccessException or SecurityException or JsonException or SqliteException;
     private static bool IsExpected(Exception error) => IsPersistenceFailure(error) || error is SocketException or
-        Win32Exception or TunnelException or WindowsAppConnectionException or DevBoxCatalogException or TimeoutException or HttpRequestException;
+        Win32Exception or TunnelException or WindowsAppConnectionException or DevBoxCatalogException or TimeoutException or HttpRequestException or
+        DiscoveryException or PrivateDiscoveryCloudException or Azure.RequestFailedException or Azure.Identity.AuthenticationFailedException or System.Security.Cryptography.CryptographicException;
 
     private async Task<RuntimeResult<T>> RunCommandAsync<T>(string group, IEnumerable<string> resources, TimeSpan timeout,
         Func<CancellationToken, CommitTracker, Task<DomainSnapshot<T>>> action, CancellationToken cancellationToken, bool control = false)
@@ -326,6 +330,7 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
         lifetime.Cancel();
         startup.Cancel();
         server?.SetTranscriptReadiness(false);
+        await StopDiscoveryAsync().ConfigureAwait(false);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25), options.TimeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, cancellationToken);
         var clean = true;

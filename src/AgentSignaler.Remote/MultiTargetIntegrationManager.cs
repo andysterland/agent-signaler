@@ -34,11 +34,13 @@ public sealed class MultiTargetIntegrationPlan
     internal IntegrationManifest? Prior { get; }
     internal byte[] ConfigBytes { get; }
     internal Func<string, bool> LoaderHookExists { get; }
+    internal IReadOnlyList<DiscoveryCredentialChange> CredentialChanges { get; }
 
     internal MultiTargetIntegrationPlan(RemoteConfiguration config, string configPath,
         IReadOnlyList<IntegrationFileChange> changes, IntegrationManifest? prior, bool removal,
         Func<string, bool>? loaderHookExists = null, bool statusOnlyDowngrade = false,
-        bool startClientAtSignIn = true, bool preserveStartupPreference = false)
+        bool startClientAtSignIn = true, bool preserveStartupPreference = false,
+        IReadOnlyList<DiscoveryCredentialChange>? credentialChanges = null)
     {
         Config = config;
         ConfigPath = configPath;
@@ -50,6 +52,7 @@ public sealed class MultiTargetIntegrationPlan
         PreserveStartupPreference = preserveStartupPreference;
         ConfigBytes = MultiTargetIntegrationManager.Serialize(config);
         LoaderHookExists = loaderHookExists ?? File.Exists;
+        CredentialChanges = credentialChanges ?? [];
         Preview = string.Join("\n\n", changes.Where(c => !MultiTargetIntegrationManager.Equal(c.Before, c.After))
             .Select(c => $"{(c.After is null ? "REMOVE" : "WRITE")} {c.Path}" +
                 (c.After is null ? "" : "\n" + Encoding.UTF8.GetString(c.After)))) +
@@ -67,14 +70,16 @@ public sealed class MultiTargetIntegrationPlan
                 $"\nREMOVE owned legacy task {ScheduledTaskDefinition.Name(config.MachineId)} if present; no scheduled task is installed.") +
             "\nDashboard source-aware capability verification is required before installation changes." +
             (config.Version >= 5
-                ? "\nConfiguration v5 requires Client, Relay and Configurator upgraded together. " +
+                ? $"\nConfiguration v{config.Version} requires Client, Relay and Configurator upgraded together. " +
                   (config.DetailedReportingEnabled
                       ? "Share detailed conversations: ON. Message text, including personal information, goes to the configured Dashboard. Consent is handled outside the app."
                       : "Share detailed conversations: OFF. Status reporting remains available.") +
                   "\nDetails require HTTPS, a compatible receiver and verified source capabilities. Reception is anonymous and best effort; offline receivers cannot acknowledge purge."
                 : "\nLegacy configuration remains status-only. Only an explicit upgrade to v5 enables the default-on detailed conversation preference.") +
             "\nConcurrent changes require a new preview. Ownership-checked rollback retains a recovery journal on conflicts." +
-            (config.BaseUri.Scheme == Uri.UriSchemeHttps
+            (config.ConnectionMode == RemoteConnectionMode.PrivateAzureDiscovery
+                ? "\nPrivate Azure discovery: only a current-user protected credential reference and pinned public trust metadata are saved. No fallback URL. No remote Azure sign-in. Reader-group revocation affects all machines sharing the package. HTTPS receiver access remains anonymous."
+                : config.BaseUri.Scheme == Uri.UriSchemeHttps
                 ? "\nHTTPS is encrypted but anonymous: anyone reaching Dashboard can submit status."
                 : "\nHTTP is unencrypted and anonymous; use a trusted LAN or VPN.");
         if (statusOnlyDowngrade)
@@ -82,12 +87,17 @@ public sealed class MultiTargetIntegrationPlan
                 "The v5 detailed reporting preference is removed, not preserved in v4. Client stays stopped; " +
                 "install matching compatible binaries through coordinated servicing before starting it. " +
                 "A later explicit v5 upgrade previews default-on sharing again.";
+        if (CredentialChanges.Count > 0)
+            Preview += "\nProtected credential transaction (ciphertext only; package and SAS are never shown):\n" +
+                string.Join("\n", CredentialChanges.Select(c => $"{(MultiTargetIntegrationManager.Equal(c.Before, c.After) ? c.Before is null ? "VERIFY ABSENT" : "VERIFY" : c.After is null ? "REMOVE" : "CREATE")} immutable protected slot {c.Reference.Id}; ciphertext SHA-256 {c.Reference.CiphertextHash}")) +
+                $"\nConnection credential revision: {config.DiscoveryCredentialRevision}. Rollback restores the prior protected slot and configuration.";
     }
 }
 
 public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskScheduler scheduler,
     Func<RemoteConfiguration, CancellationToken, Task<bool>> verifyDelivery,
-    IIntegrationStartup? startup = null, IIntegrationRuntime? runtime = null)
+    IIntegrationStartup? startup = null, IIntegrationRuntime? runtime = null,
+    Func<string, IDiscoveryCredentialTransactionStore>? credentialStoreFactory = null)
 {
     private static readonly JsonSerializerOptions DisplayJson = new(Protocol.Json) { WriteIndented = true };
     internal static byte[] Serialize<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, DisplayJson);
@@ -107,9 +117,16 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         IReadOnlyList<IntegrationTarget> targets, string relayPath, bool startClientAtSignIn = true) =>
         Preview(config, configPath, targets, relayPath, File.Exists, startClientAtSignIn, preserveStartupPreference: false);
 
+    public static MultiTargetIntegrationPlan PreviewWithCredential(RemoteConfiguration config, string configPath,
+        IReadOnlyList<IntegrationTarget> targets, string relayPath, bool startClientAtSignIn,
+        DiscoveryCredentialUpdate? credentialUpdate, IDiscoveryCredentialTransactionStore? credentialStore = null) =>
+        Preview(config, configPath, targets, relayPath, File.Exists, startClientAtSignIn,
+            preserveStartupPreference: false, credentialUpdate, credentialStore);
+
     internal static MultiTargetIntegrationPlan Preview(RemoteConfiguration config, string configPath,
         IReadOnlyList<IntegrationTarget> targets, string relayPath, Func<string, bool> loaderHookExists,
-        bool startClientAtSignIn = true, bool preserveStartupPreference = true)
+        bool startClientAtSignIn = true, bool preserveStartupPreference = true,
+        DiscoveryCredentialUpdate? credentialUpdate = null, IDiscoveryCredentialTransactionStore? credentialStore = null)
     {
         config.Validate();
         configPath = Canonical(configPath);
@@ -131,7 +148,7 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             AutomaticHookConfiguration.RequireInstallable(target, configPath);
         }
         ValidateScopes(selected, loaderHookExists);
-        return Build(config, configPath, false, loaderHookExists, startClientAtSignIn, preserveStartupPreference);
+        return Build(config, configPath, false, loaderHookExists, startClientAtSignIn, preserveStartupPreference, credentialUpdate, credentialStore);
     }
 
     public static MultiTargetIntegrationPlan PreviewRemove(string configPath, IReadOnlyList<string> targetIds)
@@ -170,7 +187,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
 
     private static MultiTargetIntegrationPlan Build(RemoteConfiguration config, string configPath, bool removal,
         Func<string, bool>? loaderHookExists = null, bool startClientAtSignIn = true,
-        bool preserveStartupPreference = false)
+        bool preserveStartupPreference = false, DiscoveryCredentialUpdate? credentialUpdate = null,
+        IDiscoveryCredentialTransactionStore? credentialStore = null)
     {
         EnsureNoPending(configPath);
         var manifestPath = Canonical(ManifestPath(configPath));
@@ -182,11 +200,15 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         if (prior is not null && prior.MachineId != config.MachineId)
             throw new InvalidDataException("Ownership manifest identity conflict.");
         var existingConfig = Read(configPath);
+        RemoteConfiguration? savedConfig = null;
         if (existingConfig is not null)
         {
             var saved = RemoteConfiguration.Load(configPath);
+            savedConfig = saved;
             if (saved.MachineId != config.MachineId)
                 throw new InvalidDataException("Saved configuration identity conflict.");
+            if (saved.Version >= 6 && config.Version < 6)
+                throw new InvalidDataException("Version 6 cannot be downgraded by repair. Convert explicitly to a verified direct connection without downgrading the schema.");
             if (saved.Version >= 5 && config.Version < 5)
                 throw new InvalidDataException("A version 5 configuration cannot be downgraded by repair. " +
                     "Stop the exact Client and use an explicit status-only downgrade transaction with compatible binaries.");
@@ -274,8 +296,54 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         changes[configPath] = new(configPath, existingConfig, configBytes);
         changes[manifestPath] = new(manifestPath, manifestBytes, nextManifestBytes);
         CheckFiles(changes.Values);
+        if (savedConfig?.Discovery is not null && savedConfig.Discovery != config.Discovery &&
+            (prior is null || existingConfig is null || prior.ConfigHash != Hash(existingConfig)))
+            throw new InvalidDataException("Protected credential replacement/removal requires the exact unchanged owned configuration. Restore ownership or recover the prior transaction first.");
+        var credentialChanges = PrepareCredentialChanges(config, savedConfig, configPath, credentialUpdate, credentialStore);
         return new(config, configPath, changes.Values.ToArray(), prior, removal, loaderHookExists,
-            startClientAtSignIn: startClientAtSignIn, preserveStartupPreference: preserveStartupPreference);
+            startClientAtSignIn: startClientAtSignIn, preserveStartupPreference: preserveStartupPreference,
+            credentialChanges: credentialChanges);
+    }
+
+    private static IReadOnlyList<DiscoveryCredentialChange> PrepareCredentialChanges(RemoteConfiguration config,
+        RemoteConfiguration? saved, string configPath, DiscoveryCredentialUpdate? update, IDiscoveryCredentialTransactionStore? store)
+    {
+        var changed = config.Discovery != saved?.Discovery;
+        if (!changed && saved is not null && (config.DiscoveryId != saved.DiscoveryId ||
+            config.DiscoverySigningPublicKey != saved.DiscoverySigningPublicKey ||
+            config.DiscoveryCredentialRevision != saved.DiscoveryCredentialRevision))
+            throw new InvalidDataException("Pinned discovery trust metadata cannot change without replacing the protected credential.");
+        if (update is null && !changed)
+        {
+            if (config.Discovery is null) return [];
+            store ??= new DiscoveryCredentialTransactionStore(configPath);
+            var current = store.Read(config.Discovery)
+                ?? throw new InvalidDataException("Saved protected credential is missing. Import a replacement package before repairing this connection.");
+            return [new(config.Discovery, current.ToArray(), current.ToArray())];
+        }
+        if (update is not null)
+        {
+            update.Validate();
+            if (!config.IsDiscovery || config.Discovery != update.Reference || !changed)
+                throw new InvalidDataException("Protected credential does not match the approved connection.");
+        }
+        else if (config.Discovery is not null)
+            throw new InvalidDataException("A new discovery credential requires an explicit protected import transaction.");
+        store ??= new DiscoveryCredentialTransactionStore(configPath);
+        var changes = new List<DiscoveryCredentialChange>();
+        if (update is not null)
+        {
+            if (store.Read(update.Reference) is not null) throw new InvalidDataException("Protected credential slot already exists. Import a fresh package.");
+            changes.Add(new(update.Reference, null, update.Ciphertext.ToArray()));
+        }
+        if (saved?.Discovery is { } previous)
+        {
+            var before = store.Read(previous);
+            changes.Add(new(previous, before?.ToArray(), null));
+        }
+        if (config.IsDiscovery && config.DiscoveryCredentialRevision != checked((saved?.DiscoveryCredentialRevision ?? 0) + 1))
+            throw new InvalidDataException("Credential revision changed. Import again and create a fresh preview.");
+        return changes;
     }
 
     private static void ValidateScopes(IReadOnlyList<IntegrationTarget> targets, Func<string, bool> loaderHookExists)
@@ -448,6 +516,7 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             }, token);
         EnsureNoPending(plan.ConfigPath);
         CheckFiles(plan.Changes);
+        if (plan.CredentialChanges.Count > 0) CheckCredentials(plan.CredentialChanges, CredentialStore(plan.ConfigPath));
         if (!plan.IsRemoval)
         {
             foreach (var target in plan.Targets)
@@ -486,6 +555,7 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
         if (!plan.IsRemoval && !preferenceOnly)
             await DashboardConnection.VerifyBeforeApplyAsync(plan.Config, verifyDelivery, token);
         CheckFiles(plan.Changes);
+        if (plan.CredentialChanges.Count > 0) CheckCredentials(plan.CredentialChanges, CredentialStore(plan.ConfigPath));
         if (scheduler.ReadXml(taskName) != task || (startup is not null &&
             !IntegrationStartup.Equivalent(startup.Capture(startupName), startupBefore!)))
             throw new InvalidDataException("Startup or legacy task changed during validation.");
@@ -506,7 +576,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             TaskBefore = task, TaskAfter = plan.IsRemoval ? task : null,
             StartupName = startupName, StartupBefore = oldStartup,
             StartupAfter = startupAfter?.Command,
-            StartupStateBefore = startupBefore, StartupStateAfter = startupAfter
+            StartupStateBefore = startupBefore, StartupStateAfter = startupAfter,
+            CredentialChanges = plan.CredentialChanges
         };
         await ExecuteAsync(journal, RecoveryPath(plan.ConfigPath), token);
         if (plan.IsStatusOnlyDowngrade)
@@ -520,25 +591,35 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
             if (preferenceOnly && wasRunning)
             {
                 await Bounded(async t => { await runtime.ReloadTranscriptAsync(plan.ConfigPath, t); return true; }, token);
+                if (plan.Config.IsDiscovery)
+                {
+                    var acknowledged = await Bounded(t => runtime.QueryAsync(plan.ConfigPath, t), token);
+                    var effective = acknowledged.Running && acknowledged.EffectiveRevision == Hash(plan.ConfigBytes) &&
+                        acknowledged.EffectiveCredentialRevision == plan.Config.DiscoveryCredentialRevision;
+                    return new(true, effective, effective ? "Settings and protected credential revision acknowledged by Client." :
+                        "Settings saved; Client has not acknowledged the saved configuration and protected credential revision. Retry Apply.", acknowledged.EffectiveRevision);
+                }
                 return new(true, true, "Detailed conversation preference saved and applied locally. " +
                     "Remote receipt or purge is best effort; an offline Dashboard has not acknowledged it.", Hash(plan.ConfigBytes));
             }
             var active = await Bounded(t => wasRunning ? runtime.ReloadAsync(plan.ConfigPath, t) :
-                runtime.StartAsync(clientPath, plan.ConfigPath, t), token);
-            var applied = active.Running && active.EffectiveRevision == Hash(plan.ConfigBytes);
+                runtime.StartAsync(clientPath, plan.ConfigPath, t), token, timeoutSeconds: plan.Config.Version >= 6 ? 15 : 7);
+            var applied = active.Running && active.EffectiveRevision == Hash(plan.ConfigBytes) &&
+                (!plan.Config.IsDiscovery || active.EffectiveCredentialRevision == plan.Config.DiscoveryCredentialRevision);
             return new(true, applied, applied ? "Settings saved and applied to Client." :
-                "Settings saved; use Start client or retry Apply. " + active.Message, active.EffectiveRevision);
+                "Settings saved; use Start client or retry Apply. " + (plan.Config.IsDiscovery ?
+                    "Client has not acknowledged the saved connection and protected credential revision." : active.Message), active.EffectiveRevision);
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex))
         {
-            return new(true, false, "Settings saved, but Client activation failed. Use Start client. " + ex.Message);
+            return new(true, false, "Settings saved, but Client activation failed. Use Start client or repair the exact owned Client installation.");
         }
     }
 
-    private static async Task<T> Bounded<T>(Func<CancellationToken, Task<T>> action, CancellationToken token)
+    private static async Task<T> Bounded<T>(Func<CancellationToken, Task<T>> action, CancellationToken token, int timeoutSeconds = 7)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(7));
+        timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try { return await action(timeout.Token).WaitAsync(timeout.Token).ConfigureAwait(false); }
         catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
         {

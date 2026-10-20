@@ -28,24 +28,32 @@ public static class DashboardConnection
     public static async Task TestAsync(RemoteConfiguration config, HttpClient client, CancellationToken token)
         => _ = await NegotiateAsync(config, client, token);
 
+    public static async Task TestAsync(RemoteConfiguration config, EffectiveEndpointSnapshot endpoint,
+        HttpClient client, CancellationToken token)
+        => _ = await NegotiateAsync(config, endpoint, client, token);
+
     public static async Task<int> NegotiateAsync(RemoteConfiguration config, HttpClient client, CancellationToken token)
+        => await NegotiateAsync(config, EffectiveEndpointSnapshot.Direct(config), client, token);
+
+    public static async Task<int> NegotiateAsync(RemoteConfiguration config, EffectiveEndpointSnapshot endpoint,
+        HttpClient client, CancellationToken token)
     {
         if (config.Version < 3)
         {
-            await TestVersionAsync(config, client, Protocol.Version, token);
+            await TestVersionAsync(config, endpoint.BaseUri, client, Protocol.Version, token);
             return Protocol.Version;
         }
         foreach (var version in new[] { PresenceProtocol.DisplayNameVersion, PresenceProtocol.EnrichedVersion })
         {
             try
             {
-                await TestVersionAsync(config, client, version, token);
+                await TestVersionAsync(config, endpoint.BaseUri, client, version, token);
                 return version;
             }
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { }
         }
         var legacy = config.Version >= 4 ? PresenceProtocol.SourceVersion : PresenceProtocol.Version;
-        try { await TestVersionAsync(config, client, legacy, token); }
+        try { await TestVersionAsync(config, endpoint.BaseUri, client, legacy, token); }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             throw new InvalidDataException($"Upgrade the dashboard receiver first. This configuration requires protocol v{legacy} or newer; source identity cannot be removed.", ex);
@@ -53,10 +61,10 @@ public static class DashboardConnection
         return legacy;
     }
 
-    private static async Task TestVersionAsync(RemoteConfiguration config, HttpClient client, int expectedVersion, CancellationToken token)
+    private static async Task TestVersionAsync(RemoteConfiguration config, Uri endpoint, HttpClient client, int expectedVersion, CancellationToken token)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get,
-            expectedVersion == Protocol.Version ? config.HealthEndpoint : new Uri(config.BaseUri, $"/api/v{expectedVersion}/health"));
+            new Uri(endpoint, expectedVersion == Protocol.Version ? "/health" : $"/api/v{expectedVersion}/health"));
         request.Headers.Accept.Add(new("application/json"));
         request.Headers.Add(Protocol.ConnectionTestHeader, "1");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);

@@ -85,7 +85,24 @@
                     </Button>
                     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Stretch">
                         <StackPanel Spacing="14">
+                            <ComboBox x:Name="ConnectionModeBox" Header="Connection mode" SelectedIndex="0"
+                                      SelectionChanged="ConnectionModeChanged" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="Direct Dashboard URL" />
+                                <ComboBoxItem Content="Private Azure Blob discovery (opt in)" />
+                            </ComboBox>
                             <TextBox x:Name="UrlBox" Header="Dashboard base URL" PlaceholderText="http://desktop-pc:51820 or https://your-service-returned-host" TextChanged="SettingsChanged" />
+                            <StackPanel x:Name="PrivateDiscoveryPanel" Spacing="8" Visibility="Collapsed">
+                                <PasswordBox x:Name="ConnectionPackageBox" Header="Agent connection package (bearer secret)"
+                                             PasswordRevealMode="Hidden" MaxLength="16384" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="ImportPackageButton" Content="Import / replace package" Click="ImportPackage_Click" />
+                                    <Button x:Name="RemovePackageButton" Content="Remove saved credential" Click="RemovePackage_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="DiscoveryConnectionText" Text="No package imported. Paste a package copied explicitly from Dashboard. No Azure sign-in is needed."
+                                           TextWrapping="Wrap" />
+                                <TextBlock Text="Import and Test are read-only. Apply verifies the signed discovery document and Dashboard health before saving a current-user protected credential. No fallback URL is used. Revoking the shared reader group affects every machine using its package. Receiver access remains anonymous."
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
                             <NumberBox x:Name="HeartbeatBox" Header="Heartbeat interval (minutes)" Value="5" Minimum="1" Maximum="60" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="HeartbeatChanged" />
                             <CheckBox x:Name="StartClientAtSignInCheckBox" Content="Start client when I sign in"
                                       Checked="StartupChanged" Unchecked="StartupChanged" />

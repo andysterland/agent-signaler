@@ -9,6 +9,7 @@ internal sealed record MultiTargetIntegrationJournal
     public string ConfigPath { get; init; } = "";
     public bool Removal { get; init; }
     public IReadOnlyList<IntegrationFileChange> Changes { get; init; } = [];
+    public IReadOnlyList<DiscoveryCredentialChange> CredentialChanges { get; init; } = [];
     public string TaskName { get; init; } = "";
     public string? TaskBefore { get; init; }
     public string? TaskAfter { get; init; }
@@ -21,10 +22,28 @@ internal sealed record MultiTargetIntegrationJournal
 
 public sealed partial class MultiTargetIntegrationManager
 {
+    private IDiscoveryCredentialTransactionStore CredentialStore(string configPath) =>
+        credentialStoreFactory?.Invoke(configPath) ?? new DiscoveryCredentialTransactionStore(configPath);
+
+    private static void CheckCredentials(IEnumerable<DiscoveryCredentialChange> changes,
+        IDiscoveryCredentialTransactionStore store, bool before = true)
+    {
+        foreach (var change in changes)
+        {
+            DiscoveryCredentialTransactionStore.ValidateReference(change.Reference);
+            foreach (var bytes in new[] { change.Before, change.After }.Where(b => b is not null))
+                new DiscoveryCredentialUpdate(change.Reference, bytes!).Validate();
+            if (!Equal(store.Read(change.Reference), before ? change.Before : change.After))
+                throw new InvalidDataException("Protected credential changed since preview. Create a fresh preview; no concurrent credential changes will be overwritten.");
+        }
+    }
+
     internal async Task ExecuteAsync(MultiTargetIntegrationJournal journal, string journalPath,
         CancellationToken token, bool retainJournal = false, bool stopClient = false, bool backupUnchangedFiles = false)
     {
         CheckFiles(journal.Changes);
+        var credentialStore = journal.CredentialChanges.Count == 0 ? null : CredentialStore(journal.ConfigPath);
+        if (credentialStore is not null) CheckCredentials(journal.CredentialChanges, credentialStore);
         var journalBytes = Serialize(journal);
         if (journalBytes.Length > 16777216)
             throw new InvalidDataException("Integration transaction exceeds the bounded recovery journal size; no files changed.");
@@ -40,6 +59,12 @@ public sealed partial class MultiTargetIntegrationManager
         {
             if (stopClient && runtime is not null)
                 await Bounded(async t => { await runtime.StopAsync(journal.ConfigPath, t); return true; }, token);
+            foreach (var change in journal.CredentialChanges.Where(c => c.After is not null && !Equal(c.Before, c.After)))
+            {
+                token.ThrowIfCancellationRequested();
+                CheckCredentials([change], credentialStore!);
+                credentialStore!.Write(change.Reference, change.After!);
+            }
             foreach (var change in journal.Changes)
             {
                 token.ThrowIfCancellationRequested();
@@ -73,6 +98,13 @@ public sealed partial class MultiTargetIntegrationManager
                 startup.Replace(journal.StartupName, journal.StartupBefore, journal.StartupAfter);
             }
             CheckFiles(journal.Changes, false);
+            foreach (var change in journal.CredentialChanges.Where(c => c.After is null && !Equal(c.Before, c.After)))
+            {
+                token.ThrowIfCancellationRequested();
+                CheckCredentials([change], credentialStore!);
+                credentialStore!.Delete(change.Reference);
+            }
+            if (credentialStore is not null) CheckCredentials(journal.CredentialChanges, credentialStore, before: false);
             if (!retainJournal) File.Delete(journalPath);
         }
         catch (Exception failure) when (RemoteFailure.IsExpected(failure))
@@ -93,6 +125,19 @@ public sealed partial class MultiTargetIntegrationManager
     private void Restore(MultiTargetIntegrationJournal journal)
     {
         var errors = new List<Exception>();
+        var credentialStore = journal.CredentialChanges.Count == 0 ? null : CredentialStore(journal.ConfigPath);
+        foreach (var change in journal.CredentialChanges.Where(c => c.Before is not null))
+        {
+            try
+            {
+                var current = credentialStore!.Read(change.Reference);
+                if (Equal(current, change.Before)) continue;
+                if (!Equal(current, change.After)) throw new InvalidDataException("Protected credential recovery conflict; changed credentials were preserved.");
+                credentialStore.Write(change.Reference, change.Before!);
+            }
+            catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
+        }
+        var credentialsRestored = errors.Count == 0;
         foreach (var change in journal.Changes.Reverse())
         {
             try
@@ -103,6 +148,7 @@ public sealed partial class MultiTargetIntegrationManager
                     throw new InvalidDataException($"Recovery will not overwrite concurrent edits: {change.Path}");
                 if (Same(change.Path, journal.ConfigPath) && current is not null)
                 {
+                    if (!credentialsRestored) throw new InvalidDataException("Saved connection retained because protected credential recovery is incomplete.");
                     var saved = JsonSerializer.Deserialize<RemoteConfiguration>(current, Protocol.Json)!;
                     var previous = change.Before is null ? null :
                         JsonSerializer.Deserialize<RemoteConfiguration>(change.Before, Protocol.Json);
@@ -116,6 +162,18 @@ public sealed partial class MultiTargetIntegrationManager
             }
             catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
         }
+        if (errors.Count == 0)
+            foreach (var change in journal.CredentialChanges.Where(c => c.Before is null))
+            {
+                try
+                {
+                    var current = credentialStore!.Read(change.Reference);
+                    if (current is null) continue;
+                    if (!Equal(current, change.After)) throw new InvalidDataException("Protected credential recovery conflict; changed credentials were preserved.");
+                    credentialStore.Delete(change.Reference);
+                }
+                catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { errors.Add(ex); }
+            }
         try
         {
             var current = scheduler.ReadXml(journal.TaskName);
@@ -182,7 +240,7 @@ public sealed partial class MultiTargetIntegrationManager
                 ? $"REMOVE only unchanged owned location entries from {a.Path}"
                 : $"REMOVE unchanged owned hook {a.Path}")) +
             $"\nStop exact Client for {configPath}; remove owned startup and legacy task." +
-            "\nRemove only unchanged owned config. Keep machine identity, diagnostics and all unrelated settings/hooks.";
+            "\nRemove only unchanged owned config and its exact protected discovery credential (if configuration is removed). Keep machine identity, diagnostics and all unrelated settings/hooks.";
     }
 
     internal void Uninstall(string configPath, bool preserveConfiguration, bool prepare, string? transactionId)
@@ -226,12 +284,19 @@ public sealed partial class MultiTargetIntegrationManager
             changes.Add(new(path, bytes, artifact.Kind == "hook" ? null : RemoveSettings(bytes, artifact)));
         }
         var configBytes = Read(configPath);
-        changes.Add(new(configPath, configBytes, !preserveConfiguration && configBytes is not null &&
-            Hash(configBytes) == manifest.ConfigHash ? null : configBytes));
+        var removeConfig = !preserveConfiguration && configBytes is not null && Hash(configBytes) == manifest.ConfigHash;
+        changes.Add(new(configPath, configBytes, removeConfig ? null : configBytes));
+        IReadOnlyList<DiscoveryCredentialChange> credentials = [];
+        if (removeConfig && JsonSerializer.Deserialize<RemoteConfiguration>(configBytes!, Protocol.Json)!.Discovery is { } credential)
+        {
+            var ciphertext = CredentialStore(configPath).Read(credential)
+                ?? throw new InvalidDataException("Owned protected credential is missing; repair before removing configuration.");
+            credentials = [new(credential, ciphertext, null)];
+        }
         changes.Add(new(manifestPath, Read(manifestPath), null));
         var journal = new MultiTargetIntegrationJournal
         {
-            ConfigPath = configPath, Removal = true, Changes = changes,
+            ConfigPath = configPath, Removal = true, Changes = changes, CredentialChanges = credentials,
             TaskName = taskName, TaskBefore = task, StartupName = startupName, StartupBefore = startupValue,
             StartupStateBefore = startupState,
             StartupStateAfter = startup?.Prepare(startupName, startupState!, null)
@@ -277,6 +342,22 @@ public sealed partial class MultiTargetIntegrationManager
         }
         var allowedPaths = manifests.SelectMany(Artifacts).Select(a => Canonical(a.Path))
             .Append(Canonical(configPath)).Append(Canonical(ManifestPath(configPath))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (journal.CredentialChanges is null || journal.CredentialChanges.Count > 2 ||
+            journal.CredentialChanges.Any(c => c is null || c.Reference is null) ||
+            journal.CredentialChanges.Select(c => c.Reference.Id).Distinct(StringComparer.Ordinal).Count() != journal.CredentialChanges.Count)
+            throw new InvalidDataException("Invalid protected credential recovery collection.");
+        var configChange = journal.Changes.SingleOrDefault(c => Same(c.Path, configPath));
+        var configs = configChange is null ? [] : new[] { configChange.Before, configChange.After }.Where(b => b is not null)
+            .Select(b => JsonSerializer.Deserialize<RemoteConfiguration>(b!, Protocol.Json)!).ToArray();
+        foreach (var credential in journal.CredentialChanges)
+        {
+            DiscoveryCredentialTransactionStore.ValidateReference(credential.Reference);
+            if (!configs.Any(c => c.MachineId == identity && c.Discovery == credential.Reference) ||
+                (credential.Before is not null && credential.After is not null && !Equal(credential.Before, credential.After)))
+                throw new InvalidDataException("Protected credential recovery ownership mismatch.");
+            foreach (var ciphertext in new[] { credential.Before, credential.After }.Where(b => b is not null))
+                new DiscoveryCredentialUpdate(credential.Reference, ciphertext!).Validate();
+        }
         if (journal.Changes.Any(c => !allowedPaths.Contains(Canonical(c.Path))) ||
             journal.StartupName != IntegrationStartup.Name(configPath) ||
             journal.TaskName != ScheduledTaskDefinition.Name(identity) ||

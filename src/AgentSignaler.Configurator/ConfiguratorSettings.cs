@@ -4,7 +4,8 @@ using AgentSignaler.Remote;
 
 namespace AgentSignaler.Configurator;
 
-internal sealed record ConfiguratorSettings(string LastSuccessfulDashboardUrl)
+internal sealed record ConfiguratorSettings(string? LastSuccessfulDashboardUrl,
+    RemoteConnectionMode SelectedConnectionMode = RemoteConnectionMode.Direct)
 {
     internal static string FilePath => Path.Combine(RemotePaths.DefaultDirectory, "configurator-settings.json");
 
@@ -28,13 +29,27 @@ internal sealed record ConfiguratorSettings(string LastSuccessfulDashboardUrl)
         if (!File.Exists(path)) return null;
         var settings = JsonSerializer.Deserialize<ConfiguratorSettings>(AtomicFile.ReadBounded(path, 8192), Protocol.Json)
             ?? throw new InvalidDataException("Missing Configurator settings.");
+        if (!Enum.IsDefined(settings.SelectedConnectionMode))
+            throw new InvalidDataException("Unsupported saved connection mode.");
+        if (settings.SelectedConnectionMode == RemoteConnectionMode.PrivateAzureDiscovery) return null;
         return new RemoteConfiguration { MachineId = machineId }
-            .WithDashboardUrl(settings.LastSuccessfulDashboardUrl).BaseUri.GetLeftPart(UriPartial.Authority);
+            .WithDashboardUrl(settings.LastSuccessfulDashboardUrl!).BaseUri.GetLeftPart(UriPartial.Authority);
+    }
+
+    internal static RemoteConnectionMode LoadMode(string path)
+    {
+        if (!File.Exists(path)) return RemoteConnectionMode.Direct;
+        var settings = JsonSerializer.Deserialize<ConfiguratorSettings>(AtomicFile.ReadBounded(path, 8192), Protocol.Json)
+            ?? throw new InvalidDataException("Missing Configurator settings.");
+        if (!Enum.IsDefined(settings.SelectedConnectionMode)) throw new InvalidDataException("Unsupported saved connection mode.");
+        return settings.SelectedConnectionMode;
     }
 
     internal static void SaveUrl(string path, RemoteConfiguration configuration)
     {
-        var settings = new ConfiguratorSettings(configuration.BaseUri.AbsoluteUri);
+        configuration.Validate();
+        var settings = new ConfiguratorSettings(configuration.ConnectionMode == RemoteConnectionMode.Direct
+            ? configuration.BaseUri.AbsoluteUri : null, configuration.ConnectionMode);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(settings, Protocol.Json);
         if (bytes.Length > 8192) throw new InvalidDataException("Saved dashboard URL is too long.");
         AtomicFile.Write(path, bytes);

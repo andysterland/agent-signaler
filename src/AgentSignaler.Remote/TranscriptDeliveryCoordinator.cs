@@ -26,10 +26,12 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
     private readonly SemaphoreSlim _wake = new(0, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource _run = new();
+    private CancellationTokenSource _closeCancellation = new();
     private readonly LinkedList<Entry> _queue = new();
     private readonly Dictionary<string, StreamState> _streams = new(StringComparer.Ordinal);
     private readonly Task _worker;
     private RemoteConfiguration? _configuration;
+    private EffectiveEndpointSnapshot? _endpoint;
     private long _generation;
     private long _revision;
     private bool _started;
@@ -81,6 +83,10 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
     public int AccountedBytes { get { lock (_sync) return _bytes; } }
 
     public void Configure(RemoteConfiguration configuration, long generation, long revision)
+        => Configure(configuration, generation, revision, EffectiveEndpointSnapshot.Direct(configuration));
+
+    public void Configure(RemoteConfiguration configuration, long generation, long revision,
+        EffectiveEndpointSnapshot endpoint)
     {
         configuration.Validate();
         if (generation <= 0 || revision < 0) throw new ArgumentOutOfRangeException(nameof(generation));
@@ -90,17 +96,54 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
             if (_configuration == configuration && _generation == generation && _revision == revision) return;
             ResetCore("configuration-changed", close: true);
             _configuration = configuration;
+            _endpoint = endpoint;
             _generation = generation;
             _revision = revision;
             _started = false;
-            _suspended = configuration.Version != 5 || !configuration.DetailedReportingEnabled ||
-                !TranscriptTransport.IsCanonicalHttps(configuration.BaseUri);
-            _status = configuration.Version != 5 ? "legacy-status-only" :
+            _suspended = configuration.Version < 5 || !configuration.DetailedReportingEnabled ||
+                !TranscriptTransport.IsCanonicalHttps(endpoint.BaseUri) || !endpoint.IsValid(_clock);
+            _status = configuration.Version < 5 ? "legacy-status-only" :
                 !configuration.DetailedReportingEnabled ? "sharing-disabled" :
-                !TranscriptTransport.IsCanonicalHttps(configuration.BaseUri) ? "https-required" : "waiting-for-presence";
+                !TranscriptTransport.IsCanonicalHttps(endpoint.BaseUri) ? "https-required" :
+                !endpoint.IsValid(_clock) ? "discovery-unavailable" : "waiting-for-presence";
         }
         Invalidated?.Invoke(null, "configuration-changed");
         Wake();
+    }
+
+    public void RenewEndpoint(EffectiveEndpointSnapshot endpoint)
+    {
+        lock (_sync)
+        {
+            if (_endpoint?.BaseUri == endpoint.BaseUri && _endpoint.EndpointRevision == endpoint.EndpointRevision)
+                _endpoint = endpoint;
+        }
+    }
+
+    public void InvalidateEndpoint(string category)
+    {
+        lock (_sync)
+        {
+            if (_stopping) return;
+            ResetCore(category, close: false);
+            _closeCancellation.Cancel();
+            _closeCancellation.Dispose();
+            _closeCancellation = new();
+            _close = null;
+            _endpoint = null;
+            _suspended = true;
+        }
+        Invalidated?.Invoke(null, category);
+        Wake();
+    }
+
+    public async Task DrainEndpointAsync(CancellationToken token)
+    {
+        Task<TranscriptTransportResult>? request;
+        lock (_sync) request = _activeRequest;
+        if (request is null) return;
+        try { await request.WaitAsync(token).ConfigureAwait(false); }
+        catch (Exception ex) when (request.IsCompleted && ex is OperationCanceledException or HttpRequestException or IOException) { }
     }
 
     public void StartedAcknowledged()
@@ -230,6 +273,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
     }
 
     private bool ReadyCore() => !_stopping && !_suspended && !_capturePaused && !_requestCleanupPending && _started &&
+        _endpoint?.IsValid(_clock) == true &&
         _capabilities is { Enabled: true, Ready: true } && _clock.GetUtcNow() < _lease;
 
     private bool Supported(TranscriptPayload payload) => (_capabilities!.Capabilities, payload) switch
@@ -252,12 +296,12 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         _run.Cancel();
         _run.Dispose();
         _run = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        if (close && _configuration is not null && _capabilities is not null)
+        if (close && _configuration is not null && _capabilities is not null && _endpoint?.IsValid(_clock) == true)
         {
             var stream = _streams.Values.FirstOrDefault(s => s.Opened);
             if (stream is not null)
-                _close = new(_configuration.BaseUri, new(TranscriptProtocol.Version, _configuration.MachineId,
-                    _generation, _capabilities.ReceiverEpoch, stream.Id, true));
+                _close = new(_endpoint, new(TranscriptProtocol.Version, _configuration.MachineId,
+                    _generation, _capabilities.ReceiverEpoch, stream.Id, true), _closeCancellation.Token);
         }
         _queue.Clear();
         _streams.Clear();
@@ -302,9 +346,15 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
                     continue;
                 }
                 lock (_sync) { close = _close; _close = null; stop = _stopping; }
-                if (close is not null)
-                    await SendAsync(close.Endpoint, TranscriptOperation.Close, Serialize(close.Request),
-                        _lifetime.Token).ConfigureAwait(false);
+                if (close is not null && close.Endpoint.IsValid(_clock) && !close.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await SendAsync(close.Endpoint.BaseUri, TranscriptOperation.Close, Serialize(close.Request),
+                            close.Token, close.Endpoint.ValidUntilUtc).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (close.Token.IsCancellationRequested) { }
+                }
                 if (stop) return;
                 if (!await PumpAsync().ConfigureAwait(false))
                     await _wake.WaitAsync(TimeSpan.FromMilliseconds(250), _lifetime.Token).ConfigureAwait(false);
@@ -316,6 +366,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
     private async Task<bool> PumpAsync()
     {
         RemoteConfiguration config;
+        EffectiveEndpointSnapshot endpoint;
         long revision;
         CancellationToken token;
         bool negotiate;
@@ -331,8 +382,9 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
                     DropCore(node.Value, TranscriptGapReason.Expired);
                 node = next;
             }
-            if (_configuration is null || !_started || _suspended || _stopping) return false;
+            if (_configuration is null || _endpoint?.IsValid(_clock) != true || !_started || _suspended || _stopping) return false;
             config = _configuration;
+            endpoint = _endpoint;
             revision = _revision;
             token = _run.Token;
             if (_capabilities is not null && now >= _lease)
@@ -346,7 +398,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         if (expired) Invalidated?.Invoke(null, "capability-expired");
         try
         {
-            if (negotiate) return await NegotiateAsync(config, revision, token).ConfigureAwait(false);
+            if (negotiate) return await NegotiateAsync(config, endpoint, revision, token).ConfigureAwait(false);
             StreamState? stream;
             Entry? entry;
             GapState? gap;
@@ -365,10 +417,10 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
                 SuspendCurrent("source-ineligible", revision, token);
                 return false;
             }
-            if (!stream.Opened) return await OpenAsync(config, stream, revision, token).ConfigureAwait(false);
+            if (!stream.Opened) return await OpenAsync(config, endpoint, stream, revision, token).ConfigureAwait(false);
             return gap is not null
-                ? await DeliverGapAsync(config, stream, gap, revision, token).ConfigureAwait(false)
-                : entry is not null && await DeliverEntryAsync(config, entry, revision, token).ConfigureAwait(false);
+                ? await DeliverGapAsync(config, endpoint, stream, gap, revision, token).ConfigureAwait(false)
+                : entry is not null && await DeliverEntryAsync(config, endpoint, entry, revision, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested || _lifetime.IsCancellationRequested)
         {
@@ -378,7 +430,8 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         catch (InvalidDataException) { SuspendCurrent("invalid-protocol", revision, token); return false; }
     }
 
-    private async Task<bool> NegotiateAsync(RemoteConfiguration config, long revision, CancellationToken token)
+    private async Task<bool> NegotiateAsync(RemoteConfiguration config, EffectiveEndpointSnapshot endpoint,
+        long revision, CancellationToken token)
     {
         var sources = config.Integrations.Count == 0 ? [SourceDescriptor.LegacyCli] :
             config.Integrations.Select(target => new SourceDescriptor(target.Kind, target.ScopeId,
@@ -399,7 +452,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
             }
             _negotiateAttempts++;
         }
-        var result = await SendAsync(config.BaseUri, TranscriptOperation.Capabilities,
+        var result = await SendAsync(endpoint.BaseUri, TranscriptOperation.Capabilities,
             Serialize(new TranscriptCapabilitiesRequest(TranscriptProtocol.Version, config.MachineId)), token).ConfigureAwait(false);
         if (token.IsCancellationRequested) return false;
         if (result.StatusCode == 200 && result.Failure is null)
@@ -461,7 +514,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         (!previous.SessionStarted || current.SessionStarted) &&
         (!previous.SessionEnded || current.SessionEnded) && (!previous.StopObserved || current.StopObserved);
 
-    private async Task<bool> OpenAsync(RemoteConfiguration config, StreamState stream, long revision,
+    private async Task<bool> OpenAsync(RemoteConfiguration config, EffectiveEndpointSnapshot endpoint, StreamState stream, long revision,
         CancellationToken token)
     {
         TranscriptOpenRequest? request = null;
@@ -481,7 +534,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         }
         if (request is null) { Invalidated?.Invoke(stream.Source, "delivery-exhausted"); return false; }
         if (!_eligible(stream.Source, revision)) { SuspendCurrent("source-ineligible", revision, token); return false; }
-        var result = await SendAsync(config.BaseUri, TranscriptOperation.Open, Serialize(request), token,
+        var result = await SendAsync(endpoint.BaseUri, TranscriptOperation.Open, Serialize(request), token,
             stream.Created + Lifetime).ConfigureAwait(false);
         if (token.IsCancellationRequested) return false;
         if (result.StatusCode == 200 && result.Failure is null)
@@ -505,7 +558,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> DeliverEntryAsync(RemoteConfiguration config, Entry entry, long revision,
+    private async Task<bool> DeliverEntryAsync(RemoteConfiguration config, EffectiveEndpointSnapshot endpoint, Entry entry, long revision,
         CancellationToken token)
     {
         if (!_eligible(entry.Stream.Source, revision)) { SuspendCurrent("source-ineligible", revision, token); return false; }
@@ -521,7 +574,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         TranscriptTransportResult result;
         try
         {
-            result = await SendAsync(config.BaseUri, TranscriptOperation.Event, entry.Bytes, token,
+            result = await SendAsync(endpoint.BaseUri, TranscriptOperation.Event, entry.Bytes, token,
                 entry.Expires).ConfigureAwait(false);
         }
         finally
@@ -564,7 +617,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> DeliverGapAsync(RemoteConfiguration config, StreamState stream, GapState gap,
+    private async Task<bool> DeliverGapAsync(RemoteConfiguration config, EffectiveEndpointSnapshot endpoint, StreamState stream, GapState gap,
         long revision, CancellationToken token)
     {
         byte[]? bytes = null;
@@ -581,7 +634,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         }
         if (bytes is null) { Invalidated?.Invoke(stream.Source, "delivery-exhausted"); return false; }
         if (!_eligible(stream.Source, revision)) { SuspendCurrent("source-ineligible", revision, token); return false; }
-        var result = await SendAsync(config.BaseUri, TranscriptOperation.Event, bytes, token,
+        var result = await SendAsync(endpoint.BaseUri, TranscriptOperation.Event, bytes, token,
             gap.Expires).ConfigureAwait(false);
         if (token.IsCancellationRequested) return false;
         if (ValidAck(result, stream, gap.Through))
@@ -798,6 +851,8 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         {
             if (_activeRequest is not null) throw new InvalidOperationException("Transcript request still owns transport.");
             if (_transportDisposed != 0) throw new OperationCanceledException(token);
+            if (operation != TranscriptOperation.Close && (_endpoint?.BaseUri != endpoint || !_endpoint.IsValid(_clock)))
+                return new(0, default, "discovery-unavailable");
             owner = operation == TranscriptOperation.Event ? _inflight : null;
         }
         try { request = _transport.SendAsync(endpoint, operation, bytes, linked.Token); }
@@ -986,6 +1041,7 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
             if (!_disposeReady || _resourcesDisposed || !_worker.IsCompleted || _activeRequest is not null) return;
             _resourcesDisposed = true;
             _run.Dispose();
+            _closeCancellation.Dispose();
             _lifetime.Dispose();
             _wake.Dispose();
         }
@@ -1038,5 +1094,5 @@ public sealed class TranscriptDeliveryCoordinator : IAsyncDisposable
         public DateTimeOffset NextAttempt { get; set; }
     }
 
-    private sealed record CloseWork(Uri Endpoint, TranscriptCloseRequest Request);
+    private sealed record CloseWork(EffectiveEndpointSnapshot Endpoint, TranscriptCloseRequest Request, CancellationToken Token);
 }

@@ -594,6 +594,41 @@ Failed migration rollback restores prior readable configuration/runtime without
 starting a stopped reporter. Successfully saved false must not be replaced by
 older true during recovery; report a conflict instead. See `installers\README.md`.
 
+#### Opt-in private Azure discovery (configuration v6)
+
+On **Connection**, select **Private Azure Blob discovery (opt in)** only when the
+Dashboard owner has explicitly provisioned discovery and supplied a connection
+package. Paste that bearer secret into the masked package control and choose
+**Import / replace package**. Import validates the package and prepares an
+immutable protected slot in memory; it does not write settings, contact Azure,
+install hooks or start Client. Remote machines need no Azure account or sign-in.
+
+**Test connection** reads the private blob, verifies the pinned publisher identity,
+signature, freshness and available endpoint, and rejects revisions below the
+Client's existing protected replay checkpoint before checking Dashboard health. It is
+read-only: no saved credential, hook, replay checkpoint or active configuration is
+created, repaired or advanced. An unavailable or expired document blocks setup; there is no direct-URL
+fallback. Select **Apply settings**, inspect the redacted preview and confirm to
+save the immutable credential and configuration in one ownership-checked,
+recoverable transaction. A running Client must acknowledge both the configuration
+hash and credential revision before the UI calls them effective.
+
+Only a current-user DPAPI-protected file contains the package/SAS. `remote.json`
+v6 contains the explicit connection mode, opaque protected slot/hash/revision,
+discovery identity and public verification key, never the bearer secret or a
+fallback endpoint. Previews and journals contain no plaintext credential; journals
+may contain opaque ciphertext for rollback. Sharing and integration preferences
+are retained during the explicit v6 upgrade. Upgrade Client, Relay and Configurator
+together; repair cannot downgrade v6 or silently discard its discovery state.
+
+To replace access, import a fresh package and apply its new immutable slot. To
+remove saved access, choose **Remove saved credential**, enter a verified direct
+Dashboard URL, then preview and Apply. Until Apply succeeds the saved connection is
+unchanged. Explicit conversion retains v6; downgrade is blocked. Modified or
+foreign credential files are never overwritten or deleted. Reader-group
+revocation affects every machine using the same package; private discovery does
+not authenticate the anonymous Dashboard receiver.
+
 Newly applied `remote.json` files also include `relayPath`, the absolute path to
 `AgentSignaler.Relay.exe`. Set **Remote relay location** on the **Hooks** tab to
 select a local remote installation; the default is beside Configurator. The saved
@@ -758,11 +793,14 @@ session state, or refresh machine liveness. Like Configurator's test, it include
 the connection-test header and shows the dashboard's **Test connection** message.
 The relay `heartbeat` command is removed.
 
-After a successful connection test or applied install/repair/update, the
-configurator remembers the dashboard URL in `configurator-settings.json` in its
-per-user data directory and reloads it when reopened. Failed or cancelled
-operations do not replace it. Testing does not change the active integration's
-`remote.json`; without a remembered URL, the existing integration URL is loaded.
+After an applied install/repair/update, Configurator remembers the selected mode
+and (for direct mode only) the dashboard URL in
+`configurator-settings.json`. These preferences contain no discovery package or
+SAS. A saved `remote.json` connection always takes precedence on reopening; a
+remembered URL cannot override discovery. Failed or cancelled tests do not replace
+the remembered preference. Direct-mode connection tests retain the existing
+last-successful-URL behavior. Private-discovery tests write no settings and never
+persist imported credentials or replay checkpoints.
 
 Standalone CLI discovery is independent of Visual Studio: its owned hook stays under
 `%COPILOT_HOME%\hooks\`, or `%USERPROFILE%\.copilot\hooks\` when unset. An IDE-bundled
@@ -798,7 +836,7 @@ Configurator has three fixed, non-closable, non-reorderable tabs:
 
 | Tab | Controls and workflow |
 | --- | --- |
-| **Connection** | Dashboard URL, heartbeat, Share detailed conversations with its external-consent/PII notice, machine UUID, saved/effective runtime status, Test connection / Cancel test, and Start client. |
+| **Connection** | Explicit direct/private-discovery selector; direct Dashboard URL or masked package import/replace/remove; heartbeat; Share detailed conversations with its external-consent/PII notice; machine UUID; saved/effective runtime status; Test connection / Cancel test; Start client. |
 | **Hooks** | Editable remote relay executable location, saved as `relayPath` in `remote.json` when applying settings. Discovered locations with Enable checkboxes and pending-change feedback. Refresh / Cancel discovery and Add custom location. Custom type and path editors appear only for explicitly added rows. |
 | **Review & maintenance** | Optional settings preview, integration transaction recovery, completion of a finished uninstall, cleanup of legacy diagnostic hooks, and full Uninstall integration. |
 

@@ -12,7 +12,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
     private readonly string _configPath;
     private readonly FileStream _owner;
     private readonly TimeProvider _clock;
-    private readonly Func<RemoteConfiguration, IPresenceTransport> _transportFactory;
+    private readonly Func<RemoteConfiguration, EffectiveEndpointSnapshot, IPresenceTransport> _transportFactory;
     private readonly DiagnosticLog _log;
     private readonly SessionStore _sessions;
     private readonly object _sync = new();
@@ -50,7 +50,9 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
     public ClientCoordinator(string configPath, TimeProvider? timeProvider = null,
         Func<RemoteConfiguration, IPresenceTransport>? transportFactory = null,
         ITranscriptTransport? transcriptTransport = null,
-        ITranscriptFileAdapterRegistry? transcriptFileAdapters = null)
+        ITranscriptFileAdapterRegistry? transcriptFileAdapters = null,
+        Func<RemoteConfiguration, IDiscoveryEndpointResolver>? discoveryResolverFactory = null,
+        Func<RemoteConfiguration, EffectiveEndpointSnapshot, IPresenceTransport>? endpointTransportFactory = null)
     {
         _configPath = ClientIdentity.CanonicalPath(configPath);
         _owner = ClientIdentity.AcquireOwner(_configPath);
@@ -58,8 +60,13 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         {
             (_configuration, _revision) = LoadRevision(_configPath);
             _clock = timeProvider ?? TimeProvider.System;
-            _transportFactory = transportFactory ?? (config => new PresenceTransport(config));
-            _transport = _transportFactory(_configuration);
+            _transportFactory = endpointTransportFactory ?? (transportFactory is not null
+                ? (config, _) => transportFactory(config)
+                : (config, endpoint) => new PresenceTransport(config, endpoint, timeProvider: _clock));
+            _discoveryResolverFactory = discoveryResolverFactory ?? CreateDiscoveryResolver;
+            _endpointSnapshot = _configuration.IsDiscovery ? null : EffectiveEndpointSnapshot.Direct(_configuration);
+            _transport = _endpointSnapshot is { } endpoint
+                ? _transportFactory(_configuration, endpoint) : new UnavailablePresenceTransport();
             _acknowledgedInterval = _configuration.HeartbeatIntervalSeconds;
             _log = new DiagnosticLog(RemotePaths.Log(_configPath));
             _sessions = new SessionStore(RemotePaths.State(_configPath), _log,
@@ -78,7 +85,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         {
             if (_worker is not null || _stopping) throw new InvalidOperationException("Client already started or stopped.");
             _generation = ClientIdentity.AllocateGeneration(_configPath);
-            ConfigureTranscripts(_configuration, _revision, _generation, false);
+            if (_endpointSnapshot is not null) ConfigureTranscripts(_configuration, _revision, _generation, false);
+            if (_configuration.IsDiscovery) StartDiscovery();
             _transcriptMonitor = Task.Run(MonitorTranscriptConfigurationAsync);
             // Hooks lost during deliberate Exit cannot safely be inferred at the next start.
             AtomicFile.Write(RemotePaths.State(_configPath), JsonSerializer.SerializeToUtf8Bytes(
@@ -99,8 +107,13 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
 
     private ClientIpcResponse Response(bool accepted, string? error = null) => new(accepted,
         _stopping ? "stopping" : _worker is null ? "unconfigured" : _reloading ? "reloading" :
+        _configuration.IsDiscovery && _endpointSnapshot?.IsValid(_clock) != true ? "discovery-unavailable" :
         _connected ? "connected" : "retrying", _effectiveRevision,
-        _effectiveRevision is null ? null : _acknowledgedInterval, error ?? _terminalReason ?? _deliveryError);
+        _effectiveRevision is null ? null : _acknowledgedInterval, error ?? _terminalReason ?? _discoveryError ?? _deliveryError)
+    {
+        EffectiveCredentialRevision = _configuration.IsDiscovery && _effectiveRevision == _revision &&
+            _endpointSnapshot?.IsValid(_clock) == true ? _configuration.DiscoveryCredentialRevision : null
+    };
 
     public Task<ClientIpcResponse> HandleAsync(ClientIpcRequest request, CancellationToken cancellationToken = default)
     {
@@ -157,6 +170,11 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             var local = _sessions.UpdateReport(kind, hook with { Timestamp = hook.Timestamp > now ? now : hook.Timestamp }, now);
             if (local.CapacityExceeded) return Response(false, "Session capacity reached. End an active session before retrying.");
             if (!local.Accepted) return Response(true);
+            if (_configuration.IsDiscovery && _endpointSnapshot?.IsValid(_clock) != true)
+            {
+                _snapshotPending = true;
+                return Response(true);
+            }
             _hooks.Enqueue(new StatusRequest
             {
                 EventId = Guid.NewGuid(), MachineId = _configuration.MachineId, MachineName = _configuration.MachineName,
@@ -188,6 +206,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             if (interruptRetry)
             {
                 _reconnectPending = true;
+                RequestDiscoveryRefresh();
                 if (_retryWake.CurrentCount == 0) _retryWake.Release();
             }
             Wake();
@@ -262,10 +281,12 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                 {
                     PresenceReport? report;
                     CancellationToken interrupt;
+                    long endpointRevision;
                     lock (_sync)
                     {
-                        if (_stopping || _reloading) continue;
+                        if (_stopping || _reloading || _endpointSnapshot?.IsValid(_clock) != true) continue;
                         interrupt = _interrupt.Token;
+                        endpointRevision = _endpointSnapshot.EndpointRevision;
                         _retryWake.Wait(0);
                         if (_reconnectPending && _startedAcknowledged)
                         {
@@ -297,7 +318,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                     var delivered = await SendBoundedAsync(report, interrupt);
                     lock (_sync)
                     {
-                        if (_stopping || _reloading) continue;
+                        if (_stopping || _reloading || _endpointSnapshot?.IsValid(_clock) != true ||
+                            _endpointSnapshot.EndpointRevision != endpointRevision) continue;
                         _connected = delivered;
                         if (delivered)
                         {
@@ -318,6 +340,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                         else
                         {
                             failed = true;
+                            RequestDiscoveryRefresh();
                             if (_clock.GetUtcNow() - _lastDiagnostic >= TimeSpan.FromMinutes(1))
                             {
                                 _log.Write("presence-retrying");
@@ -393,6 +416,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                 _inflightSend = null;
             }
             budget.Token.ThrowIfCancellationRequested();
+            lock (_sync)
+                if (_endpointSnapshot?.IsValid(_clock) != true) return false;
             // Canceling WaitAsync does not mean the transport has finished unwinding.
             // Keep the actual send as the barrier for normal reports and cooperative shutdown.
             _inflightSend = _transport.SendAsync(report, budget.Token);
@@ -430,6 +455,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
         { return new(false, "invalid", Error: "Committed configuration could not be loaded."); }
+        if (config.IsDiscovery || _configuration.IsDiscovery)
+            return await ReloadDiscoveryConfigurationAsync(config, revision, cancellationToken);
         lock (_sync)
         {
             if (_stopping || _reloading || _worker is null) return Response(false);
@@ -463,11 +490,13 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                 lock (_sync) offline = NewReport(PresenceKind.Offline);
                 oldOffline = await SendBoundedAsync(offline, cancellationToken);
                 var next = ClientIdentity.AllocateGeneration(_configPath);
-                var transport = _transportFactory(config);
+                var endpoint = EffectiveEndpointSnapshot.Direct(config);
+                var transport = _transportFactory(config, endpoint);
                 _transport.Dispose();
                 _transport = transport;
                 lock (_sync)
                 {
+                    _endpointSnapshot = endpoint;
                     _generation = next;
                     _sequence = 0;
                     _startedAcknowledged = false;
@@ -533,6 +562,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         {
             if (_stop is not null) return _stop;
             _stopping = true;
+            StopDiscovery();
             SuspendTranscripts("stopped");
             _timer?.Dispose();
             _lifetime.Cancel();
@@ -580,7 +610,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             await _delivery.WaitAsync(budget.Token);
             try
             {
-                if (_generation != 0)
+                if (_generation != 0 && _endpointSnapshot?.IsValid(_clock) == true)
                 {
                     PresenceReport offline;
                     lock (_sync) offline = NewReport(PresenceKind.Offline);
@@ -602,7 +632,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             }
         }
         if (!delivered) _log.Write("offline-unconfirmed");
-        try { await Task.WhenAll(detailsStopped, readerStopped).WaitAsync(budget.Token); }
+        try { await Task.WhenAll(detailsStopped, readerStopped, _discoveryWorker ?? Task.CompletedTask).WaitAsync(budget.Token); }
         catch (OperationCanceledException) when (budget.IsCancellationRequested)
         {
             _log.Write("transcript-shutdown-timeout");
@@ -615,7 +645,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         var bytes = AtomicFile.ReadBounded(path, 262144);
         var config = JsonSerializer.Deserialize<RemoteConfiguration>(bytes, Protocol.Json) ?? throw new InvalidDataException();
         config.Validate();
-        if (config.Version is not (3 or 4 or 5))
+        if (config.Version is not (3 or 4 or 5 or 6))
             throw new InvalidDataException("Apply managed configuration in Configurator before starting Client.");
         return (config, Convert.ToHexString(SHA256.HashData(bytes)));
     }
@@ -627,6 +657,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
             await StopAsync();
             if (_worker is not null) await _worker;
             if (_transcriptMonitor is not null) await _transcriptMonitor;
+            if (_discoveryWorker is not null) await _discoveryWorker;
+            if (_discoveryResolver is not null) await _discoveryResolver.DisposeAsync();
             _transcripts.Invalidated -= TranscriptInvalidated;
             await _transcripts.DisposeAsync();
         }
@@ -643,6 +675,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
                 _interrupt.Dispose();
                 _wake.Dispose();
                 _retryWake.Dispose();
+                _discoveryWake.Dispose();
+                _discoveryRun?.Dispose();
                 _delivery.Dispose();
                 _owner.Dispose();
             }

@@ -37,7 +37,8 @@ public sealed partial class ClientCoordinator
     private void InitializeTranscripts(ITranscriptTransport? transport, ITranscriptFileAdapterRegistry? adapters)
     {
         _transcriptAdapters = adapters ?? VerifiedTranscriptFileAdapterRegistry.Production;
-        _transcripts = new(transport ?? new TranscriptTransport(timeProvider: _clock), IsTranscriptEligible, _clock);
+        _transcripts = new(new DiscoveryAwareTranscriptTransport(this,
+            transport ?? new TranscriptTransport(timeProvider: _clock)), IsTranscriptEligible, _clock);
         _transcriptReader = new(_transcriptAdapters,
             reference => IsTranscriptEligible(reference.Source, reference.SettingsRevision) && _transcripts.IsReady,
             AdmitReaderOutputAsync, TranscriptScratch, _clock);
@@ -46,7 +47,8 @@ public sealed partial class ClientCoordinator
 
     private void TranscriptInvalidated(SourceDescriptor? source, string category) => _transcriptReader.Reset();
 
-    private long SuspendTranscripts(string category, bool explicitSuspension = false, TranscriptRun? expectedRun = null)
+    private long SuspendTranscripts(string category, bool explicitSuspension = false, TranscriptRun? expectedRun = null,
+        bool invalidateEndpoint = false)
     {
         lock (_transcriptConfigurationGate)
         {
@@ -59,7 +61,8 @@ public sealed partial class ClientCoordinator
             }
             var revision = Interlocked.Increment(ref _transcriptRevision);
             _transcriptReader.Reset();
-            _transcripts.Suspend(category);
+            if (invalidateEndpoint) _transcripts.InvalidateEndpoint(category);
+            else _transcripts.Suspend(category);
             return revision;
         }
     }
@@ -72,7 +75,13 @@ public sealed partial class ClientCoordinator
             Volatile.Write(ref _transcriptRun, new(configuration, hash, generation, revision));
             Interlocked.Exchange(ref _transcriptPresenceStarted, 0);
             Interlocked.Exchange(ref _transcriptSuspended, 0);
-            _transcripts.Configure(configuration, generation, revision);
+            if (_endpointSnapshot is not { } endpoint || !endpoint.IsValid(_clock))
+            {
+                _transcripts.InvalidateEndpoint("discovery-unavailable");
+                Interlocked.Exchange(ref _transcriptSuspended, 1);
+                return;
+            }
+            _transcripts.Configure(configuration, generation, revision, endpoint);
             if (Volatile.Read(ref _transcriptExplicitSuspension) != 0)
             {
                 _transcripts.Suspend("sharing-suspended-preference-not-confirmed");
@@ -85,7 +94,8 @@ public sealed partial class ClientCoordinator
     private void TranscriptStartedAcknowledged()
     {
         var run = Volatile.Read(ref _transcriptRun);
-        if (run is null || run.Generation != _generation || run.Configuration.BaseUri != _configuration.BaseUri) return;
+        if (run is null || run.Generation != _generation || _endpointSnapshot is not { } endpoint ||
+            !endpoint.IsValid(_clock) || !run.Configuration.IsDiscovery && run.Configuration.BaseUri != endpoint.BaseUri) return;
         if (Interlocked.Exchange(ref _transcriptPresenceStarted, 1) == 0)
             _transcripts.StartedAcknowledged();
     }
@@ -96,7 +106,8 @@ public sealed partial class ClientCoordinator
         if (run is null || Volatile.Read(ref _transcriptSuspended) != 0 ||
             revision != run.Revision || revision != Interlocked.Read(ref _transcriptRevision) ||
             !run.Configuration.IsDetailedReportingEnabled ||
-            run.Configuration.BaseUri.Scheme != Uri.UriSchemeHttps || source is not { IsValid: true })
+            _endpointSnapshot is not { } endpoint || !endpoint.IsValid(_clock) ||
+            endpoint.BaseUri.Scheme != Uri.UriSchemeHttps || source is not { IsValid: true })
             return false;
         try
         {
@@ -171,8 +182,11 @@ public sealed partial class ClientCoordinator
                         return new(false, "sharing-suspended-preference-not-saved");
                     Interlocked.Exchange(ref _transcriptExplicitSuspension, 0);
                     _transcriptSuspensionHash = null;
-                    ConfigureTranscripts(config, hash, _generation,
-                        _startedAcknowledged && config.BaseUri == _configuration.BaseUri);
+                    if (config.IsDiscovery != _configuration.IsDiscovery ||
+                        config.IsDiscovery && config != _configuration)
+                        return new(false, "connection-reload-required");
+                    ConfigureTranscripts(config, hash, _generation, _startedAcknowledged &&
+                        (config.IsDiscovery || config.BaseUri == _configuration.BaseUri));
                 }
                 return new(true, "transcript-reloaded", hash);
             }
@@ -294,4 +308,24 @@ public sealed partial class ClientCoordinator
     };
 
     private sealed record TranscriptRun(RemoteConfiguration Configuration, string Hash, long Generation, long Revision);
+
+    private sealed class DiscoveryAwareTranscriptTransport(ClientCoordinator owner, ITranscriptTransport inner) : ITranscriptTransport
+    {
+        public async Task<TranscriptTransportResult> SendAsync(Uri baseUri, TranscriptOperation operation,
+            ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
+        {
+            lock (owner._sync)
+            {
+                if (owner._configuration.IsDiscovery &&
+                    (owner._endpointSnapshot is not { } endpoint || !endpoint.IsValid(owner._clock) || endpoint.BaseUri != baseUri))
+                    return new(0, default, "discovery-unavailable");
+            }
+            var result = await inner.SendAsync(baseUri, operation, body, cancellationToken).ConfigureAwait(false);
+            if (result.Failure is not null || result.Retryable || result.StatusCode is 401 or 403 or 404 or 410)
+                owner.RequestDiscoveryRefresh();
+            return result;
+        }
+
+        public void Dispose() => inner.Dispose();
+    }
 }

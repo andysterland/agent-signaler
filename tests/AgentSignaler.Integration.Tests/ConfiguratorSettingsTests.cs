@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using AgentSignaler.Configurator;
 using AgentSignaler.Contracts;
 using AgentSignaler.Remote;
+using AgentSignaler.Discovery;
 
 namespace AgentSignaler.Integration.Tests;
 
@@ -96,6 +98,32 @@ public sealed class ConfiguratorSettingsTests : IDisposable
         Assert.Equal("https://latest.test", ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
         Assert.Equal(original, File.ReadAllBytes(configPath));
         Assert.Equal(2, Directory.GetFiles(directory).Length);
+    }
+
+    [Fact]
+    public void SavedDiscoveryModeNeverFallsBackToPreviousDirectUrlOrPersistsBearerSecrets()
+    {
+        ConfiguratorSettings.SaveUrl(SettingsPath, Configuration("https://previous.test"));
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var config = Configuration("https://unused.test").WithDiscovery(new(Guid.NewGuid().ToString("N"), new string('a', 64)),
+            Guid.NewGuid(), DiscoveryCodec.ExportPublicKey(key), 1);
+        ConfiguratorSettings.SaveUrl(SettingsPath, config);
+        Assert.Equal(RemoteConnectionMode.PrivateAzureDiscovery, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Null(ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        var saved = File.ReadAllText(SettingsPath);
+        Assert.DoesNotContain("previous.test", saved);
+        Assert.DoesNotContain("unused.test", saved);
+        Assert.DoesNotContain(config.Discovery!.Id, saved);
+        Assert.DoesNotContain("sig=", saved);
+        Assert.DoesNotContain("discoveryId", saved);
+    }
+
+    [Fact]
+    public void InvalidSavedModeIsRejectedInsteadOfFallingBackToDirectUrl()
+    {
+        AtomicFile.Write(SettingsPath, Encoding.UTF8.GetBytes("{\"lastSuccessfulDashboardUrl\":\"https://old.test/\",\"selectedConnectionMode\":99}"));
+        Assert.Throws<JsonException>(() => ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Throws<JsonException>(() => ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
     }
 
     [Fact]

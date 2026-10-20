@@ -30,13 +30,14 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
     public async Task<IntegrationRuntimeState> ReloadAsync(string configPath, CancellationToken token)
     {
         configPath = ClientIdentity.CanonicalPath(configPath);
-        if (File.Exists(configPath) && RemoteConfiguration.Load(configPath).Version >= 5)
+        var configuration = File.Exists(configPath) ? RemoteConfiguration.Load(configPath) : null;
+        if (configuration?.Version == 5)
             await ReloadTranscriptAsync(configPath, token);
         var current = await QueryAsync(configPath, token);
         if (!current.Running) return new(false, Message: "Client is stopped. Use Start client to resume reporting.");
         var revision = ClientConfigurationRevision.Read(configPath);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        budget.CancelAfter(TimeSpan.FromSeconds(configuration?.Version >= 6 ? 12 : 5));
         var response = await platform.SendAsync(configPath, new(ClientIpc.Version, "reload", ExpectedRevision: revision),
             budget.Token).WaitAsync(budget.Token);
         if (!response.Accepted)
@@ -80,7 +81,7 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
         if (current.Running) return current;
         var revision = ClientConfigurationRevision.Read(configPath);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        budget.CancelAfter(TimeSpan.FromSeconds(config.Version >= 6 ? 12 : 5));
         platform.Launch(Path.GetFullPath(clientPath), configPath);
         return await AwaitRevision(configPath, revision, new(false), token, budget.Token);
     }
@@ -88,13 +89,15 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
     private async Task<IntegrationRuntimeState> AwaitRevision(string configPath, string revision,
         IntegrationRuntimeState latest, CancellationToken caller, CancellationToken budget)
     {
+        var expected = RemoteConfiguration.Load(configPath);
         try
         {
             while (true)
             {
                 try { latest = await QueryAsync(configPath, budget); }
                 catch (InvalidOperationException) { }
-                if (latest.Running && latest.EffectiveRevision == revision) return latest;
+                if (latest.Running && latest.EffectiveRevision == revision &&
+                    (!expected.IsDiscovery || latest.EffectiveCredentialRevision == expected.DiscoveryCredentialRevision)) return latest;
                 await Task.Delay(100, budget);
             }
         }
@@ -127,7 +130,7 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
     }
 
     private static IntegrationRuntimeState State(ClientIpcResponse response) =>
-        new(true, response.EffectiveRevision, response.Error, response.HeartbeatIntervalSeconds);
+        new(true, response.EffectiveRevision, response.Error, response.HeartbeatIntervalSeconds, response.EffectiveCredentialRevision);
 }
 
 public sealed class WindowsClientRuntimePlatform : IClientRuntimePlatform

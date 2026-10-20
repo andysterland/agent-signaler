@@ -14,6 +14,54 @@ public sealed class TranscriptDeliveryTests
     private static readonly SourceDescriptor Source = new("copilot-cli", "synthetic", "test");
 
     [Fact]
+    public async Task EndpointInvalidationDrainsOldContentAndRequiresFreshStartedWithoutReplayOrClose()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transport = new FakeTransport
+        {
+            EventReply = async (value, token) =>
+            {
+                if (value.Payload is TranscriptMessage { Text: "old-inflight" })
+                {
+                    entered.TrySetResult();
+                    try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+                    catch (OperationCanceledException) { canceled.TrySetResult(); throw; }
+                }
+                return null;
+            }
+        };
+        var config = Configuration();
+        var first = new EffectiveEndpointSnapshot(new Uri("https://first.invalid/"), 1, DateTimeOffset.UtcNow.AddMinutes(10));
+        var second = new EffectiveEndpointSnapshot(new Uri("https://second.invalid/"), 2, DateTimeOffset.UtcNow.AddMinutes(10));
+        await using var delivery = new TranscriptDeliveryCoordinator(transport, (_, _) => true);
+        delivery.Configure(config, 1, 1, first);
+        delivery.StartedAcknowledged();
+        await Eventually(() => delivery.IsReady);
+        Assert.True(delivery.TryAccept(Message("old-inflight"), 1));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(delivery.TryAccept(Message("old-queued"), 1));
+        delivery.InvalidateEndpoint("discovery-unavailable");
+        await canceled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await delivery.DrainEndpointAsync(CancellationToken.None);
+        Assert.False(delivery.IsReady);
+        delivery.Configure(config, 2, 2, second);
+        Assert.False(delivery.TryAccept(Message("before-started"), 2));
+        Assert.DoesNotContain(transport.Calls, c => c.Endpoint == second.BaseUri);
+        delivery.StartedAcknowledged();
+        await Eventually(() => delivery.IsReady);
+        Assert.True(delivery.TryAccept(Message("new-content"), 2));
+        await Eventually(() => delivery.PendingEvents == 0);
+        var replacementEvents = transport.Calls.Where(c => c.Endpoint == second.BaseUri && c.Operation == TranscriptOperation.Event)
+            .Select(c => Read<TranscriptEvent>(c.Bytes)).ToArray();
+        Assert.Contains(replacementEvents, e => e.Payload is TranscriptMessage { Text: "new-content" } && e.Generation == 2);
+        Assert.DoesNotContain(replacementEvents, e => e.Payload is TranscriptMessage { Text: "old-queued" or "old-inflight" });
+        Assert.DoesNotContain(transport.Calls, c => c.Operation == TranscriptOperation.Close);
+        Assert.Equal(1, transport.MaximumConcurrent);
+        Assert.Equal("https://synthetic.invalid/", config.DashboardBaseUrl);
+    }
+
+    [Fact]
     public async Task V5RequiresAcknowledgedStartedAndNegotiationBeforeAdmission()
     {
         var transport = new FakeTransport();

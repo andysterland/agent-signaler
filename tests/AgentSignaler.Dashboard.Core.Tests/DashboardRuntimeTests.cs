@@ -1180,18 +1180,18 @@ public sealed class DashboardRuntimeTests
             });
         }
     }
-    private sealed class FakeProbe : ITunnelHealthProbe
+    internal sealed class FakeProbe : ITunnelHealthProbe
     {
         public Task VerifyAsync(Uri baseUri, CancellationToken token) => Task.CompletedTask;
     }
-    private sealed class FakeTunnelHost : ITunnelHostProcess
+    internal sealed class FakeTunnelHost : ITunnelHostProcess
     {
         private readonly TaskCompletionSource<int> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<int> Completion => completion.Task;
         public bool Disposed { get; private set; }
         public ValueTask DisposeAsync() { Disposed = true; completion.TrySetResult(0); return ValueTask.CompletedTask; }
     }
-    private sealed class FakeTunnelRunner : ITunnelProcessRunner
+    internal sealed class FakeTunnelRunner : ITunnelProcessRunner
     {
         private const string Account = """{"status":"Logged in","provider":"microsoft","username":"synthetic","tenantId":"11111111-1111-1111-1111-111111111111","objectId":"22222222-2222-2222-2222-222222222222"}""";
         private const string Acl = """[{"type":"Anonymous","subjects":[],"scopes":["connect"]}]""";
@@ -1282,7 +1282,7 @@ public sealed class DashboardRuntimeTests
         }
     }
 
-    private sealed class Fixture : IAsyncDisposable
+    internal sealed class Fixture : IAsyncDisposable
     {
         public string Directory { get; } = Path.GetFullPath(Path.Combine("test-artifacts", $"core-{Guid.NewGuid():N}"));
         public DashboardResourceLease Lease { get; }
@@ -1317,7 +1317,7 @@ public sealed class DashboardRuntimeTests
         }
     }
 
-    private sealed class ManualClock : TimeProvider
+    internal sealed class ManualClock : TimeProvider
     {
         private DateTimeOffset now = new(2026, 9, 16, 0, 0, 0, TimeSpan.Zero);
         private readonly List<ClockTimer> timers = [];

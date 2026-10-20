@@ -59,6 +59,8 @@ public sealed record DashboardRuntimeOptions
     internal IWindowsAppPlatform? WindowsAppPlatform { get; init; }
     internal ITunnelProcessRunner? TunnelRunner { get; init; }
     internal ITunnelHealthProbe? TunnelHealthProbe { get; init; }
+    internal IPrivateDiscoveryJournal? DiscoveryJournal { get; init; }
+    internal Func<PrivateDiscoveryTarget, IPrivateDiscoveryAzure>? DiscoveryAzure { get; init; }
     internal Func<string, TimeProvider, MachineStore>? StoreFactory { get; init; }
     internal Func<string, TimeProvider, CancellationToken, Task<MachineStore>>? CreateStoreAsync { get; init; }
     internal Func<MachineStore, CancellationToken, Task<IReadOnlyList<MachineView>>>? ReadMachinesAsync { get; init; }

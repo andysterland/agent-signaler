@@ -65,7 +65,7 @@ internal static class Program
             window = new TrayWindow(() =>
             {
                 if (!TryOpenConfigurator(out var error)) TrayWindow.ShowError(error!);
-            }, runtime.Status, runtime.RequestSnapshot, () => runtime.TranscriptStatusText);
+            }, runtime.Status, runtime.RequestSnapshot, () => runtime.DiscoveryStatusText + "; " + runtime.TranscriptStatusText);
             var tray = window;
             var exitStarted = 0;
             window.ExitRequested += quiet =>

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\AgentSignaler.Contracts\AgentSignaler.Contracts.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Discovery\AgentSignaler.Discovery.csproj" />
   </ItemGroup>
 </Project>

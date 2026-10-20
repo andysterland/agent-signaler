@@ -1,7 +1,7 @@
 namespace AgentSignaler.Remote;
 
 public sealed record IntegrationRuntimeState(bool Running, string? EffectiveRevision = null, string? Message = null,
-    int? HeartbeatIntervalSeconds = null);
+    int? HeartbeatIntervalSeconds = null, long? EffectiveCredentialRevision = null);
 
 public interface IIntegrationRuntime
 {

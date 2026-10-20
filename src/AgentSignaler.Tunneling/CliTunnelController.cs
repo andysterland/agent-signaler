@@ -143,6 +143,71 @@ public sealed class CliTunnelController : IAsyncDisposable
     public bool SupportsAutomaticResume => true;
     public Task MonitoringCompletion => Volatile.Read(ref monitoring);
 
+    public async Task VerifyPublishingEndpointAsync(Uri endpoint, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        var requestedGeneration = Interlocked.Read(ref generation);
+        await operations.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        operation.CancelAfter(TimeSpan.FromSeconds(45));
+        ITunnelHostProcess? currentHost = null;
+        try
+        {
+            lock (sync)
+            {
+                ObjectDisposedException.ThrowIf(disposed, this);
+                if (requestedGeneration != generation || !Status.CanCopy || Status.PublicUrl != endpoint ||
+                    host is null || host.Completion.IsCompleted)
+                    throw new TunnelException("Discovery requires the current verified owned relay host.");
+                currentHost = host;
+                activeStart = operation;
+            }
+            var token = operation.Token;
+            await CheckVersionAsync(token).ConfigureAwait(false);
+            var owner = await CliPrerequisiteChecks.CheckAccountAsync(runner, options.CliPath, options.CommandTimeout, token).ConfigureAwait(false);
+            if (!string.Equals(Identity.OwnerHash, owner, StringComparison.Ordinal))
+                throw new TunnelException("Discovery relay ownership verification failed.");
+            var id = Identity.TunnelId ?? throw new TunnelException("Discovery relay identity is unavailable.");
+            var (showResult, aclResult) = await ReadPairAsync(token,
+                ["show", id, "--json"], ["access", "list", id, "--json"]).ConfigureAwait(false);
+            using var show = TunnelValidation.Parse(showResult.StandardOutput);
+            var owned = TunnelValidation.Property(show.RootElement, "tunnel", JsonValueKind.Object);
+            VerifyOwnedTunnel(owned, allowOwnedHost: true);
+            var ports = TunnelValidation.Property(owned, "ports", JsonValueKind.Array);
+            if (ports.GetArrayLength() != 1) throw new TunnelException("Discovery relay port ownership drift detected.");
+            VerifyPort(ports[0], id, requireAcl: true);
+            using var acl = TunnelValidation.Parse(aclResult.StandardOutput);
+            TunnelValidation.NoTunnelAcl(TunnelValidation.Property(acl.RootElement, "accessControlEntries", JsonValueKind.Array));
+            var (portResult, portAclResult) = await ReadPairAsync(token,
+                ["port", "show", id, "--port-number", PortText, "--json"],
+                ["access", "list", id, "--port-number", PortText, "--json"]).ConfigureAwait(false);
+            using var port = TunnelValidation.Parse(portResult.StandardOutput);
+            VerifyPort(TunnelValidation.Property(port.RootElement, "port", JsonValueKind.Object), id, requireAcl: true);
+            using var portAcl = TunnelValidation.Parse(portAclResult.StandardOutput);
+            TunnelValidation.PortAcl(TunnelValidation.Property(portAcl.RootElement, "accessControlEntries", JsonValueKind.Array));
+            await probe.VerifyAsync(endpoint, token).WaitAsync(token).ConfigureAwait(false);
+            lock (sync)
+            {
+                token.ThrowIfCancellationRequested();
+                if (requestedGeneration != generation || !ReferenceEquals(currentHost, host) ||
+                    currentHost.Completion.IsCompleted || !Status.CanCopy || Status.PublicUrl != endpoint)
+                    throw new TunnelException("Discovery relay changed during verification.");
+            }
+        }
+        catch (Exception error) when (IsOperational(error) || error is OperationCanceledException)
+        {
+            lock (sync)
+                if (currentHost is not null && ReferenceEquals(currentHost, host) && requestedGeneration == generation)
+                    SetStatus(TunnelState.Reconnecting, "Discovery recheck failed. Public endpoint verification is required before publishing.");
+            throw;
+        }
+        finally
+        {
+            lock (sync) if (ReferenceEquals(activeStart, operation)) activeStart = null;
+            operations.Release();
+        }
+    }
+
     public Task StartAsync(CancellationToken cancellationToken = default) =>
         StartCoreAsync(null, cancellationToken);
 
@@ -469,7 +534,7 @@ public sealed class CliTunnelController : IAsyncDisposable
         account.Complete();
     }
 
-    private string VerifyOwnedTunnel(JsonElement tunnel)
+    private string VerifyOwnedTunnel(JsonElement tunnel, bool allowOwnedHost = false)
     {
         var id = TunnelValidation.Text(tunnel, "tunnelId");
         TunnelValidation.ValidateId(id);
@@ -477,7 +542,8 @@ public sealed class CliTunnelController : IAsyncDisposable
             (Identity.PendingTunnelId is not null && !id.StartsWith(Identity.PendingTunnelId + ".", StringComparison.Ordinal)) ||
             TunnelValidation.Text(tunnel, "description") != Description)
             throw new TunnelException("Tunnel ownership mismatch; the resource will not be changed or hosted.");
-        if (TunnelValidation.Number(tunnel, "hostConnections") != 0)
+        var hostConnections = TunnelValidation.Number(tunnel, "hostConnections");
+        if (hostConnections != 0 && (!allowOwnedHost || hostConnections != 1))
             throw new TunnelException("The service still reports a connected host. If you just stopped sharing, wait briefly and retry. " +
                 "Otherwise stop the other host explicitly; this dashboard will not evict it.");
         TunnelValidation.NoTunnelAcl(TunnelValidation.Property(tunnel, "accessControl", JsonValueKind.Array));

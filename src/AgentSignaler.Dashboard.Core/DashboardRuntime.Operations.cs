@@ -106,6 +106,8 @@ public sealed partial class DashboardRuntime
     internal Task<RuntimeResult<TunnelStatus>> SharingAsync(RuntimeSharingOperation operation, bool confirmed = false,
         CancellationToken cancellationToken = default)
     {
+        if (operation is RuntimeSharingOperation.Stop or RuntimeSharingOperation.Delete or RuntimeSharingOperation.Logout)
+            InvalidateDiscoveryPublishing();
         if (operation == RuntimeSharingOperation.Stop) return StopSharingAsync(cancellationToken);
         return ExecuteSharingAsync(operation, confirmed, cancellationToken);
     }

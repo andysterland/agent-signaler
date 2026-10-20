@@ -14,6 +14,8 @@ public binary release.
 | Microsoft Windows SDK Build Tools | Windows API build references | <https://www.nuget.org/packages/Microsoft.Windows.SDK.BuildTools> |
 | CommunityToolkit WinUI DataGrid | Configurator UI | <https://www.nuget.org/packages/CommunityToolkit.WinUI.UI.Controls.DataGrid> |
 | Microsoft.Data.Sqlite | Local dashboard persistence | <https://www.nuget.org/packages/Microsoft.Data.Sqlite> |
+| Azure.Identity and Azure.Storage.Blobs | Explicit Azure CLI authentication and private discovery storage on Dashboard | <https://github.com/Azure/azure-sdk-for-net> |
+| System.Security.Cryptography.ProtectedData | Current-user protection for Dashboard discovery state | <https://www.nuget.org/packages/System.Security.Cryptography.ProtectedData> |
 | SQLitePCLRaw.bundle_e_sqlite3 | Native SQLite bundle | <https://www.nuget.org/packages/SQLitePCLRaw.bundle_e_sqlite3> |
 | WiX Toolset SDK and Heat | MSI and Burn bundle builds | <https://github.com/wixtoolset/wix> |
 | xUnit and Microsoft.NET.Test.Sdk | Automated tests | <https://xunit.net/> and <https://www.nuget.org/packages/Microsoft.NET.Test.Sdk> |

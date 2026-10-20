@@ -17,6 +17,8 @@ public sealed record ClientIpcResponse(bool Accepted, string State, string? Effe
     [JsonRequired] public int Version { get; init; } = ClientIpc.Version;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public TranscriptNegotiation? Transcript { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? EffectiveCredentialRevision { get; init; }
 }
 
 public static class ClientIpc
@@ -46,7 +48,7 @@ public static class ClientIpc
         CancellationToken cancellationToken = default)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(request.Command == "stop" ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(2));
+        budget.CancelAfter(RequestTimeout(request.Command));
         try
         {
             using var pipe = new NamedPipeClientStream(".", ClientIdentity.PipeName(configPath), PipeDirection.InOut,
@@ -56,12 +58,18 @@ public static class ClientIpc
             var response = await ReadAsync<ClientIpcResponse>(pipe, budget.Token);
             return response.Version == request.Version ? response : new(false, "incompatible");
         }
+
         catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or
             JsonException or InvalidDataException or UnauthorizedAccessException)
         {
             return new(false, "unavailable", Error: "Client unavailable or incompatible. Start the client explicitly.");
         }
     }
+
+    internal static TimeSpan RequestTimeout(string command) => TimeSpan.FromSeconds(command switch
+    { "reload" => 12, "stop" => 5, _ => 2 });
+
+    internal static TimeSpan WorkTimeout(string command) => TimeSpan.FromSeconds(command == "reload" ? 12 : 5);
 
     internal static async Task<T> ReadAsync<T>(Stream stream, CancellationToken cancellationToken)
     {
@@ -205,7 +213,7 @@ public sealed class ClientIpcServer : IAsyncDisposable
                 using var frame = await ClientIpc.ReadFrameAsync<ClientIpcRequest>(pipe, _scratch, readBudget.Token, _content);
                 var request = frame.Value;
                 using var workBudget = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-                workBudget.CancelAfter(TimeSpan.FromSeconds(5));
+                workBudget.CancelAfter(ClientIpc.WorkTimeout(request.Command));
                 var supported = request.Version is ClientIpc.Version or ClientIpc.LegacyVersion;
                 var response = !supported
                     ? new ClientIpcResponse(false, "incompatible", Error: "Unsupported IPC version.")

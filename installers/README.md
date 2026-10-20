@@ -132,6 +132,29 @@ interrupted-transaction recovery must preserve a saved
 `"detailedReportingEnabled": false`; replacing it with an older true is a recovery conflict, not successful
 rollback. Failed opt-out persistence leaves the current Client run suspended.
 
+Private Azure discovery is a separate, explicit v6 configuration upgrade after
+Dashboard and the complete Remote binary set have been updated. Existing direct
+v1-v5 configurations keep their meaning; installation never silently imports a
+package or switches connection modes. V6 retains detailed-sharing and source
+preferences and stores only a protected credential reference in ordinary settings.
+Older binaries reject v6 rather than using an old or placeholder Dashboard URL.
+Repair and rollback must preserve the referenced current-user protected credential
+slots and their ciphertext hashes alongside the configuration transaction.
+
+Discovery cannot be downgraded to v5 or status-only v4 while it still references a
+discovery credential. First use Configurator to test and explicitly apply a direct
+Dashboard URL, then follow the coordinated servicing procedure. Never edit the
+version discriminator, copy a resolved endpoint into settings, or delete protected
+state to bypass this block. The Dashboard payload includes the discovery assembly
+and Azure SDK; Remote includes the shared discovery assembly but requires no Azure
+sign-in. Installer inspection checks these dependencies in published payloads.
+
+Packaging does not remove the current discovery platform block: the production
+Azure adapter refuses provisioning and stored-policy mutations because the selected
+ACL API cannot supply the required exact atomic concurrency guarantee. Fake-backed
+workflow acceptance is not live Azure setup support. See the
+[documented limitation](..\docs\private-azure-discovery.md) before deploying this mode.
+
 Normal MSI major upgrades and the updater block older versions. A deliberate
 v5-to-v4 recovery requires an explicit status-only configuration transaction:
 stop the exact owned Client, discard volatile detail, write validated v4, then
@@ -176,6 +199,15 @@ Before removing Dashboard, stop sharing and delete its cloud tunnel while signed
 in. Remove any unneeded Dashboard firewall rule through Settings. MSI uninstall
 does not remove cloud resources, shared CLIs, credentials, or administrator-managed
 firewall rules. If installed binaries were manually deleted, repair the MSI first.
+
+For private discovery, explicitly revoke reader access and remove owned discovery
+objects in Dashboard before uninstall if desired. Normal MSI uninstall never signs
+in to Azure or removes cloud storage, policies, account settings or role assignments.
+Retained resources can incur charges; reader policies expire unless maintained.
+Protected signing/credential state remains current-user-only and must not be copied
+as plaintext or silently replaced during repair. See the
+[private discovery cleanup and recovery guidance](..\docs\private-azure-discovery.md)
+for the deliberately retained container and deferred live acceptance checks.
 
 ## Release checks
 
