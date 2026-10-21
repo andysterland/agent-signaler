@@ -8,6 +8,7 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Agent Signaler Dashboard is already installed."
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="both" />
     <Property Id="PREREQUISITE_WARNING" Value="Direct MSI detects prerequisites only; it does not install or validate their trust. Use AgentSignaler.Dashboard.Setup.exe. Azure CLI 2.90.0+ Microsoft-signed x64 az.exe, the qualified Dev Tunnels CLI, and Windows App 2.0.804.0+ with ms-cloudpc registration are required for their respective features. Dashboard validates trust at use. No sign-in is performed." />
     <Property Id="AZURE_CLI_MSI_VERSION">
       <RegistrySearch Id="FindAzureCliMsi" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\$(var.AzureCliProductCode)"

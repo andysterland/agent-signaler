@@ -5,6 +5,8 @@ using System.Security;
 using System.Security.Principal;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using AgentSignaler.AppUpdates;
+using AgentSignaler.Updates;
 
 namespace AgentSignaler.Dashboard;
 
@@ -27,6 +29,7 @@ internal static class Program
 
         try
         {
+            using var updates = AppUpdateHost.Open(UpdatePackage.Dashboard);
             using var instance = new SingleInstance();
             if (!instance.IsPrimary)
             {
@@ -51,9 +54,14 @@ internal static class Program
             {
                 SynchronizationContext.SetSynchronizationContext(
                     new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
-                _ = new App(instance, resourceLease, args.Contains("--background"));
+                _ = new App(instance, resourceLease, updates, args.Contains("--background"));
             });
             return 0;
+        }
+        catch (UpdateStartupRefusedException error)
+        {
+            NativeWindow.ShowError(error.UserMessage);
+            return 4;
         }
         catch (DashboardOwnershipException)
         {
@@ -61,7 +69,12 @@ internal static class Program
                 "Older Dashboard versions must be exited and upgraded before sharing state.");
             return 3;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or
+        catch (InvalidOperationException)
+        {
+            NativeWindow.ShowError("Dashboard cannot start while this installation is being serviced or its installed maintenance scope cannot be verified. Wait for the update to finish. If servicing was interrupted, use the updater's recovery instructions before retrying; otherwise repair the signed MSI installation.");
+            return 4;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException or SecurityException or ArgumentException or
             COMException or Win32Exception or DllNotFoundException or BadImageFormatException or TypeLoadException)
         {
             // This is the process boundary: do not expose paths or machine/event data in errors.

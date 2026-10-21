@@ -41,6 +41,68 @@ uploads select only the two application packages explicitly; unrelated historica
 output is not a release input and is not broadly deleted. Release asset staging
 uses a fresh run-specific directory.
 
+### In-app release servicing
+
+Both application packages include `AgentSignaler.Updates.dll`, the installed
+`Update-AgentSignaler.ps1`, `UpdaterPolicy.ps1`, `UpdateHandoff.ps1`, and a
+versioned `UpdaterDependencies.json` descriptor. Scripts travel inside the MSI;
+an update never downloads and executes a replacement script. Release signing
+includes all three scripts, regenerates their SHA-256 pins after signing, and
+requires valid timestamped Authenticode signatures from **Andy Sterland** with
+code-signing authorization. Certificate renewal is supported without pinning a
+short-lived certificate thumbprint. Unsigned local builds cannot service an
+installed application through the in-app path.
+
+The first supporting release must be installed manually. Existing older versions
+cannot discover or bootstrap the newly bundled updater. Offers use the newest
+published non-draft release, including clearly marked prereleases, and never
+downgrade or install an uninstalled product. Client and Configurator are serviced
+together as Remote; Dashboard-only servicing does not stop a separate Client.
+
+Only an explicit in-app authorization enables captured restarts. The staged,
+non-elevated Windows PowerShell 5.1 process validates a protected, pinned manifest
+and acknowledges its exact current-user pipe before apps exit. Unsupported,
+foreign-session, nonconsenting, or stalled participants prevent MSI execution.
+There is one overall 60-second quiescence budget, no force-kill fallback, and no
+credential lookup for public app updates. Reporting pauses while Remote is being
+serviced. Manual invocation and `-WhatIf` retain their no-restart contract.
+The authoritative operation gate remains in `Restarting` through application
+health acknowledgement. Ordinary startups and competing updates stay blocked;
+only a protected, one-time grant for the exact new PID, creation time and captured
+launch context admits an updater-authorized restart.
+Authenticated local health may initially report not ready; the updater polls
+within one 30-second deadline, while malformed replies or identity changes fail
+immediately. Remote receiver connectivity is not a restart-health requirement.
+Client restart additionally requires its exact process handle, captured before
+readiness, to report the dedicated update-owned shutdown code. Ordinary Client
+Exit keeps reporting stopped, including during pre-servicing failure recovery;
+unknown shutdown intent never authorizes an automatic restart.
+
+The selected release, asset IDs/sizes, checksum manifest, package hash, publisher,
+MSI identity and exact current-user installation are revalidated before servicing.
+Read-only pins prevent package replacement. Windows Installer runs only with
+`/passive /norestart REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=Disable`.
+Exit `3010` leaves apps stopped and reports reboot required; Windows is never
+rebooted automatically. Exit `1618`, cancellation and other failures are distinct.
+There is no blind retry or automatic downgrade/rollback across products.
+
+Each operation retains its bounded `result.json` and capped installer log under
+`%LOCALAPPDATA%\AgentSignaler\Updates\<installation-key>\<run-id>`. Only unchanged
+downloads owned by a completed run are removed. A running or unknown MSI outcome
+retains its gate and exact installer PID/creation time for recovery; do not delete
+the gate or restart apps until Windows Installer is proven finished. A failed
+update restores captured apps before MSI only when the unchanged prior registered
+product and signed binary versions remain intact. After MSI failure, old binary
+versions alone do not prove configuration compatibility: leave apps stopped for
+explicit repair rather than assuming rollback completed. Restart health means local application readiness,
+not remote Dashboard connectivity. Otherwise leave apps stopped, inspect the
+result category, and repair manually as the original installing user. Do not
+automatically run an updater at sign-in or execute a package while diagnosing it.
+
+Development validation is fake-backed and build-and-inspect only. Production
+signing, real MSI execution, clean-image upgrade/rollback, reboot-required behavior
+and interactive update walkthroughs require separately authorized acceptance.
+
 ## Install
 
 Install as the intended Windows user. Both application packages are per-user

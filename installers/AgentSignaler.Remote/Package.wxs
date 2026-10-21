@@ -8,6 +8,7 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Agent Signaler Remote is already installed."
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="both" />
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="ProgramsFolder" Name="Programs">
         <Directory Id="AgentSignalerFolder" Name="AgentSignaler">

@@ -4,14 +4,18 @@ using AgentSignaler.Remote;
 
 namespace AgentSignaler.Client;
 
+internal sealed record TrayUpdateState(string Text, bool Available, bool Busy, string? Warning = null);
+internal sealed record TrayRecoveryState(string Summary);
+
 internal sealed class TrayWindow : IDisposable
 {
-    private const uint TrayMessage = 0x8001, CloseMessage = 0x8002;
+    private const uint TrayMessage = 0x8001, CloseMessage = 0x8002, UpdateMessage = 0x8003, RecoveryMessage = 0x8004;
     private readonly WindowProcedure _procedure;
     private readonly Action _open;
     private readonly Func<ClientIpcResponse> _status;
     private readonly Action _resume;
     private readonly Func<string> _details;
+    private readonly Func<bool> _canExit;
     private readonly uint _taskbarCreated;
     private readonly string _className = "AgentSignaler.Client." + Guid.NewGuid().ToString("N");
     private readonly nint _instance;
@@ -21,13 +25,35 @@ internal sealed class TrayWindow : IDisposable
     private bool _disposed;
     private bool _closing;
     public event Action<bool>? ExitRequested;
+    public event Action? UpdateCheckRequested;
+    public event Action? UpdateRequested;
+    private TrayUpdateState _pendingUpdate = new("Updates have not been checked yet", false, false);
+    private TrayUpdateState _update = new("Updates have not been checked yet", false, false);
+    private TrayRecoveryState? _pendingRecovery;
+    private TrayRecoveryState? _recovery;
 
-    public TrayWindow(Action open, Func<ClientIpcResponse> status, Action resume, Func<string> details)
+    public void SetRecoveryState(TrayRecoveryState state)
+    {
+        if (_disposed) return;
+        Interlocked.Exchange(ref _pendingRecovery, state);
+        PostMessage(_window, RecoveryMessage, 0, 0);
+    }
+
+    public void SetUpdateState(TrayUpdateState state)
+    {
+        if (_disposed) return;
+        Interlocked.Exchange(ref _pendingUpdate, state);
+        PostMessage(_window, UpdateMessage, 0, 0);
+    }
+
+    public TrayWindow(Action open, Func<ClientIpcResponse> status, Action resume, Func<string> details,
+        Func<bool>? canExit = null)
     {
         _open = open;
         _status = status;
         _resume = resume;
         _details = details;
+        _canExit = canExit ?? (() => true);
         _procedure = Procedure;
         _instance = GetModuleHandle(null);
         _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
@@ -79,7 +105,7 @@ internal sealed class TrayWindow : IDisposable
     {
         if (message == TrayMessage)
         {
-            if ((uint)lParam is 0x0202 or 0x0203) _open();
+            if ((uint)lParam is 0x0202 or 0x0203 && !_update.Busy) _open();
             if ((uint)lParam is 0x0205 or 0x007B) ShowMenu();
             return 0;
         }
@@ -96,6 +122,30 @@ internal sealed class TrayWindow : IDisposable
         }
         switch (message)
         {
+            case UpdateMessage:
+                _update = Volatile.Read(ref _pendingUpdate);
+                if (_update.Warning is { } warning)
+                {
+                    _icon.Flags |= 0x10;
+                    _icon.InfoTitle = "Agent Signaler update";
+                    _icon.Info = warning.Length <= 255 ? warning : warning[..255];
+                    _icon.InfoFlags = 2;
+                    ShellNotifyIcon(1, ref _icon);
+                    _icon.Flags &= ~0x10u;
+                }
+                return 0;
+            case RecoveryMessage:
+                _recovery = Volatile.Read(ref _pendingRecovery);
+                if (_recovery is not null && !_closing)
+                {
+                    _icon.Flags |= 0x10;
+                    _icon.InfoTitle = "Retained update results";
+                    _icon.Info = _recovery.Summary;
+                    _icon.InfoFlags = 2;
+                    ShellNotifyIcon(1, ref _icon);
+                    _icon.Flags &= ~0x10u;
+                }
+                return 0;
             case 0x0113: // WM_TIMER
                 if (wParam == 2) { PostQuitMessage(0); return 0; }
                 var state = _status().State;
@@ -103,7 +153,7 @@ internal sealed class TrayWindow : IDisposable
                 ShellNotifyIcon(1, ref _icon);
                 return 0;
             case 0x0010: // WM_CLOSE
-                ExitRequested?.Invoke(false);
+                if (_canExit()) ExitRequested?.Invoke(false);
                 return 0;
             case 0x0011: // WM_QUERYENDSESSION
                 ExitRequested?.Invoke(true);
@@ -125,6 +175,7 @@ internal sealed class TrayWindow : IDisposable
                     _icon.Info = _exitWarning;
                     _icon.InfoFlags = 2;
                     ShellNotifyIcon(1, ref _icon);
+                    _icon.Flags &= ~0x10u;
                     if (SetTimer(_window, 2, 500, 0) != 0) return 0;
                 }
                 PostQuitMessage(0);
@@ -140,13 +191,26 @@ internal sealed class TrayWindow : IDisposable
         try
         {
             AppendMenu(menu, 0x0002, 0, _details());
-            AppendMenu(menu, 0, 1, "Open Configurator");
-            AppendMenu(menu, 0, 2, "Exit");
+            var version = typeof(TrayWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+            AppendMenu(menu, 0x0002, 0, $"v{version} — {_update.Text}");
+            AppendMenu(menu, _update.Busy ? 0x0002u : 0u, 3, "Check for updates");
+            if (_update.Available) AppendMenu(menu, _update.Busy ? 0x0002u : 0u, 4, "Update now");
+            AppendMenu(menu, _update.Busy ? 0x0002u : 0u, 1, "Open Configurator");
+            if (_recovery is not null)
+            {
+                AppendMenu(menu, 0x0002, 0, _recovery.Summary);
+                AppendMenu(menu, _update.Busy ? 0x0002u : 0u, 5, "Update recovery results (open Remote setup)");
+            }
+            AppendMenu(menu, _canExit() ? 0u : 0x0002u, 2, "Exit");
             GetCursorPos(out var point);
             SetForegroundWindow(_window);
             var command = TrackPopupMenu(menu, 0x0100 | 0x0002, point.X, point.Y, 0, _window, 0);
             if (command == 1) _open();
-            else if (command == 2) ExitRequested?.Invoke(false);
+            else if (command == 2 && _canExit()) ExitRequested?.Invoke(false);
+            else if (command == 3 && !_update.Busy) UpdateCheckRequested?.Invoke();
+            else if (command == 4 && _update.Available && !_update.Busy)
+                UpdateRequested?.Invoke();
+            else if (command == 5 && !_update.Busy) _open();
             PostMessage(_window, 0, 0, 0);
         }
         finally { DestroyMenu(menu); }

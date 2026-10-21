@@ -35,8 +35,9 @@ public sealed partial class MainWindow : Window
     private readonly IIntegrationRuntime runtime = new ClientIntegrationRuntime();
     private readonly IIntegrationStartup startup = new WindowsIntegrationStartup();
 
-    public MainWindow()
+    internal MainWindow(AgentSignaler.AppUpdates.AppUpdateHost updateHost)
     {
+        this.updateHost = updateHost;
         InitializeComponent();
         HooksGrid.ItemsSource = rows;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "AgentSignaler.ico"));
@@ -51,6 +52,18 @@ public sealed partial class MainWindow : Window
         RelayPathBox.Text = Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Relay.exe");
         RelayPathText.Text = $"Relay: {Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Relay.exe")}";
         RootPanel.Loaded += async (_, _) => await InitializeAsync();
+        InitializeUpdates();
+        AppWindow.Closing += async (_, args) =>
+        {
+            if (allowUpdateClose) return;
+            args.Cancel = true;
+            if ((busy || updatePreparing) && !updateCleanupFailed)
+            {
+                ShowStatus("Wait for the active operation or cancel it before closing.", InfoBarSeverity.Warning);
+                return;
+            }
+            await CloseForUpdateOrExitAsync();
+        };
         Closed += (_, _) =>
         {
             closed = true;
@@ -65,6 +78,9 @@ public sealed partial class MainWindow : Window
         SetBusy(true);
         try
         {
+            await Task.Run(() => updateHost.RegisterAsync(
+                new AgentSignaler.Updates.UpdateRestartContext(AgentSignaler.Updates.UpdateApplication.Configurator,
+                    ConfigPath, false), updateParticipant!, windowLifetime.Token));
             machineId = MachineIdentity.GetOrCreate(Path.GetDirectoryName(ConfigPath)!);
             IdentityBox.Text = machineId.ToString("D");
             if (File.Exists(ConfigPath))
@@ -107,6 +123,7 @@ public sealed partial class MainWindow : Window
                 ShowStatus("An uninstall journal is still present. After Windows Installer has finished, use Review & maintenance > Complete finished uninstall. " +
                     "Do not delete the journal manually or restore removed hooks.",
                     InfoBarSeverity.Warning, "Uninstall completion pending");
+            CaptureSavedUpdateState();
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { ShowError(ex); }
         finally { SetBusy(false); }
@@ -169,6 +186,7 @@ public sealed partial class MainWindow : Window
         DiscoveryText.Text = $"{targets.Count} Copilot locations; {saved.Count} enabled in saved settings.";
         UpdateHookSelection();
         await RefreshRuntimeAsync();
+        if (!preserveSelection) CaptureSavedUpdateState();
     }
 
     private void AddRow(HookTargetRow row)
@@ -327,16 +345,20 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { ShowError(ex, tab: ReviewTab, action: PreviewButton); }
     }
 
-    private async void Apply_Click(object sender, RoutedEventArgs e)
+    private async void Apply_Click(object sender, RoutedEventArgs e) => await ApplySettingsAsync();
+
+    private async Task<bool> ApplySettingsAsync(CancellationToken cancellationToken = default)
     {
-        if (busy) return;
+        if (busy) return false;
+        using var applyLifetime = CancellationTokenSource.CreateLinkedTokenSource(windowLifetime.Token, cancellationToken);
+        var applyToken = applyLifetime.Token;
         var settingsCommitted = false;
         SetBusy(true);
         try
         {
             if (!ShareDetailsSwitch.IsOn)
             {
-                await runtime.SuspendTranscriptAsync(ConfigPath, windowLifetime.Token);
+                await runtime.SuspendTranscriptAsync(ConfigPath, applyToken);
                 detailsSuspended = true;
                 DetailedReportingText.Text = "Detailed reporting suspended locally. The preference is not saved until Apply completes.";
                 ShowStatus("Detailed reporting is suspended for this Client run while applying. Cancelling or a failed save does not automatically resume sharing.",
@@ -344,8 +366,8 @@ public sealed partial class MainWindow : Window
             }
             var approved = CreatePlan();
             ShowPreview(approved.Preview);
-            if (!await ConfirmAsync("Apply settings and selected hook integrations?", approved.Preview, "Apply settings")) return;
-            var result = await multiIntegration.ApplyAsync(approved, windowLifetime.Token);
+            if (!await ConfirmAsync("Apply settings and selected hook integrations?", approved.Preview, "Apply settings", applyToken)) return false;
+            var result = await multiIntegration.ApplyAsync(approved, applyToken);
             settingsCommitted = result.SettingsCommitted;
             if (settingsCommitted)
             {
@@ -362,6 +384,7 @@ public sealed partial class MainWindow : Window
             if (RememberSuccessfulUrl(approved.Config, result.RuntimeApplied ? "Installation/update" : "Saving integration settings"))
                 ShowStatus(result.Message, result.RuntimeApplied ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
             await RefreshAsync(preserveSelection: false);
+            return settingsCommitted;
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex))
         {
@@ -373,6 +396,7 @@ public sealed partial class MainWindow : Window
                     ? "Apply failed with a recovery conflict. Detailed reporting remains suspended; any saved opt-out is preserved. Resolve the retained journal without re-enabling sharing."
                     : "The preference was not saved. Detailed reporting remains suspended for this Client run; it will not resume automatically. Resolve the error and apply again.",
                     InfoBarSeverity.Error, "Detailed reporting suspended");
+            return false;
         }
         finally { SetBusy(false); }
     }
@@ -416,7 +440,7 @@ public sealed partial class MainWindow : Window
 
     private void CancelTest_Click(object sender, RoutedEventArgs e) => connectionTest?.Cancel();
 
-    private async Task<bool> ConfirmAsync(string title, string preview, string approve)
+    private async Task<bool> ConfirmAsync(string title, string preview, string approve, CancellationToken cancellationToken = default)
     {
         if (closed) return false;
         var dialog = new ContentDialog
@@ -429,8 +453,9 @@ public sealed partial class MainWindow : Window
             },
             PrimaryButtonText = approve, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close
         };
+        using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
         var result = await dialog.ShowAsync();
-        return !closed && result == ContentDialogResult.Primary;
+        return !closed && !cancellationToken.IsCancellationRequested && result == ContentDialogResult.Primary;
     }
 
     private async void RecoverVerification_Click(object sender, RoutedEventArgs e)
@@ -656,7 +681,8 @@ public sealed partial class MainWindow : Window
     private void UpdateActionStates()
     {
         if (closed) return;
-        var state = new ConfiguratorActionState(busy, discoveryCancellation is not null, connectionTest is not null);
+        updates?.SetConflicting(busy || updatePreparing);
+        var state = new ConfiguratorActionState(busy || updatePreparing, discoveryCancellation is not null, connectionTest is not null);
         ConnectionModeBox.IsEnabled = ConnectionPackageBox.IsEnabled = ImportPackageButton.IsEnabled = RemovePackageButton.IsEnabled = state.CanUseConnection;
         UrlBox.IsEnabled = HeartbeatBox.IsEnabled = ShareDetailsSwitch.IsEnabled =
             TestButton.IsEnabled = StartClientButton.IsEnabled = state.CanUseConnection;

@@ -31,6 +31,7 @@ $dashboard = Join-Path $publishRoot 'dashboard'
 $remote = Join-Path $publishRoot 'remote'
 $staging = Join-Path $root ('artifacts\installer-staging\' + [guid]::NewGuid().ToString('N'))
 $msiOutput = Join-Path $root 'artifacts\msi'
+. (Join-Path $PSScriptRoot 'UpdaterPolicy.ps1')
 
 function Invoke-DotNet {
     param([string[]] $Arguments)
@@ -89,6 +90,12 @@ if (-not $SkipPublish) {
         Merge-PublishedApplication $configuratorStage $remote
         Merge-PublishedApplication $relayStage $remote
         Merge-PublishedApplication $clientStage $remote
+        foreach ($directory in @($dashboard, $remote)) {
+            foreach ($name in $script:AgentSignalerUpdaterFiles) {
+                Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $directory $name)
+            }
+            Write-AgentSignalerUpdaterDependencies $directory
+        }
     }
     finally {
         if (Test-Path -LiteralPath $staging) {
@@ -98,6 +105,11 @@ if (-not $SkipPublish) {
 }
 
 foreach ($directory in @($dashboard, $remote)) {
+    foreach ($name in $script:AgentSignalerUpdaterFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $directory $name) -PathType Leaf)) {
+            throw 'Published updater dependency set is incomplete; republish before packaging.'
+        }
+    }
     foreach ($file in Get-ChildItem -LiteralPath $directory -File -Recurse) {
         if ($file.Name -like 'AgentSignaler.RpcHost.*') {
             throw 'Application payload contains a retired product. Republish the supported applications.'

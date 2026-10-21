@@ -25,6 +25,7 @@
     <ProjectReference Include="..\AgentSignaler.Service\AgentSignaler.Service.csproj" />
     <ProjectReference Include="..\AgentSignaler.Dashboard.Core\AgentSignaler.Dashboard.Core.csproj" />
     <ProjectReference Include="..\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Updates\AgentSignaler.Updates.csproj" />
   </ItemGroup>
   <Target Name="PublishDashboardXamlResources" AfterTargets="ComputeFilesToPublish">
     <!-- Unpackaged publishing must retain the generated application XAML and resource index. -->

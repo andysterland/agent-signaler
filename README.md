@@ -250,7 +250,30 @@ limitations](docs/user-guide.md#windows-app-and-dev-box-connections).
 
 ### Update installed applications
 
-Refresh the clone to the matching Dashboard/Remote release revision first; both
+Supporting releases check the public GitHub releases 30 seconds after startup
+and then about every six hours. The newest **published, non-draft** release is
+selected, including clearly labeled prereleases; numeric MSI versions prevent
+downgrades. Client offers **Check for updates** in its tray menu. Dashboard and
+Configurator provide a non-modal update banner and manual checks. **Later** only
+dismisses that release for this launch; it never authorizes installation.
+
+**Update now** is an explicit, non-elevated servicing action for an existing
+current-user x64 MSI installation. Dashboard services only Dashboard; Client or
+Configurator services the complete Remote package. A cooperative prepare phase
+can refuse unsaved edits or busy/unsupported instances. Reporting pauses while
+Remote is serviced. Only consenting apps that were running are eligible to be
+restored in their original session and safe launch context. An intentionally
+stopped Client stays stopped. Source/portable builds cannot install an MSI through
+this action. Download, publisher trust, installation ownership or shutdown
+failures abort servicing rather than weakening checks or killing an app.
+
+The **first supporting release must be installed manually**: older versions
+cannot discover a feature they do not contain. The manual updater remains
+available and does not automatically reopen apps. Refresh the clone to the
+matching Dashboard/Remote release revision first; the installed handoff uses
+its bundled, signed scripts rather than a downloaded script.
+
+For manual updating, both
 `scripts\Update-AgentSignaler.ps1` and `scripts\UpdaterPolicy.ps1` must come from
 that revision. Then run the updater as the **non-elevated installing user**:
 

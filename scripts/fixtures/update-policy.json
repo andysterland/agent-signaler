@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "clientUpdateExitCode": 42,
+  "repository": "andysterland/agent-signaler",
+  "authorizedPublisher": "Andy Sterland",
+  "upgradeCodes": {
+    "Dashboard": "{D67CE744-C442-473A-B751-CA70D3CBCA4D}",
+    "Remote": "{BFA03A34-37C9-4149-9789-9A68EC2A9C3A}"
+  },
+  "dependencySet": {
+    "schemaVersion": 1,
+    "policyVersion": 1,
+    "files": ["Update-AgentSignaler.ps1", "UpdaterPolicy.ps1", "UpdateHandoff.ps1"]
+  },
+  "validVersions": ["0.0.0", "1.0.15", "1.2.10", "1.10.2", "255.255.65535"],
+  "invalidVersions": ["", "1", "1.2", "1.2.3.4", "01.2.3", "1.02.3", "1.2.03", "-1.2.3", "+1.2.3", "1.2.3-beta", "v1.2.3", "256.0.0", "0.256.0", "0.0.65536", "999999999999999999999999.0.0", "1.2.3\n"],
+  "versionComparisons": [
+    { "left": "1.9.99", "right": "1.10.0", "expected": -1 },
+    { "left": "1.0.10", "right": "1.0.9", "expected": 1 },
+    { "left": "255.255.65535", "right": "255.255.65535", "expected": 0 }
+  ],
+  "validAssets": [
+    { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+    { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+    { "id": 103, "name": "SHA256SUMS.txt", "size": 300 }
+  ],
+  "validBoundaryAssets": [
+    { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 1073741824 },
+    { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 1073741824 },
+    { "id": 103, "name": "SHA256SUMS.txt", "size": 65536 }
+  ],
+  "invalidAssetSets": [
+    { "name": "missing-checksums", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 }
+    ] },
+    { "name": "duplicate-dashboard", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 },
+      { "id": 104, "name": "AgentSignaler.Dashboard.msi", "size": 100 }
+    ] },
+    { "name": "wrong-case", "assets": [
+      { "id": 101, "name": "agentsignaler.dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 }
+    ] },
+    { "name": "renamed-remote", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Configurator.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 }
+    ] },
+    { "name": "retired-extra", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 },
+      { "id": 104, "name": "AgentSignaler.RpcHost.msi", "size": 100 }
+    ] },
+    { "name": "zero-size", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 0 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 }
+    ] },
+    { "name": "negative-size", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": -1 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 }
+    ] },
+    { "name": "oversize-msi", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 1073741825 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 300 }
+    ] },
+    { "name": "oversize-checksums", "assets": [
+      { "id": 101, "name": "AgentSignaler.Dashboard.msi", "size": 100 },
+      { "id": 102, "name": "AgentSignaler.Remote.msi", "size": 200 },
+      { "id": 103, "name": "SHA256SUMS.txt", "size": 65537 }
+    ] }
+  ],
+  "signatureCases": [
+    { "name": "authorized", "status": "Valid", "publisher": "Andy Sterland", "hasTimestamp": true, "selfIssued": false, "codeSigningEku": true, "accepted": true },
+    { "name": "wrong-publisher", "status": "Valid", "publisher": "Other Publisher", "hasTimestamp": true, "selfIssued": false, "codeSigningEku": true, "accepted": false },
+    { "name": "missing-timestamp", "status": "Valid", "publisher": "Andy Sterland", "hasTimestamp": false, "selfIssued": false, "codeSigningEku": true, "accepted": false },
+    { "name": "self-issued", "status": "Valid", "publisher": "Andy Sterland", "hasTimestamp": true, "selfIssued": true, "codeSigningEku": true, "accepted": false },
+    { "name": "missing-code-signing-eku", "status": "Valid", "publisher": "Andy Sterland", "hasTimestamp": true, "selfIssued": false, "codeSigningEku": false, "accepted": false },
+    { "name": "unsigned", "status": "NotSigned", "publisher": "Andy Sterland", "hasTimestamp": true, "selfIssued": false, "codeSigningEku": true, "accepted": false },
+    { "name": "untrusted-chain", "status": "NotTrusted", "publisher": "Andy Sterland", "hasTimestamp": true, "selfIssued": false, "codeSigningEku": true, "accepted": false },
+    { "name": "corrupt", "status": "HashMismatch", "publisher": "Andy Sterland", "hasTimestamp": true, "selfIssued": false, "codeSigningEku": true, "accepted": false }
+  ]
+}

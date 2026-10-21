@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net.NetworkInformation;
 using AgentSignaler.Remote;
+using AgentSignaler.Updates;
+using AgentSignaler.AppUpdates;
 
 namespace AgentSignaler.Client;
 
@@ -12,6 +14,8 @@ internal static class Program
         ClientCoordinator? coordinator = null;
         ClientIpcServer? server = null;
         TrayWindow? window = null;
+        AppUpdateHost? updateHost = null;
+        ClientUpdates? updates = null;
         NetworkAvailabilityChangedEventHandler? availabilityChanged = null;
         NetworkAddressChangedEventHandler? addressChanged = null;
         using var completionLifetime = new CancellationTokenSource();
@@ -25,6 +29,9 @@ internal static class Program
                 else throw new InvalidDataException("Use AgentSignaler.Client.exe [--background] [--config <absolute path>].");
             }
             configPath = ClientIdentity.CanonicalPath(configPath);
+            // Startup still waits for the gate before creating a reporting
+            // runtime/window, but MSI inventory never executes on the tray thread.
+            updateHost = Task.Run(() => AppUpdateHost.Open(UpdatePackage.Remote)).GetAwaiter().GetResult();
             var config = RemoteConfiguration.Load(configPath);
             RemotePaths.ValidateRelayInstallation(AppContext.BaseDirectory, config.RelayPath);
             var configurator = Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Configurator.exe");
@@ -65,12 +72,15 @@ internal static class Program
             window = new TrayWindow(() =>
             {
                 if (!TryOpenConfigurator(out var error)) TrayWindow.ShowError(error!);
-            }, runtime.Status, runtime.RequestSnapshot, () => runtime.DiscoveryStatusText + "; " + runtime.TranscriptStatusText);
+            }, runtime.Status, runtime.RequestSnapshot, () => runtime.DiscoveryStatusText + "; " + runtime.TranscriptStatusText,
+                () => updates?.CanRequestOrdinaryExit ?? true);
             var tray = window;
-            var exitStarted = 0;
+            updates = new ClientUpdates(tray, runtime, updateHost, configPath);
+            updateHost.RegisterAsync(new UpdateRestartContext(UpdateApplication.Client, configPath, true), updates)
+                .GetAwaiter().GetResult();
             window.ExitRequested += quiet =>
             {
-                if (Interlocked.Exchange(ref exitStarted, 1) != 0) return;
+                if (!updates.TryBeginOrdinaryExit()) return;
                 _ = Task.Run(async () =>
                 {
                     var response = await runtime.StopAsync();
@@ -99,13 +109,19 @@ internal static class Program
             NetworkChange.NetworkAddressChanged += addressChanged;
             _ = CloseOnCompletionAsync(runtime, tray, completionLifetime.Token);
             window.Run();
-            return runtime.Completion.IsFaulted ? 1 : 0;
+            return updates.GetExitCodeAsync().GetAwaiter().GetResult();
+        }
+        catch (UpdateStartupRefusedException error)
+        {
+            TrayWindow.ShowError(error.UserMessage);
+            return 1;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or
             System.Text.Json.JsonException or ArgumentException or InvalidOperationException or
-            System.ComponentModel.Win32Exception or OverflowException)
+            System.ComponentModel.Win32Exception or System.Security.SecurityException or OverflowException)
         {
-            TrayWindow.ShowError("Agent Signaler Client could not start. " + ex.Message);
+            TrayWindow.ShowError("Agent Signaler Client could not start safely. If this installation is being updated, wait for servicing to finish. " +
+                "Otherwise verify the saved configuration and repair the Remote installation before retrying.");
             return 1;
         }
         finally
@@ -124,14 +140,25 @@ internal static class Program
             {
                 try
                 {
-                    if (server is not null) server.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    try
+                    {
+                        if (updates is not null) updates.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    }
+                    finally { updateHost?.Dispose(); }
                 }
                 finally
                 {
-                    try { window?.Dispose(); }
+                    try
+                    {
+                        if (server is not null) server.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    }
                     finally
                     {
-                        if (coordinator is not null) coordinator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        try { window?.Dispose(); }
+                        finally
+                        {
+                            if (coordinator is not null) coordinator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        }
                     }
                 }
             }

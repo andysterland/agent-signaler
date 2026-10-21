@@ -12,6 +12,9 @@ param(
     [ValidateSet('Dashboard', 'Remote')]
     [string[]] $Apps = @('Dashboard', 'Remote'),
     [Parameter(DontShow = $true)]
+    [Alias('AppHandoff')]
+    [string] $HandoffPath,
+    [Parameter(DontShow = $true)]
     [string] $FixturePath
 )
 
@@ -20,6 +23,13 @@ Set-StrictMode -Version Latest
 $repository = 'andysterland/agent-signaler'
 $apiRoot = "https://api.github.com/repos/$repository"
 . (Join-Path $PSScriptRoot 'UpdaterPolicy.ps1')
+
+if (-not [string]::IsNullOrWhiteSpace($HandoffPath)) {
+    if (-not [string]::IsNullOrWhiteSpace($FixturePath) -or $WhatIfPreference) {
+        throw 'App handoff cannot be combined with fixture or WhatIf modes.'
+    }
+    . (Join-Path $PSScriptRoot 'UpdateHandoff.ps1')
+}
 
 if (-not [string]::IsNullOrWhiteSpace($FixturePath)) {
     if (-not $WhatIfPreference) { throw 'Synthetic inventory is allowed only with -WhatIf; it cannot service applications.' }
@@ -30,6 +40,9 @@ if (-not [string]::IsNullOrWhiteSpace($FixturePath)) {
 if (-not [Environment]::Is64BitOperatingSystem -or
     [Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'Agent Signaler requires Windows x64.'
+}
+if (-not [string]::IsNullOrWhiteSpace($HandoffPath) -and -not [Environment]::Is64BitProcess) {
+    throw 'App handoff requires system x64 Windows PowerShell.'
 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 try {
@@ -74,10 +87,11 @@ function Test-AllowedGitHubHost([uri] $Uri) {
         $Uri.IdnHost.EndsWith('.githubusercontent.com', [StringComparison]::OrdinalIgnoreCase)
 }
 
-function Open-GitHubResponse([uri] $Uri, [string] $Token, [string] $Accept) {
+function Open-GitHubResponse([uri] $Uri, [string] $Token, [string] $Accept, [int] $TimeoutMilliseconds = 15000) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     for ($redirect = 0; $redirect -le 5; $redirect++) {
         if (-not (Test-AllowedGitHubHost $Uri)) {
-            throw "GitHub download redirected to an untrusted address: $Uri"
+            throw 'GitHub download redirected to an untrusted address.'
         }
         $request = New-Object Net.Http.HttpRequestMessage([Net.Http.HttpMethod]::Get, $Uri)
         try {
@@ -87,8 +101,12 @@ function Open-GitHubResponse([uri] $Uri, [string] $Token, [string] $Accept) {
                 $request.Headers.Authorization =
                     New-Object Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
             }
-            $response = $httpClient.SendAsync(
-                $request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            $deadline = [Threading.CancellationTokenSource]::new([Math]::Max(1, $TimeoutMilliseconds - [int]$clock.ElapsedMilliseconds))
+            try {
+                $response = $httpClient.SendAsync(
+                    $request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead, $deadline.Token).GetAwaiter().GetResult()
+            }
+            finally { $deadline.Dispose() }
         }
         finally { $request.Dispose() }
         if ([int]$response.StatusCode -in @(301, 302, 303, 307, 308)) {
@@ -104,12 +122,12 @@ function Open-GitHubResponse([uri] $Uri, [string] $Token, [string] $Accept) {
     throw 'GitHub download exceeded the redirect limit.'
 }
 
-function Read-GitHubJsonResponse($Response) {
+function Read-GitHubJsonResponse($Response, [int] $BudgetMilliseconds = 15000) {
     try {
         if (-not $Response.IsSuccessStatusCode) {
-            throw "GitHub request failed with HTTP $([int]$Response.StatusCode) $($Response.ReasonPhrase)."
+            throw "GitHub request failed with HTTP $([int]$Response.StatusCode)."
         }
-        $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(30))
+        $deadline = [Threading.CancellationTokenSource]::new([Math]::Max(1, $BudgetMilliseconds))
         try {
             $stream = $Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
             $memory = [IO.MemoryStream]::new()
@@ -120,7 +138,7 @@ function Read-GitHubJsonResponse($Response) {
                     $memory.Write($buffer, 0, $read)
                 }
                 $json = [Text.UTF8Encoding]::new($false, $true).GetString($memory.ToArray())
-                return $json | ConvertFrom-Json
+                return ConvertFrom-AgentSignalerStrictJson $json 4MB
             }
             finally { $memory.Dispose(); $stream.Dispose() }
         }
@@ -142,10 +160,16 @@ function Get-LatestGitHubRelease {
         $response = Open-GitHubResponse $uri $token 'application/vnd.github+json'
     }
     $releases = @(Read-GitHubJsonResponse $response)
+    $page = @($releases)
+    for ($pageNumber = 2; $page.Count -eq 20 -and $pageNumber -le 5; $pageNumber++) {
+        $page = @(Read-GitHubJsonResponse (Open-GitHubResponse "$apiRoot/releases?per_page=20&page=$pageNumber" $token 'application/vnd.github+json'))
+        $releases += $page
+    }
+    if ($page.Count -eq 20 -or $releases.Count -gt 100) { throw 'Release check incomplete: enumeration limit reached.' }
     $release = $releases | Where-Object { -not $_.draft } |
         Sort-Object { [DateTimeOffset]$_.published_at } -Descending | Select-Object -First 1
     if ($null -eq $release) { throw 'No published Agent Signaler GitHub Release is available.' }
-    if ($release.tag_name -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+    if ($release.tag_name -notmatch '\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
         throw "The latest release tag is not a supported three-part version: $($release.tag_name)"
     }
     [pscustomobject]@{
@@ -156,17 +180,18 @@ function Get-LatestGitHubRelease {
 }
 
 function Save-GitHubAsset($Asset, [string] $Token, [string] $Destination) {
-    $response = Open-GitHubResponse $Asset.url $Token 'application/octet-stream'
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $response = Open-GitHubResponse $Asset.url $Token 'application/octet-stream' 300000
     try {
         if (-not $response.IsSuccessStatusCode) {
-            throw "Downloading $($Asset.name) failed with HTTP $([int]$response.StatusCode) $($response.ReasonPhrase)."
+            throw "Downloading release asset failed with HTTP $([int]$response.StatusCode)."
         }
         $source = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         try {
             $file = New-Object IO.FileStream(
                 $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
             try {
-                $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromMinutes(5))
+                $deadline = [Threading.CancellationTokenSource]::new([Math]::Max(1, 300000 - [int]$clock.ElapsedMilliseconds))
                 try {
                     $buffer = New-Object byte[] 65536
                     while (($read = $source.ReadAsync($buffer, 0, $buffer.Length, $deadline.Token).GetAwaiter().GetResult()) -gt 0) {
@@ -273,6 +298,11 @@ function Stop-OwnedRemoteClient {
 }
 
 $upgradeCodes = $script:AgentSignalerUpgradeCodes
+if (-not [string]::IsNullOrWhiteSpace($HandoffPath)) {
+    try { Invoke-AgentSignalerAppHandoff -ManifestPath $HandoffPath }
+    finally { $httpClient.Dispose(); $httpHandler.Dispose() }
+    return
+}
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $staging = $null
 $exitCode = 0
@@ -374,7 +404,7 @@ try {
                 }
                 $log = Join-Path $logRoot "$runId-$($item.App).log"
                 Write-Host "Updating $($item.App) to $($item.Package.Version). Log: $log"
-                $arguments = "/i `"$($item.Staged)`" /passive /norestart /L*v `"$log`" REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=Disable"
+                $arguments = Get-AgentSignalerMsiArguments $item.Staged $log
                 $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" `
                     -ArgumentList $arguments -Wait -PassThru
                 try {

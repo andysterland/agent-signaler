@@ -39,6 +39,21 @@ Run the smallest test selection that covers a change, then run the full affected
 project before submitting. Keep analyzers enabled and do not suppress warnings
 without a documented correctness reason.
 
+Shared update policy, release discovery, cache, maintenance and handoff tests
+belong in the existing Remote/Integration test projects, not UI event handlers.
+Use injected HTTP, inventory, time, process, signature and installer adapters.
+`scripts\Test-Updater.ps1` exercises non-installable fixtures; never substitute
+the real Windows Installer for a fake. Release x64 UI builds and
+`scripts\Build-Installers.ps1 -ApplicationMsisOnly` validate payloads without
+installing them. Signed-release, clean-image and interactive update/restart
+acceptance requires a separately authorized disposable Windows user.
+
+Updates must preserve newest-published non-draft selection (including previews),
+the exact three release assets, current-user MSI ownership, publisher trust,
+cooperative shutdown and explicit restart intent. Do not add automatic
+installation, credential-helper lookup to public checks, execution-policy
+bypasses, force termination, or Client startup from hooks or ordinary upgrades.
+
 ## Safety rules
 
 - Never enable `AGENT_SIGNALER_LIVE_TUNNEL_TEST=1` without an approved disposable

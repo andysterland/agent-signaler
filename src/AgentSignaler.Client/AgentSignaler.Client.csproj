@@ -5,10 +5,13 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\AgentSignaler.Configurator\AgentSignaler.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\AgentSignaler.Remote\AgentSignaler.Remote.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Updates\AgentSignaler.Updates.csproj" />
+    <Compile Include="..\AgentSignaler.Dashboard\AppUpdateHost.cs" Link="AppUpdateHost.cs" />
     <Content Include="..\AgentSignaler.Configurator\AgentSignaler.ico" Link="AgentSignaler.ico"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

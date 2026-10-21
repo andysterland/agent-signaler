@@ -26,6 +26,8 @@
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -61,7 +63,9 @@
                 </StackPanel>
             </StackPanel>
         </StackPanel>
-        <TabView x:Name="TaskTabs" Grid.Row="1" SelectedIndex="0"
+        <ContentControl x:Name="UpdateBannerHost" Grid.Row="1" HorizontalContentAlignment="Stretch" />
+        <ContentControl x:Name="UpdateRecoveryHost" Grid.Row="2" HorizontalContentAlignment="Stretch" />
+        <TabView x:Name="TaskTabs" Grid.Row="3" SelectedIndex="0"
                  IsAddTabButtonVisible="False" CanDragTabs="False" CanReorderTabs="False" TabWidthMode="SizeToContent">
             <TabViewItem x:Name="ConnectionTab" Header="Connection" AutomationProperties.Name="Connection" IsClosable="False">
                 <Grid Padding="0,12,12,0" ColumnSpacing="12">
@@ -244,19 +248,21 @@
                             <Button x:Name="CompleteUninstallButton" Content="Complete finished uninstall..." Click="CompleteUninstall_Click" />
                             <Button x:Name="RecoverVerificationButton" Content="Clean up legacy diagnostic hooks..." Click="RecoverVerification_Click" />
                             <Button x:Name="UninstallButton" Content="Uninstall integration..." Click="Uninstall_Click" />
+                            <TextBlock Text="Software updates" Style="{StaticResource SubtitleTextBlockStyle}" />
+                            <ContentControl x:Name="UpdateSettingsHost" HorizontalContentAlignment="Stretch" />
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
             </TabViewItem>
         </TabView>
-        <InfoBar x:Name="StatusBar" Grid.Row="2" IsOpen="False" IsClosable="True" AutomationProperties.LiveSetting="Polite">
+        <InfoBar x:Name="StatusBar" Grid.Row="4" IsOpen="False" IsClosable="True" AutomationProperties.LiveSetting="Polite">
             <InfoBar.Content>
                 <ScrollViewer MaxHeight="96" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Stretch">
                     <TextBlock x:Name="StatusText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                 </ScrollViewer>
             </InfoBar.Content>
         </InfoBar>
-        <Grid Grid.Row="3" ColumnSpacing="12">
+        <Grid Grid.Row="5" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />

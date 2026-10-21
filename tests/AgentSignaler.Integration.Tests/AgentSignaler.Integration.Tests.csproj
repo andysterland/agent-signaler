@@ -12,6 +12,7 @@
     <ProjectReference Include="..\..\src\AgentSignaler.Dashboard.Core\AgentSignaler.Dashboard.Core.csproj" />
     <ProjectReference Include="..\..\src\AgentSignaler.Remote\AgentSignaler.Remote.csproj" />
     <ProjectReference Include="..\..\src\AgentSignaler.Tunneling\AgentSignaler.Tunneling.csproj" />
+    <ProjectReference Include="..\..\src\AgentSignaler.Updates\AgentSignaler.Updates.csproj" />
     <ProjectReference Include="..\..\src\AgentSignaler.Relay\AgentSignaler.Relay.csproj" ReferenceOutputAssembly="false" />
     <Using Include="Xunit" />
     <Compile Include="..\Shared\CurrentUserOwnedTranscriptFixture.cs" Link="CurrentUserOwnedTranscriptFixture.cs" />

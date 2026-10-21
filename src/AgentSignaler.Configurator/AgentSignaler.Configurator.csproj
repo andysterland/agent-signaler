@@ -57,6 +57,10 @@
     <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.DataGrid" Version="7.1.2" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
     <ProjectReference Include="..\AgentSignaler.Remote\AgentSignaler.Remote.csproj" />
+    <ProjectReference Include="..\AgentSignaler.Updates\AgentSignaler.Updates.csproj" />
+    <Compile Include="..\AgentSignaler.Dashboard\UpdatePanel.cs" Link="UpdatePanel.cs" />
+    <Compile Include="..\AgentSignaler.Dashboard\WinUiUpdateParticipant.cs" Link="WinUiUpdateParticipant.cs" />
+    <Compile Include="..\AgentSignaler.Dashboard\AppUpdateHost.cs" Link="AppUpdateHost.cs" />
     <ProjectReference Include="..\AgentSignaler.Relay\AgentSignaler.Relay.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\AgentSignaler.Client\AgentSignaler.Client.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

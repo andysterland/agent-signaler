@@ -6,6 +6,7 @@ Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $seenComponentGuids = @{}
+. (Join-Path $PSScriptRoot 'UpdaterPolicy.ps1')
 
 function Read-MsiTable {
     param($Database, [string] $Query, [string[]] $Columns)
@@ -74,7 +75,7 @@ try {
                 $warnings = @(Read-MsiTable $database 'SELECT `Description` FROM `ActionText` WHERE `Action` = ''AppSearch''' @('Description'))
                 Assert-Msi ($warnings.Count -eq 1 -and $warnings[0].Description -like 'Warning:*') 'AppSearch log warning missing.'
                 $allActions = @(Read-MsiTable $database 'SELECT `Action` FROM `CustomAction`' @('Action'))
-                Assert-Msi (@($allActions | Where-Object { $_.Action -notin @('SetIntegrationTransaction', 'RollbackDashboardIntegration', 'RemoveDashboardIntegration') }).Count -eq 0) 'Unexpected prerequisite/nested installer custom action.'
+                Assert-Msi (@($allActions | Where-Object { $_.Action -notin @('SetARPINSTALLLOCATION', 'SetIntegrationTransaction', 'RollbackDashboardIntegration', 'RemoveDashboardIntegration') }).Count -eq 0) 'Unexpected prerequisite/nested installer custom action.'
             }
             Assert-Msi (-not $properties.ContainsKey('ALLUSERS')) "$name is not strictly per-user."
             $tables = @(Read-MsiTable $database 'SELECT `Name` FROM `_Tables`' @('Name'))
@@ -141,10 +142,22 @@ try {
             $publishedFiles = @(Get-ChildItem -LiteralPath $publish -Recurse -File)
             $application = if ($name -eq 'Dashboard') { 'Dashboard' } else { 'Configurator' }
             $requiredFiles = @("AgentSignaler.$application.exe", "AgentSignaler.$application.pri",
-                'App.xbf', 'coreclr.dll', 'hostfxr.dll', 'Microsoft.UI.Xaml.dll')
+                'App.xbf', 'coreclr.dll', 'hostfxr.dll', 'Microsoft.UI.Xaml.dll',
+                'AgentSignaler.Updates.dll', 'UpdaterDependencies.json') + $script:AgentSignalerUpdaterFiles
             if ($name -eq 'Remote') {
                 $requiredFiles += @('AgentSignaler.Relay.exe', 'AgentSignaler.Client.exe',
                     'AgentSignaler.Client.dll', 'AgentSignaler.Client.runtimeconfig.json')
+            }
+            $descriptor = ConvertFrom-AgentSignalerStrictJson (Get-Content -LiteralPath (Join-Path $publish 'UpdaterDependencies.json') -Raw) 64KB
+            Assert-AgentSignalerFields $descriptor @('schemaVersion', 'policyVersion', 'files')
+            Assert-Msi ($descriptor.schemaVersion -eq 1 -and
+                $descriptor.policyVersion -eq $script:AgentSignalerUpdaterPolicyVersion -and
+                @($descriptor.files).Count -eq $script:AgentSignalerUpdaterFiles.Count) 'Updater dependency descriptor version mismatch.'
+            foreach ($dependency in $script:AgentSignalerUpdaterFiles) {
+                $entry = @($descriptor.files | Where-Object { $_.name -ceq $dependency })
+                if ($entry.Count -eq 1) { Assert-AgentSignalerFields $entry[0] @('name', 'sha256') }
+                Assert-Msi ($entry.Count -eq 1 -and $entry[0].sha256 -ceq
+                    (Get-FileHash -LiteralPath (Join-Path $publish $dependency) -Algorithm SHA256).Hash) 'Updater dependency hash mismatch.'
             }
             foreach ($required in $requiredFiles) {
                 $requiredPath = Join-Path $publish $required
@@ -201,12 +214,16 @@ try {
             Assert-Msi ([int]$sequence['RemoveExistingProducts'].Sequence -gt [int]$sequence['InstallInitialize'].Sequence -and
                 [int]$sequence['RemoveExistingProducts'].Sequence -lt [int]$sequence['InstallFiles'].Sequence) "$name major upgrade is not transactional."
             $actions = @()
+            $locationAction = @(Read-MsiTable $database 'SELECT `Type`, `Source`, `Target` FROM `CustomAction` WHERE `Action` = ''SetARPINSTALLLOCATION''' @('Type', 'Source', 'Target'))
+            Assert-Msi ($locationAction.Count -eq 1 -and $locationAction[0].Type -eq '51' -and
+                $locationAction[0].Source -ceq 'ARPINSTALLLOCATION' -and $locationAction[0].Target -ceq '[INSTALLFOLDER]' -and
+                [int]$sequence['SetARPINSTALLLOCATION'].Sequence -gt [int]$sequence['CostFinalize'].Sequence) 'MSI must register its exact formatted installation directory for read-only update inventory.'
             if ($sequence.ContainsKey('RemoveRemoteIntegration') -or $sequence.ContainsKey('RemoveDashboardIntegration')) {
                 $actions = @(Read-MsiTable $database 'SELECT `Action`, `Type`, `Target` FROM `CustomAction`' @('Action', 'Type', 'Target'))
             }
             if ($name -eq 'Remote') {
                 Assert-Msi (@($actions | Where-Object { $_.Action -notin @(
-                    'SetIntegrationTransaction', 'RollbackRemoteIntegration', 'RemoveRemoteIntegration',
+                    'SetARPINSTALLLOCATION', 'SetIntegrationTransaction', 'RollbackRemoteIntegration', 'RemoveRemoteIntegration',
                     'StopRemoteClientForUpdate', 'RollbackLegacyHeartbeatMigration', 'MigrateLegacyHeartbeat',
                     'CommitLegacyHeartbeatMigration') }).Count -eq 0) 'Unexpected remote custom action; remote servicing must not configure hooks/startup, launch UI, or require cloud access.'
                 $stop = @($actions | Where-Object { $_.Action -eq 'StopRemoteClientForUpdate' })

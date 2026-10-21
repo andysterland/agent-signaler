@@ -1,6 +1,9 @@
 using AgentSignaler.Remote;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using AgentSignaler.AppUpdates;
+using AgentSignaler.Updates;
+using System.Runtime.InteropServices;
 
 namespace AgentSignaler.Configurator;
 
@@ -38,12 +41,31 @@ internal static class Program
                 return 1;
             }
         }
-        WinRT.ComWrappersSupport.InitializeComWrappers();
-        Application.Start(parameters =>
+        try
         {
-            SynchronizationContext.SetSynchronizationContext(new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
-            _ = new App();
-        });
-        return 0;
+            using var updates = AppUpdateHost.Open(UpdatePackage.Remote);
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+            Application.Start(parameters =>
+            {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
+                _ = new App(updates);
+            });
+            return 0;
+        }
+        catch (UpdateStartupRefusedException error)
+        {
+            ShowStartupError(0, error.UserMessage, "Agent Signaler Remote setup", 0x10);
+            return 1;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException or InvalidOperationException or
+            System.Security.SecurityException or System.ComponentModel.Win32Exception or COMException)
+        {
+            ShowStartupError(0, "Remote setup cannot start while this installation is being serviced or its maintenance state cannot be verified. " +
+                "Wait for the update to finish, or use the updater's recovery instructions before retrying.", "Agent Signaler Remote setup", 0x10);
+            return 1;
+        }
     }
+
+    [DllImport("user32.dll", EntryPoint = "MessageBoxW", CharSet = CharSet.Unicode)]
+    private static extern int ShowStartupError(nint window, string text, string title, uint type);
 }

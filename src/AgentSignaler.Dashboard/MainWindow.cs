@@ -96,8 +96,9 @@ internal sealed partial class MainWindow : Window
     private static string AppVersion =>
         typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
-    public MainWindow(DashboardResourceLease resourceLease)
+    public MainWindow(DashboardResourceLease resourceLease, AgentSignaler.AppUpdates.AppUpdateHost updateHost)
     {
+        _updateHost = updateHost;
         _runtime = new DashboardRuntime(resourceLease);
         Title = $"Agent Signaler v{AppVersion}";
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "AgentSignaler.ico"));
@@ -125,6 +126,7 @@ internal sealed partial class MainWindow : Window
         {
             if (_allowClose) return;
             args.Cancel = true;
+            if (_updatePreparing) return;
             if (_tray is { IsAvailable: true })
             {
                 _minimized = false;
@@ -147,7 +149,7 @@ internal sealed partial class MainWindow : Window
 
     private void BuildLayout()
     {
-        for (var i = 0; i < 4; i++) _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < 6; i++) _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var heading = new Grid { ColumnSpacing = 16, Margin = new Thickness(0, 0, 0, 12) };
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -239,6 +241,7 @@ internal sealed partial class MainWindow : Window
         AddRow(_startupPanel, 1);
         AddRow(_problem, 2);
         AddRow(_connectionTest, 3);
+        InitializeUpdates();
 
         var body = _machineBody;
         var scroll = new ScrollViewer
@@ -255,7 +258,7 @@ internal sealed partial class MainWindow : Window
         _empty.Text = "Waiting for machines\nConfigure a remote client with the URL above.";
         _empty.TextAlignment = TextAlignment.Center;
         body.Children.Add(_empty);
-        AddRow(body, 4);
+        AddRow(body, 6);
     }
 
     private static StackPanel ActionContent(Symbol symbol, string label)
@@ -272,6 +275,17 @@ internal sealed partial class MainWindow : Window
     {
         try
         {
+            try
+            {
+                await Task.Run(() => _updateHost.RegisterAsync(
+                    new AgentSignaler.Updates.UpdateRestartContext(AgentSignaler.Updates.UpdateApplication.Dashboard,
+                        DashboardSettings.DataDirectory, background), _updateParticipant!, _tunnelLifetime.Token));
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or JsonException or UnauthorizedAccessException or SecurityException or InvalidOperationException or Win32Exception)
+            {
+                ShowProblem("Dashboard could not register for safe update maintenance. The receiver has not started. Wait for any update to finish, then Exit and reopen Dashboard, or repair its installation.");
+                return;
+            }
             await _startup.RunAsync(InitializeCoreAsync, _tunnelLifetime.Token);
         }
         finally
@@ -377,7 +391,7 @@ internal sealed partial class MainWindow : Window
 
     public void ShowDashboard()
     {
-        if (_exiting) return;
+        if (_exiting || _updatePreparing) return;
         _minimized = false;
         _compactWindow?.Hide();
         AppWindow.Show();
@@ -388,7 +402,7 @@ internal sealed partial class MainWindow : Window
 
     private void HandleWindowStateChange()
     {
-        if (_exiting) return;
+        if (_exiting || _updatePreparing) return;
         _minimized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
         if (_minimized && _tray is { IsAvailable: true }) AppWindow.Hide();
         UpdateCompactView();
@@ -396,7 +410,7 @@ internal sealed partial class MainWindow : Window
 
     private void UpdateCompactView()
     {
-        if (_exiting || !_startup.ShowMachines || !_minimized || !_settings.ShowCompactViewWhenMinimized || _cardMap.Count == 0)
+        if (_exiting || _updatePreparing || !_startup.ShowMachines || !_minimized || !_settings.ShowCompactViewWhenMinimized || _cardMap.Count == 0)
         {
             _compactWindow?.Hide();
             return;
@@ -1087,7 +1101,7 @@ internal sealed partial class MainWindow : Window
 
     private async Task ShowSettingsAsync()
     {
-        if (_dialogOpen || _exiting) return;
+        if (_dialogOpen || _exiting || _updatePreparing) return;
         _dialogOpen = true;
         _dialogFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         try
@@ -1140,6 +1154,7 @@ internal sealed partial class MainWindow : Window
             }
             var general = new StackPanel { Spacing = 14 };
             var generalHelp = new StackPanel { Spacing = 10 };
+            general.Children.Add(_updates!.Settings);
             general.Children.Add(theme);
             general.Children.Add(compact);
             general.Children.Add(minimizedCompact);
@@ -1357,6 +1372,7 @@ internal sealed partial class MainWindow : Window
         }
         finally
         {
+            if (_updates?.Settings.Parent is Panel updateParent) updateParent.Children.Remove(_updates.Settings);
             if (_catalog is not null) await _catalog.CancelAndWaitAsync();
             await CancelPrerequisiteChecksAsync();
             _updateDevBoxSettingsControls = null;
@@ -1374,6 +1390,10 @@ internal sealed partial class MainWindow : Window
     private async Task ShutdownAsync()
     {
         _exiting = true;
+        var failed = false;
+        try { await StopUpdatesAsync(); }
+        catch (Exception error) when (error is IOException or InvalidDataException or JsonException or UnauthorizedAccessException or SecurityException or InvalidOperationException)
+        { failed = true; }
         _server?.SetTranscriptReadiness(false);
         _copilotsView?.Dispose();
         var prerequisiteShutdown = CancelPrerequisiteChecksAsync();
@@ -1384,10 +1404,9 @@ internal sealed partial class MainWindow : Window
         _compactWindow?.CloseForExit();
         _compactWindow = null;
         AppWindow.Hide();
-        var failed = false;
         try
         {
-            failed = !await DashboardStartupController.DrainForShutdownAsync(
+            failed |= !await DashboardStartupController.DrainForShutdownAsync(
                 [prerequisiteShutdown, _initializationTask ?? Task.CompletedTask, _refreshTask, _mutationTask],
                 async () => (await _runtime.ShutdownAsync()).Clean);
         }

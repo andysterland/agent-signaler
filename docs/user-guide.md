@@ -8,6 +8,59 @@ Dashboard is the sole receiver host. For older installations, follow the
 [retirement and updater-transition guide](rpc-host-retirement.md); manual product
 removal and ownership-verified firewall cleanup are separate from source updates.
 
+## Application updates
+
+Client, Configurator and Dashboard check the public
+`andysterland/agent-signaler` releases without GitHub sign-in, Git, Azure CLI or
+credential helpers. The first check is delayed 30 seconds; subsequent checks use
+a six-hour cache with scheduling jitter and bounded failure backoff. **Check for
+updates** requests a fresh check but still respects GitHub throttling. Offline,
+failed and incomplete checks are not an "up to date" result. The newest published
+non-draft release can be a prerelease; preview status is shown explicitly. Equal
+or older numeric MSI versions are never installed.
+
+Client's tray menu and the non-modal Dashboard/Configurator banner offer explicit
+update actions. **Later**, closing a banner, hiding Dashboard to the tray and
+signing in do not authorize installation. Dismissal lasts for this release until
+the next launch or manual check. Checking never restores a hidden window.
+
+Dashboard updates its MSI only. Client and Configurator update the complete
+Remote MSI (Client, Configurator and Relay), so reporting pauses while servicing.
+The operation is limited to the original non-elevated installing user and an
+already-installed current-user x64 product. Portable/source builds can show
+release information but cannot use in-app MSI servicing. Do not elevate the
+updater or weaken PowerShell execution policy to work around a refusal.
+
+Before closing anything, the apps prepare cooperatively. Save pending
+Configurator edits through its normal preview/apply flow, explicitly discard
+them, or cancel. Busy work, an unsupported instance or another Windows session
+can veto servicing; close the indicated instance and retry. No process is
+force-killed. The staged, bundled updater must acknowledge readiness before the
+initiating app exits, and a visible updater console remains during servicing.
+Only apps that were running and consented may be restored in the same session,
+with their captured configuration/data selection and visibility. A Client stopped
+using **Exit** is not started. Sign-in startup preferences are not changed.
+
+Release/asset identity, checksums, timestamped publisher signatures, MSI scope and
+installed ownership must all validate. A failure is not permission to install a
+different release. A reboot-required result does not reboot Windows or restart
+apps against pending replacements. Read the visible result and recovery
+instructions; retry only after the previous servicing operation has finished.
+If installation integrity cannot be established, the apps remain stopped for
+manual repair with the matching trusted MSI. Do not delete maintenance state or
+launch another installer while Windows Installer is still working.
+
+Bounded update cache and operation results live separately under
+`%LOCALAPPDATA%\AgentSignaler\Updates`; they do not contain connection credentials,
+settings contents or raw release bodies. A subsequent launch may show retained
+results, but does not automatically retry installation. Existing data, credentials
+and foreign IDE configuration remain outside the update handoff.
+
+The first release containing this feature must be installed manually. Older
+versions cannot retroactively offer in-app updates. Ordinary manual updater
+invocation remains non-restarting. Real installer, clean-image and interactive
+UI acceptance is separate from fake-backed development verification.
+
 ## Read-only conversation prototype
 
 **External informed consent is a deployment prerequisite.** Before distributing

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": 1,
+  "clientUpdateExitCode": 42,
+  "publisher": "Andy Sterland",
+  "codeSigningEku": "1.3.6.1.5.5.7.3.3",
+  "updaterScripts": ["Update-AgentSignaler.ps1", "UpdaterPolicy.ps1", "UpdateHandoff.ps1"],
+  "releaseAssets": ["AgentSignaler.Dashboard.msi", "AgentSignaler.Remote.msi", "SHA256SUMS.txt"],
+  "upgradeCodes": {
+    "Dashboard": "{D67CE744-C442-473A-B751-CA70D3CBCA4D}",
+    "Remote": "{BFA03A34-37C9-4149-9789-9A68EC2A9C3A}"
+  },
+  "versions": [
+    { "text": "0.0.0", "valid": true },
+    { "text": "255.255.65535", "valid": true },
+    { "text": "256.0.0", "valid": false },
+    { "text": "0.256.0", "valid": false },
+    { "text": "0.0.65536", "valid": false },
+    { "text": "01.2.3", "valid": false },
+    { "text": "1.2.3.0", "valid": false },
+    { "text": "1.2.3-preview", "valid": false },
+    { "text": "1.2.3 ", "valid": false }
+  ],
+  "signatures": [
+    { "trustedSignature": true, "timestampValid": true, "publisher": "Andy Sterland", "selfSigned": false, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.3"], "valid": true },
+    { "trustedSignature": false, "timestampValid": true, "publisher": "Andy Sterland", "selfSigned": false, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.3"], "valid": false },
+    { "trustedSignature": true, "timestampValid": false, "publisher": "Andy Sterland", "selfSigned": false, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.3"], "valid": false },
+    { "trustedSignature": true, "timestampValid": true, "publisher": "Different Publisher", "selfSigned": false, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.3"], "valid": false },
+    { "trustedSignature": true, "timestampValid": true, "publisher": "Andy Sterland", "selfSigned": true, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.3"], "valid": false },
+    { "trustedSignature": true, "timestampValid": true, "publisher": "Andy Sterland", "selfSigned": false, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.1"], "valid": false },
+    { "trustedSignature": true, "timestampValid": true, "publisher": "Andy Sterland", "selfSigned": false, "enhancedKeyUsages": [], "valid": false },
+    { "trustedSignature": true, "timestampValid": true, "publisher": "Andy Sterland", "selfSigned": false, "enhancedKeyUsages": ["1.3.6.1.5.5.7.3.3", "1.3.6.1.5.5.7.3.3"], "valid": false }
+  ]
+}

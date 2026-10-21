@@ -42,8 +42,46 @@ public sealed class DashboardHeaderTests
         Assert.Contains("private readonly Button _settingsButton = new();", main);
         Assert.DoesNotContain("_settingsButton.IsEnabled =", main);
         var settings = main[main.IndexOf("private async Task ShowSettingsAsync()", StringComparison.Ordinal)..];
-        Assert.Contains("if (_dialogOpen || _exiting) return;", settings);
+        Assert.Contains("if (_dialogOpen || _exiting || _updatePreparing) return;", settings);
         Assert.DoesNotContain("_startup.IsLoading", settings);
+        var updates = MainWindowSource("MainWindow.Updates.cs");
+        AssertBefore(updates, "_updatePreparing = true;", "_settingsButton.IsEnabled = false;");
+        var cancel = updates[updates.IndexOf("private void CancelUpdatePreparation()", StringComparison.Ordinal)..];
+        AssertBefore(cancel, "_updatePreparing = false;", "_settingsButton.IsEnabled = true;");
+    }
+
+    [Fact]
+    public void UpdatePreparationRequiresReadinessAndCapturesVisibilityAfterFreezingBeforeAcknowledgement()
+    {
+        var updates = MainWindowSource("MainWindow.Updates.cs");
+        Assert.Contains("() => _running && !_exiting && _initializationTask is { IsCompletedSuccessfully: true }", updates);
+        var start = updates.IndexOf("private async Task<bool> PrepareUpdateAsync(", StringComparison.Ordinal);
+        var end = updates.IndexOf("private void CancelUpdatePreparation()", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var prepare = updates[start..end];
+        AssertBefore(prepare, "_initializationTask is not { IsCompletedSuccessfully: true }", "_updatePreparing = true;");
+        AssertBefore(prepare, "return false;", "_updatePreparing = true;");
+        AssertBefore(prepare, "_root.IsHitTestVisible = false;", "_updateCompactWasVisible = _compactWindow?.AppWindow.IsVisible == true;");
+        Assert.Contains("!AppWindow.IsVisible && !_updateCompactWasVisible", prepare);
+        AssertBefore(prepare, "var restart = new UpdateRestartContext(", "_compactWindow?.Hide();");
+        AssertBefore(prepare, "_root.IsHitTestVisible = false;", "_updateHost.RefreshRestartContextAsync(restart, token)");
+        AssertBefore(prepare, "await Task.Run(() => _updateHost.RefreshRestartContextAsync(restart, token), token);", "return true;");
+        Assert.DoesNotContain("ExitAsync(", prepare);
+    }
+
+    [Fact]
+    public void MissingMsiRegistrationCannotBypassDirectoryMaintenanceAsPortable()
+    {
+        var host = MainWindowSource("AppUpdateHost.cs");
+        AssertBefore(host, "var requiresVerifiedInventory = UpdateStorage.HasMaintenanceRecords(local, directory);",
+            "var installed = new UpdateInventory(");
+        var start = host.IndexOf("if (installed is null ||", StringComparison.Ordinal);
+        var end = host.IndexOf("var storage = new UpdateStorage(local, installed.InstallDirectory);", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var portable = host[start..end];
+        AssertBefore(portable, "if (requiresVerifiedInventory || UpdateStorage.HasMaintenanceRecords(local, directory))",
+            "return new(null, null, null);");
+        AssertBefore(portable, "throw StartupRefusal(\"update_maintenance_inventory_unavailable\"", "return new(null, null, null);");
     }
 
     [Fact]

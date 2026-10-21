@@ -47,6 +47,9 @@ jobs:
       - name: Validate release request
         shell: pwsh
         run: |
+          if ($env:GITHUB_REPOSITORY -cne 'andysterland/agent-signaler') {
+            throw 'Release publishing is restricted to the authorized repository.'
+          }
           $releaseRecords = & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" `
             --jq '.[] | [.tag_name, .draft] | @tsv'
           if ($LASTEXITCODE -ne 0) {
@@ -177,8 +180,9 @@ jobs:
           $payloads = @('dashboard', 'remote') | ForEach-Object { Join-Path $publishRoot $_ }
           $files = @(Get-ChildItem -LiteralPath $payloads -File -Recurse |
             Where-Object {
-              $_.Name -like 'AgentSignaler.*' -and
-              $_.Extension -in @('.exe', '.dll')
+              ($_.Name -like 'AgentSignaler.*' -and
+              $_.Extension -in @('.exe', '.dll')) -or
+              $_.Name -in @('Update-AgentSignaler.ps1', 'UpdaterPolicy.ps1', 'UpdateHandoff.ps1')
             })
           if ($files.Count -eq 0) {
             throw 'No first-party application binaries were found to sign.'
@@ -196,6 +200,17 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
+      - name: Verify and pin signed updater dependencies
+        shell: powershell
+        run: |
+          . .\scripts\UpdaterPolicy.ps1
+          foreach ($name in @('dashboard', 'remote')) {
+            $directory = Join-Path $env:GITHUB_WORKSPACE "artifacts\publish\$name"
+            foreach ($dependency in $script:AgentSignalerUpdaterFiles) {
+              Assert-AgentSignalerPublisher (Join-Path $directory $dependency)
+            }
+            Write-AgentSignalerUpdaterDependencies $directory
+          }
       - name: Build and validate installers
         shell: powershell
         run: .\scripts\Build-Installers.ps1 -Version $env:RELEASE_VERSION -SkipPublish -ApplicationMsisOnly
@@ -224,6 +239,7 @@ jobs:
       - name: Verify release signatures
         shell: pwsh
         run: |
+          . .\scripts\UpdaterPolicy.ps1
           $publishRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish'
           $targets = @(
             Get-Content -LiteralPath (Join-Path $publishRoot 'signing-catalog.txt') |
@@ -233,20 +249,7 @@ jobs:
             ForEach-Object { Join-Path $env:GITHUB_WORKSPACE "artifacts\msi\$_" }
           $targets += $msis
           foreach ($target in $targets) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $target
-            $publisher = if ($null -eq $signature.SignerCertificate) {
-              $null
-            }
-            else {
-              $signature.SignerCertificate.GetNameInfo(
-                [Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
-                $false)
-            }
-            if ($signature.Status -ne 'Valid' -or
-                $publisher -ne 'Andy Sterland' -or
-                $null -eq $signature.TimeStamperCertificate) {
-              throw "Signature verification failed for $target`: $($signature.Status)"
-            }
+            Assert-AgentSignalerPublisher $target
           }
       - name: Clear Azure signing session
         if: always()
@@ -279,6 +282,7 @@ jobs:
           @"
           > [!IMPORTANT]
           > The MSI packages and first-party executable payloads are signed and timestamped.
+          > Bundled updater scripts are signed and timestamped by Andy Sterland.
           > Verify the publisher and SHA-256 checksums before installation.
 
           Agent Signaler $env:RELEASE_VERSION was built and validated by GitHub Actions
@@ -291,6 +295,13 @@ jobs:
           - ``SHA256SUMS.txt`` - SHA-256 checksums for the signed Dashboard and Remote MSIs
 
           ### Updater transition and manual retirement
+
+          The first release with in-app updates must be installed manually. Older
+          installations cannot bootstrap the new updater. In-app updates include
+          prereleases, run without elevation, pause affected reporting, and restore
+          only apps running when the update was explicitly authorized. Manual MSI
+          and script updates never restart apps automatically. Reboot-required or
+          failed servicing leaves a visible recovery result and never reboots Windows.
 
           Refresh the repository to this release revision before updating. Both
           ``scripts\Update-AgentSignaler.ps1`` and ``scripts\UpdaterPolicy.ps1`` must
