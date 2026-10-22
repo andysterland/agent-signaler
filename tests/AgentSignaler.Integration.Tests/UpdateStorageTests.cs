@@ -73,35 +73,34 @@ public sealed class UpdateStorageTests
     {
         using var fixture = new TemporaryRoot();
         Directory.CreateDirectory(fixture.Install);
-        using var identity = WindowsIdentity.GetCurrent();
         var acl = new DirectoryInfo(fixture.Install).GetAccessControl();
         acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
             FileSystemRights.ReadAndExecute, AccessControlType.Allow));
         new DirectoryInfo(fixture.Install).SetAccessControl(acl);
-        using var pin = WindowsUpdateInventoryPath.PinVerifiedDirectory(fixture.Install, identity.User!.Value);
+        using var pin = WindowsUpdateInventoryPath.PinVerifiedDirectory(fixture.Install);
         Assert.Throws<IOException>(() => Directory.Move(fixture.Install, fixture.Install + ".replaced"));
         Assert.True(Directory.Exists(fixture.Install));
         Assert.False(Directory.Exists(fixture.Install + ".replaced"));
     }
 
     [Fact]
-    public void RegisteredInstallationDirectoryRejectsForeignWriteWithoutChangingPermissions()
+    public void RegisteredInstallationDirectoryAllowsManagedWriteGrantsWithoutChangingPermissions()
     {
         using var fixture = new TemporaryRoot();
         Directory.CreateDirectory(fixture.Install);
-        using var identity = WindowsIdentity.GetCurrent();
         var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
         var info = new DirectoryInfo(fixture.Install);
         var acl = info.GetAccessControl();
         acl.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Modify, AccessControlType.Allow));
         info.SetAccessControl(acl);
-        Assert.Throws<UnauthorizedAccessException>(() => WindowsUpdateInventoryPath.PinVerifiedDirectory(fixture.Install, identity.User!.Value));
-        Assert.Contains(info.GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier)).OfType<FileSystemAccessRule>(),
-            rule => rule.IdentityReference.Equals(users) && (rule.FileSystemRights & FileSystemRights.Write) != 0);
+        var before = info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+        using var pin = WindowsUpdateInventoryPath.PinVerifiedDirectory(fixture.Install);
+        Assert.Throws<IOException>(() => Directory.Move(fixture.Install, fixture.Install + ".replaced"));
+        Assert.Equal(before, info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
     }
 
     [Fact]
-    public void ProtectedStorageAndItsAncestorsCannotBeRenamedWhilePinned()
+    public void StorageAndItsAncestorsCannotBeRenamedWhilePinned()
     {
         using var fixture = new TemporaryRoot();
         using var storage = new UpdateStorage(fixture.Path, fixture.Install);
@@ -135,21 +134,30 @@ public sealed class UpdateStorageTests
     }
 
     [Fact]
-    public void ProtectedAtomicDocumentsAndRunFilesRoundTripWithoutInventoryAccess()
+    public void AtomicDocumentsAndRunFilesInheritManagedPermissionsAndRoundTripWithoutInventoryAccess()
     {
         using var fixture = new TemporaryRoot();
+        var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+        var root = new DirectoryInfo(fixture.Path);
+        var managedAcl = root.GetAccessControl();
+        managedAcl.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Modify,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        root.SetAccessControl(managedAcl);
         using var storage = new UpdateStorage(fixture.Path, fixture.Install);
         storage.Write("gate.json", "{\"v\":1}"u8);
         storage.Write("gate.json", "{\"v\":2}"u8);
         Assert.Equal("{\"v\":2}"u8.ToArray(), storage.Read("gate.json"));
-        var acl = new FileInfo(System.IO.Path.Combine(storage.DirectoryPath, "gate.json")).GetAccessControl();
-        Assert.True(acl.AreAccessRulesProtected);
-        using var identity = WindowsIdentity.GetCurrent();
-        Assert.Equal(identity.User, acl.GetOwner(typeof(SecurityIdentifier)));
-        Assert.All(acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).OfType<FileSystemAccessRule>(), rule => Assert.Equal(identity.User, rule.IdentityReference));
         var runId = Guid.NewGuid();
         var directory = storage.CreateRunDirectory(runId);
         File.WriteAllText(System.IO.Path.Combine(directory, "result.json"), "{\"pending\":true}");
+        foreach (var info in new FileSystemInfo[] { new DirectoryInfo(storage.DirectoryPath), new DirectoryInfo(directory),
+            new FileInfo(System.IO.Path.Combine(storage.DirectoryPath, "gate.json")), new FileInfo(System.IO.Path.Combine(directory, "result.json")) })
+        {
+            FileSystemSecurity acl = info is DirectoryInfo child ? child.GetAccessControl() : ((FileInfo)info).GetAccessControl();
+            Assert.False(acl.AreAccessRulesProtected);
+            Assert.Contains(acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).OfType<FileSystemAccessRule>(),
+                rule => rule.IsInherited && rule.IdentityReference.Equals(users) && (rule.FileSystemRights & FileSystemRights.Modify) == FileSystemRights.Modify);
+        }
         Assert.Single(storage.ListRuns());
         Assert.Equal("{\"pending\":true}"u8.ToArray(), storage.ReadRun(runId, "result.json"));
         Assert.Throws<ArgumentException>(() => storage.ReadRun(runId, "..\\foreign.json"));

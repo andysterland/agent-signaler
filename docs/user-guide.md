@@ -42,7 +42,7 @@ with their captured configuration/data selection and visibility. A Client stoppe
 using **Exit** is not started. Sign-in startup preferences are not changed.
 
 Release/asset identity, checksums, timestamped publisher signatures, MSI scope and
-installed ownership must all validate. A failure is not permission to install a
+registered product identity must all validate. A failure is not permission to install a
 different release. A reboot-required result does not reboot Windows or restart
 apps against pending replacements. Read the visible result and recovery
 instructions; retry only after the previous servicing operation has finished.
@@ -56,10 +56,12 @@ settings contents or raw release bodies. A subsequent launch may show retained
 results, but does not automatically retry installation. Existing data, credentials
 and foreign IDE configuration remain outside the update handoff.
 
-Existing update storage can retain inherited Windows permissions and additional
-administrator or organization-managed grants; a current-user-only ACL is not
-required. Validation does not rewrite those permissions. Current-user ownership,
-path/link checks, maintenance gates and package verification still apply.
+Startup and updating do not validate filesystem owners or ACL contents for the
+installation directory or update state. New update files and directories inherit
+Windows permissions, including organization-managed grants; existing permissions
+are not rewritten. Windows still enforces access to files. Current-user MSI
+registration, exact process identity, path/link checks, maintenance gates and
+package verification still apply.
 
 The first release containing this feature must be installed manually. Older
 versions cannot retroactively offer in-app updates. Ordinary manual updater

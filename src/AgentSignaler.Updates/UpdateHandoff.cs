@@ -121,7 +121,6 @@ public sealed class UpdateHandoffLauncher(IUpdateStorage storage, IUpdateProcess
                 request.Candidate.Id, request.Candidate.Tag, request.Candidate.Assets, request.ChecksumSha256, request.PackageSha256,
                 processes.Current, ticket.Participants, request.Scripts, pipe, timeProvider.GetUtcNow() + UpdateMaintenanceValidation.OperationLease);
             var manifestPath = Path.Combine(runDirectory, "handoff.json");
-            // Child run directory inherits only current-user permissions from its protected parent.
             var manifestBytes = UpdateStrictJson.Write(manifest);
             using (var output = new FileStream(manifestPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             { await output.WriteAsync(manifestBytes, cancellationToken).ConfigureAwait(false); output.Flush(true); }

@@ -33,11 +33,11 @@ function Assert-FixtureHealth([bool] $Expected) {
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 try { $sid = $identity.User.Value } finally { $identity.Dispose() }
 $session = (Get-Process -Id $PID).SessionId
-Assert-AgentSignalerProtectedPath $ManifestPath $sid
+Assert-AgentSignalerUpdatePath $ManifestPath
 $manifest = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($ManifestPath)) 64KB
 $locations = Assert-AgentSignalerHandoffManifest $manifest $ManifestPath $sid $session
 $controlPath = Join-Path $locations.StorageDirectory 'wire-control.json'
-Assert-AgentSignalerProtectedPath $controlPath $sid
+Assert-AgentSignalerUpdatePath $controlPath
 $control = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($controlPath)) 64KB
 $ready = Open-AgentSignalerAuthenticatedPipe $manifest.readinessPipe $control.actualHost 10000
 try { Write-AgentSignalerPipeFrame $ready ([ordered]@{ schemaVersion = 1; runId = $manifest.runId; nonce = $manifest.nonce; state = 'ready' }) }

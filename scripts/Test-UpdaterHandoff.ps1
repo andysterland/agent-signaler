@@ -110,26 +110,27 @@ try {
 				[ordered]@{ name = $name; size = (Get-Item -LiteralPath $path).Length; sha256 = (Get-FileHash -LiteralPath $path).Hash }
 			}); readinessPipe = ('AgentSignaler.Update.Ready.v1.' + ('a' * 64)); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(20).ToString('o') }
 	$path = Join-Path $run 'handoff.json'
-	$security = [Security.AccessControl.DirectorySecurity]::new()
-	$security.SetOwner([Security.Principal.SecurityIdentifier]::new($sid))
-	$security.SetAccessRuleProtection($true, $false)
+	$security = Get-Acl -LiteralPath $storage
+	$managedIdentity = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
 	$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
-		[Security.Principal.SecurityIdentifier]::new($sid), [Security.AccessControl.FileSystemRights]::FullControl,
+		$managedIdentity, [Security.AccessControl.FileSystemRights]::Modify,
 		[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit', [Security.AccessControl.PropagationFlags]::None,
 		[Security.AccessControl.AccessControlType]::Allow))
 	Set-Acl -LiteralPath $storage -AclObject $security
-	Assert-AgentSignalerProtectedPath $storage $sid
+	Assert-AgentSignalerUpdatePath $storage
 	$aclPath = Join-Path $storage 'acl-test.json'
 	[IO.File]::WriteAllText($aclPath, '{}')
-	Assert-AgentSignalerProtectedPath $aclPath $sid
+	Assert-AgentSignalerUpdatePath $aclPath
 	$foreignRule = [Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),
 		[Security.AccessControl.FileSystemRights]::WriteData, [Security.AccessControl.AccessControlType]::Allow)
 	$acl = Get-Acl -LiteralPath $aclPath
 	$acl.AddAccessRule($foreignRule); Set-Acl -LiteralPath $aclPath -AclObject $acl
 	$beforeAcl = (Get-Acl -LiteralPath $aclPath).Sddl
-	Assert-AgentSignalerProtectedPath $aclPath $sid
+	function Get-Acl { throw 'Update path validation must not inspect filesystem ownership or permissions.' }
+	try { Assert-AgentSignalerUpdatePath $aclPath }
+	finally { Remove-Item -LiteralPath Function:\Get-Acl }
 	Assert ((Get-Acl -LiteralPath $aclPath).Sddl -ceq $beforeAcl) 'Managed update-state permissions must not be rewritten during validation.'
-	Reject { Assert-AgentSignalerProtectedPath $aclPath 'S-1-5-18' }
+	Reject { Assert-AgentSignalerUpdatePath (Join-Path $storage 'missing.json') }
 	$acl.RemoveAccessRuleSpecific($foreignRule); Set-Acl -LiteralPath $aclPath -AclObject $acl
 	$pinTarget = Join-Path $storage 'pin-test'
 	[void](New-Item -ItemType Directory -Path $pinTarget)
@@ -138,6 +139,7 @@ try {
 	finally { $directoryPin.Dispose() }
 	$inventoryProbe = {
 		param([string] $ProbeDirectory)
+		function Get-Acl { throw 'Installation validation must not inspect filesystem ownership or permissions.' }
 		function Get-AgentSignalerInstalledProperty {
 			param($ProductCode, $UserSid, $Name)
 			switch ($Name) {
@@ -161,7 +163,10 @@ try {
 	Assert ($verifiedInventory.Directory -ceq $pinTarget -and $verifiedInventory.Version -eq [version]'1.0.14') 'Pinned inventory lost the registered custom installation path.'
 	$installAcl = Get-Acl -LiteralPath $pinTarget
 	$installAcl.AddAccessRule($foreignRule); Set-Acl -LiteralPath $pinTarget -AclObject $installAcl
-	Reject { & $inventoryProbe $pinTarget }
+	$beforeInstallAcl = (Get-Acl -LiteralPath $pinTarget).Sddl
+	$verifiedInventory = & $inventoryProbe $pinTarget
+	Assert ($verifiedInventory.Directory -ceq $pinTarget) 'Managed installation permissions blocked inventory.'
+	Assert ((Get-Acl -LiteralPath $pinTarget).Sddl -ceq $beforeInstallAcl) 'Installation validation changed managed permissions.'
 	$installAcl.RemoveAccessRuleSpecific($foreignRule); Set-Acl -LiteralPath $pinTarget -AclObject $installAcl
 	[IO.Directory]::Move($pinTarget, ($pinTarget + '-replacement'))
 	[IO.Directory]::Move(($pinTarget + '-replacement'), $pinTarget)
@@ -181,8 +186,11 @@ try {
 		userSid = $sid; sessionId = $self.SessionId; executablePath = $parent.executablePath }
 	$grantPath = Write-AgentSignalerRestartGrant $participant (ParsedManifest) $storage $childIdentity
 	$grantAcl = Get-Acl -LiteralPath $grantPath
-	Assert ($grantAcl.AreAccessRulesProtected -and $grantAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $sid -and
-		@($grantAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IsInherited -or $_.IdentityReference.Value -cne $sid }).Count -eq 0) 'Root restart grant ACL does not match managed storage policy.'
+	Assert (-not $grantAcl.AreAccessRulesProtected -and
+		@($grantAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+			$_.IsInherited -and $_.IdentityReference.Equals($managedIdentity) -and
+			($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Modify) -eq [Security.AccessControl.FileSystemRights]::Modify
+		}).Count -gt 0) 'Root restart grant must inherit managed permissions.'
 	$grant = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($grantPath))
 	Assert ($grant.schemaVersion -eq 1 -and $grant.runId -ceq $runId -and $grant.originalProcessId -eq $PID -and
 		$grant.process.processId -eq 999996 -and $grant.process.creationTimeUtcTicks -eq $childIdentity.creationTimeUtcTicks -and
@@ -208,15 +216,18 @@ try {
 	$gate.owner.creationTimeUtcTicks--
 	Remove-Item -LiteralPath $gatePath -Force
 	$gateBytes = [Text.UTF8Encoding]::new($false).GetBytes(($gate | ConvertTo-Json -Depth 8 -Compress))
-	$gateFile = Open-AgentSignalerProtectedWrite $gatePath $sid
+	$gateFile = Open-AgentSignalerUpdateWrite $gatePath
 	try { $gateFile.Write($gateBytes, 0, $gateBytes.Length); $gateFile.Flush($true) } finally { $gateFile.Dispose() }
 	foreach ($attempt in @(1, 2)) {
 		Write-AgentSignalerRestartGate $storage (ParsedManifest) $gate
 		foreach ($name in @('gate.json', 'restart.json', ('restart-' + $runId + '.json'))) {
 			$documentPath = Join-Path $storage $name
 			$documentAcl = Get-Acl -LiteralPath $documentPath
-			Assert ($documentAcl.AreAccessRulesProtected -and $documentAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $sid -and
-				@($documentAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IsInherited -or $_.IdentityReference.Value -cne $sid }).Count -eq 0) 'Root restart document ACL does not match managed storage policy.'
+			Assert (-not $documentAcl.AreAccessRulesProtected -and
+				@($documentAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+					$_.IsInherited -and $_.IdentityReference.Equals($managedIdentity) -and
+					($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Modify) -eq [Security.AccessControl.FileSystemRights]::Modify
+				}).Count -gt 0) 'Root restart documents must inherit managed permissions.'
 			$document = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($documentPath))
 			$expectedPhase = if ($name -ceq ('restart-' + $runId + '.json')) { 'Servicing' } else { 'Restarting' }
 			Assert ($document.phase -ceq $expectedPhase -and [guid]$document.runId -eq [guid]$runId -and
@@ -265,7 +276,7 @@ try {
 		pipeName = 'AgentSignaler.Update.v1.synthetic.health' }
 	$healthRegistrationPath = Join-Path $storage ('instance-' + $healthIdentity.processId + '-' + $healthIdentity.creationTimeUtcTicks + '.json')
 	$healthRegistrationJson = $healthRegistration | ConvertTo-Json -Depth 8 -Compress
-	$healthFile = Open-AgentSignalerProtectedWrite $healthRegistrationPath $sid
+	$healthFile = Open-AgentSignalerUpdateWrite $healthRegistrationPath
 	try { $bytes = [Text.Encoding]::UTF8.GetBytes($healthRegistrationJson); $healthFile.Write($bytes, 0, $bytes.Length) }
 	finally { $healthFile.Dispose() }
 	$healthProbe = {
@@ -320,7 +331,7 @@ try {
 		try { return & $systemInstallerResolver }
 		finally { $env:SystemRoot = $priorSystemRoot }
 	}
-	function Assert-AgentSignalerProtectedPath { param($Path, $UserSid) }
+	function Assert-AgentSignalerUpdatePath { param($Path) }
 	function Open-AgentSignalerDirectoryPin { param($Path) return [IO.MemoryStream]::new() }
 	function Assert-AgentSignalerPublisher {
 		param($Path)

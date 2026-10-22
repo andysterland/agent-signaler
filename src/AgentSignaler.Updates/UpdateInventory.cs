@@ -149,7 +149,7 @@ public sealed class WindowsUpdateInventoryAdapter : IUpdateInventoryAdapter
                         MsiReleaseVersion.Parse(cachedVersion) != MsiReleaseVersion.Parse(registeredVersion))
                         throw new InvalidDataException("update_inventory_cached_identity");
                     var installDirectory = UpdatePath.Canonical(Read(product, userSid, "InstallLocation"));
-                    using var directoryPin = WindowsUpdateInventoryPath.PinVerifiedDirectory(installDirectory, userSid);
+                    using var directoryPin = WindowsUpdateInventoryPath.PinVerifiedDirectory(installDirectory);
                     result.Add(new(Guid.Parse(product), upgradeCode, Version.Parse(registeredVersion),
                         installDirectory, userSid, allUsers == "\0" && (flags & 8) != 0,
                         Read(product, userSid, "State") == "5", template.Split(';')[0], true));

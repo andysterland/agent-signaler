@@ -119,7 +119,7 @@ function Get-AgentSignalerInstalledIdentity($Installer, $Installation) {
 			$directoryPins.Add((Open-AgentSignalerDirectoryPin $current))
 			$current = [IO.Path]::GetDirectoryName($current)
 		} while ($current)
-		Assert-AgentSignalerProtectedPath $directory $sid -InstallationDirectory
+		Assert-AgentSignalerUpdatePath $directory
 		$cached = Get-AgentSignalerInstalledProperty $code $sid 'LocalPackage'
 		$package = Read-Package $Installer $cached $Installation.package
 		$version = ConvertTo-AgentSignalerVersion (Get-AgentSignalerInstalledProperty $code $sid 'VersionString')
@@ -169,26 +169,9 @@ function Get-AgentSignalerSystemInstallerPath {
 	return $path
 }
 
-function Assert-AgentSignalerProtectedPath([string] $Path, [string] $UserSid, [switch] $InstallationDirectory) {
+function Assert-AgentSignalerUpdatePath([string] $Path) {
 	[void](Assert-AgentSignalerLocalPath $Path)
-	$acl = Get-Acl -LiteralPath $Path
-	if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $UserSid) {
-		throw 'Update state is not owned by the current user.'
-	}
-	if ($InstallationDirectory) {
-		$allowed = @($UserSid, 'S-1-5-18', 'S-1-5-32-544')
-		foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-			if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-				$rule.IdentityReference.Value -notin $allowed -and
-				($rule.FileSystemRights -band ([Security.AccessControl.FileSystemRights]::Write -bor
-					[Security.AccessControl.FileSystemRights]::Delete -bor
-					[Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-					[Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-					[Security.AccessControl.FileSystemRights]::TakeOwnership)) -ne 0) {
-				throw 'Installed directory grants foreign write access.'
-			}
-		}
-	}
+	[void](Get-Item -LiteralPath $Path -Force -ErrorAction Stop)
 }
 
 function Open-AgentSignalerReadPin([string] $Path, [long] $Maximum) {
@@ -389,23 +372,10 @@ function Write-AgentSignalerRunResult([string] $Directory, $Result) {
 	else { [IO.File]::Move($pending, $path) }
 }
 
-function Open-AgentSignalerProtectedWrite([string] $Path, [string] $UserSid) {
-	$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-	try {
-		if ($identity.User.Value -cne $UserSid) { throw 'Update document owner is not the current user.' }
-		$security = [Security.AccessControl.FileSecurity]::new()
-		$security.SetOwner($identity.User)
-		$security.SetAccessRuleProtection($true, $false)
-		$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
-			$identity.User, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
-		if ($PSVersionTable.PSEdition -eq 'Core') {
-			return [IO.FileSystemAclExtensions]::Create([IO.FileInfo]::new($Path), [IO.FileMode]::CreateNew,
-				[Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $security)
-		}
-		return [IO.FileStream]::new($Path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl,
-			[IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $security)
-	}
-	finally { $identity.Dispose() }
+function Open-AgentSignalerUpdateWrite([string] $Path) {
+	[void](Assert-AgentSignalerLocalPath $Path)
+	return [IO.FileStream]::new($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write,
+		[IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
 }
 
 function Write-AgentSignalerRestartGate([string] $Storage, $Manifest, $Gate) {
@@ -415,7 +385,7 @@ function Write-AgentSignalerRestartGate([string] $Storage, $Manifest, $Gate) {
 		$path = Join-Path $Storage $name
 		$existing = Test-Path -LiteralPath $path
 		if ($existing) {
-			Assert-AgentSignalerProtectedPath $path $Manifest.parent.userSid
+			Assert-AgentSignalerUpdatePath $path
 			$prior = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false, $true))) 64KB
 			Assert-AgentSignalerFields $prior @('schemaVersion', 'runId', 'installDirectory', 'owner', 'expiresAt', 'phase', 'controller')
 			if ([guid]$prior.runId -ne [guid]$Manifest.runId -or $prior.owner.processId -ne $PID -or
@@ -426,7 +396,7 @@ function Write-AgentSignalerRestartGate([string] $Storage, $Manifest, $Gate) {
 		}
 		$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Gate | ConvertTo-Json -Depth 8 -Compress))
 		$pending = Join-Path $Storage ('restart-' + [guid]::NewGuid().ToString('N') + '.new')
-		$file = Open-AgentSignalerProtectedWrite $pending $Manifest.parent.userSid
+		$file = Open-AgentSignalerUpdateWrite $pending
 		try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
 		if ($existing) { [IO.File]::Replace($pending, $path, [NullString]::Value) }
 		else { [IO.File]::Move($pending, $path) }
@@ -447,7 +417,7 @@ function Get-AgentSignalerPinnedDownload($Manifest) {
 
 function Get-AgentSignalerGate([string] $Storage, $Manifest, [switch] $UpdaterOwned) {
 	$path = Join-Path $Storage 'gate.json'
-	Assert-AgentSignalerProtectedPath $path $Manifest.parent.userSid
+	Assert-AgentSignalerUpdatePath $path
 	$gate = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false, $true))) 64KB
 	Assert-AgentSignalerFields $gate @('schemaVersion', 'runId', 'installDirectory', 'owner', 'expiresAt', 'phase', 'controller')
 	foreach ($process in @($gate.owner, $gate.controller)) {
@@ -528,7 +498,7 @@ function Write-AgentSignalerRestartGrant($Participant, $Manifest, [string] $Stor
 		process = $ProcessIdentity; restart = $Participant.restart }
 	$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($grant | ConvertTo-Json -Depth 8 -Compress))
 	if ($bytes.Length -gt 64KB) { throw 'Restart grant exceeds its bound.' }
-	$file = Open-AgentSignalerProtectedWrite $pending $Manifest.parent.userSid
+	$file = Open-AgentSignalerUpdateWrite $pending
 	try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
 	try { [IO.File]::Move($pending, $path) }
 	finally { if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force } }
@@ -542,7 +512,7 @@ function Wait-AgentSignalerCapturedParticipantReady($Process, $ProcessIdentity, 
 	do {
 		if ($Process.HasExited) { throw 'Restarted application exited before readiness.' }
 		if (Test-Path -LiteralPath $registrationPath -PathType Leaf) {
-			Assert-AgentSignalerProtectedPath $registrationPath $Manifest.parent.userSid
+			Assert-AgentSignalerUpdatePath $registrationPath
 			$registration = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($registrationPath, [Text.UTF8Encoding]::new($false, $true))) 64KB
 			Assert-AgentSignalerFields $registration @('schemaVersion', 'process', 'restart', 'pipeName')
 			Assert-AgentSignalerFields $registration.process @('processId', 'creationTimeUtcTicks', 'userSid', 'sessionId', 'executablePath')
@@ -599,7 +569,7 @@ function Start-AgentSignalerCapturedParticipant($Participant, $Manifest, [string
 	finally {
 		try {
 			if ($null -ne $grantPath -and (Test-Path -LiteralPath $grantPath)) {
-				Assert-AgentSignalerProtectedPath $grantPath $Manifest.parent.userSid
+				Assert-AgentSignalerUpdatePath $grantPath
 				$grant = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($grantPath, [Text.UTF8Encoding]::new($false, $true))) 64KB
 				if ($grant.runId -cne $Manifest.runId -or $grant.process.processId -ne $processId -or
 					$grant.process.creationTimeUtcTicks -ne $ticks) { throw 'Restart grant ownership changed.' }
@@ -625,20 +595,20 @@ function Invoke-AgentSignalerAppHandoff([string] $ManifestPath) {
 		$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 		try { $sid = $identity.User.Value } finally { $identity.Dispose() }
 		$session = (Get-Process -Id $PID).SessionId
-		Assert-AgentSignalerProtectedPath $ManifestPath $sid
+		Assert-AgentSignalerUpdatePath $ManifestPath
 		$pins.Add((Open-AgentSignalerReadPin $ManifestPath 64KB))
 		$manifest = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false, $true))) 64KB
 		$locations = Assert-AgentSignalerHandoffManifest $manifest $ManifestPath $sid $session
 		$directory = $locations.RunDirectory
 		do {
-			Assert-AgentSignalerProtectedPath $directory $sid
+			Assert-AgentSignalerUpdatePath $directory
 			$pins.Add((Open-AgentSignalerDirectoryPin $directory))
 			if ($directory.Equals($env:LOCALAPPDATA.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { break }
 			$directory = [IO.Path]::GetDirectoryName($directory)
 		} while ($directory)
 		foreach ($pin in $manifest.scripts) {
 			$path = Join-Path $locations.RunDirectory $pin.name
-			Assert-AgentSignalerProtectedPath $path $sid
+			Assert-AgentSignalerUpdatePath $path
 			$handle = Open-AgentSignalerReadPin $path 1MB
 			$pins.Add($handle)
 			if ($handle.Length -ne $pin.size -or (Get-Sha256 $path) -cne $pin.sha256.ToUpperInvariant()) { throw 'Staged updater dependency changed.' }
@@ -663,7 +633,7 @@ function Invoke-AgentSignalerAppHandoff([string] $ManifestPath) {
 		try { Write-AgentSignalerPipeFrame $pipe ([ordered]@{ schemaVersion = 1; runId = $manifest.runId; nonce = $manifest.nonce; state = 'ready' }) }
 		finally { $pipe.Dispose() }
 		$lockPath = Join-Path $locations.StorageDirectory 'maintenance.lock'
-		Assert-AgentSignalerProtectedPath $lockPath $sid
+		Assert-AgentSignalerUpdatePath $lockPath
 		$clock = [Diagnostics.Stopwatch]::StartNew()
 		do {
 			try { $lease = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
@@ -809,7 +779,7 @@ function Invoke-AgentSignalerAppHandoff([string] $ManifestPath) {
 				foreach ($name in @(('restart-' + $manifest.runId + '.json'), 'restart.json', 'gate.json')) {
 					$path = Join-Path $locations.StorageDirectory $name
 					if (-not (Test-Path -LiteralPath $path)) { continue }
-					Assert-AgentSignalerProtectedPath $path $sid
+					Assert-AgentSignalerUpdatePath $path
 					$gate = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false, $true))) 64KB
 					if ([guid]$gate.runId -eq [guid]$manifest.runId -and $gate.owner.processId -eq $PID -and
 						$gate.owner.creationTimeUtcTicks -eq (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks) {
@@ -826,13 +796,13 @@ function Invoke-AgentSignalerAppHandoff([string] $ManifestPath) {
 						@('AgentSignaler.' + $manifest.package + '.msi', $manifest.packageSha256))) {
 					$path = Join-Path $locations.RunDirectory $entry[0]
 					if (Test-Path -LiteralPath $path -PathType Leaf) {
-						Assert-AgentSignalerProtectedPath $path $sid
+						Assert-AgentSignalerUpdatePath $path
 						if ((Get-Sha256 $path) -ceq $entry[1].ToUpperInvariant()) { Remove-Item -LiteralPath $path -Force }
 					}
 				}
 				$logPath = Join-Path $locations.RunDirectory 'install.log'
 				if (Test-Path -LiteralPath $logPath -PathType Leaf) {
-					Assert-AgentSignalerProtectedPath $logPath $sid
+					Assert-AgentSignalerUpdatePath $logPath
 					$log = [IO.File]::Open($logPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 					try { if ($log.Length -gt 4MB) { $log.SetLength(4MB); $log.Flush($true) } } finally { $log.Dispose() }
 				}

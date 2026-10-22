@@ -1,8 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Security.AccessControl;
 using System.Security.Cryptography;
-using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -51,12 +49,11 @@ public static class UpdateStrictJson
 }
 
 // Intentionally independent of Remote.AtomicFile: Updates cannot depend on Remote. Mirrors its
-// create-new / flush-to-disk / atomic-rename pattern, adding protected ACLs and pinned directories.
+// create-new / flush-to-disk / atomic-rename pattern with pinned directories.
 [SupportedOSPlatform("windows")]
 public sealed class UpdateStorage : IUpdateStorage, IDisposable
 {
     public const int MaximumDocumentBytes = 65536;
-    private readonly SecurityIdentifier user;
     private readonly List<SafeFileHandle> directories = [];
     private readonly bool directoryPresent;
     public string DirectoryPath { get; }
@@ -65,8 +62,6 @@ public sealed class UpdateStorage : IUpdateStorage, IDisposable
 
     private UpdateStorage(string localAppData, string installDirectory, bool createMissing)
     {
-        using var identity = WindowsIdentity.GetCurrent();
-        user = identity.User ?? throw new UnauthorizedAccessException("update_storage_user");
         var root = UpdatePath.Canonical(localAppData);
         var install = UpdatePath.Canonical(installDirectory).ToUpperInvariant();
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(install))).ToLowerInvariant();
@@ -240,25 +235,13 @@ public sealed class UpdateStorage : IUpdateStorage, IDisposable
     }
 
     private FileStream Create(string path, FileShare share)
-    {
-        var security = new FileSecurity();
-        security.SetOwner(user);
-        security.SetAccessRuleProtection(true, false);
-        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
-        return new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.FullControl, share, 4096,
-            FileOptions.WriteThrough, security);
-    }
+        => new(path, FileMode.CreateNew, FileAccess.Write, share, 4096, FileOptions.WriteThrough);
 
     private void CreateDirectory(string path)
     {
         if (new DirectoryInfo(path).LinkTarget is not null) throw new UnauthorizedAccessException("update_storage_link");
         if (Directory.Exists(path)) { Validate(new DirectoryInfo(path)); return; }
-        var security = new DirectorySecurity();
-        security.SetOwner(user);
-        security.SetAccessRuleProtection(true, false);
-        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-        new DirectoryInfo(path).Create(security);
+        Directory.CreateDirectory(path);
         Validate(new DirectoryInfo(path));
     }
 
@@ -268,10 +251,6 @@ public sealed class UpdateStorage : IUpdateStorage, IDisposable
         info.Refresh();
         if (!info.Exists) throw new FileNotFoundException("update_storage_missing");
         if ((info.Attributes & FileAttributes.ReparsePoint) != 0) throw new UnauthorizedAccessException("update_storage_link");
-        FileSystemSecurity security = info is DirectoryInfo directory ? directory.GetAccessControl() : ((FileInfo)info).GetAccessControl();
-        // Centrally managed ACLs may include inherited and organization-controlled grants.
-        if (!user.Equals(security.GetOwner(typeof(SecurityIdentifier))))
-            throw new UnauthorizedAccessException("update_storage_owner");
     }
 
     private void PinAncestors(string path)
