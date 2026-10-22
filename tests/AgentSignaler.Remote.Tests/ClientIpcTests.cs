@@ -126,7 +126,11 @@ public sealed class ClientIpcTests : IDisposable
         try { Assert.Equal(0, await pipe.ReadAsync(new byte[1], timeout.Token)); }
         catch (IOException) { }
         Assert.True((await ClientIpc.StatusAsync(ConfigPath)).Accepted);
-        Assert.Contains("ipc-request-timeout", await File.ReadAllTextAsync(RemotePaths.Log(ConfigPath)));
+        var logPath = RemotePaths.Log(ConfigPath);
+        // Pipe closure precedes completion of the timeout diagnostic write.
+        await Eventually(() => File.Exists(logPath));
+        using var logLock = AtomicFile.Acquire(logPath + ".lock", TimeSpan.FromSeconds(2));
+        Assert.Contains("ipc-request-timeout", await File.ReadAllTextAsync(logPath));
     }
 
     [Fact]
