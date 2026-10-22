@@ -524,7 +524,7 @@ public sealed class DiscoveryContractsTests
 
     private sealed class StoreFixture : IDisposable
     {
-        private readonly string parent = Path.Combine(Directory.GetCurrentDirectory(), ".test-artifacts", "discovery-" + Guid.NewGuid().ToString("N"));
+        private readonly string parent = Path.Combine(Path.GetTempPath(), "discovery-" + Guid.NewGuid().ToString("N"));
         public string Root { get; }
         public CurrentUserDiscoveryCredentialStore Store { get; }
         public StoreFixture()
