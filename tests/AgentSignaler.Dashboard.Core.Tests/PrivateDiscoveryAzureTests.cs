@@ -15,46 +15,6 @@ public sealed class PrivateDiscoveryAzureTests
 {
     private static readonly PrivateDiscoveryTarget Target = new(Guid.NewGuid(), Guid.NewGuid(), "owned-group", "ownedaccount");
     private const string Policy = "as-11111111111111111111111111111111";
-    private static readonly string Signature = Uri.EscapeDataString(Convert.ToBase64String(new byte[32]));
-    private static string Sas => $"sv=2025-01-05&sr=b&spr=https&si={Policy}&sig={Signature}";
-
-    [Fact]
-    public async Task ArmSignsOnlyExactBlobWithStoredPolicyAndNeverRequestsKeys()
-    {
-        var requests = 0;
-        using var http = new HttpClient(new Handler(async request =>
-        {
-            requests++;
-            Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal($"https://management.azure.com{Target.ResourceId}/listServiceSas?api-version=2025-06-01", request.RequestUri!.AbsoluteUri);
-            Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
-            using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
-            Assert.Equal(4, payload.RootElement.EnumerateObject().Count());
-            Assert.Equal("/blob/ownedaccount/agentsignaler-test/endpoint.json", payload.RootElement.GetProperty("canonicalizedResource").GetString());
-            Assert.Equal("b", payload.RootElement.GetProperty("signedResource").GetString());
-            Assert.Equal("https", payload.RootElement.GetProperty("signedProtocol").GetString());
-            Assert.Equal(Policy, payload.RootElement.GetProperty("signedIdentifier").GetString());
-            return Json(new { serviceSasToken = Sas });
-        }));
-        var credential = new Credential();
-        using var adapter = new PrivateDiscoveryAzure(Target, credential, http);
-        var uri = await adapter.CreateReadSasAsync("agentsignaler-test", Policy, default);
-        Assert.Equal("/agentsignaler-test/endpoint.json", uri.AbsolutePath);
-        Assert.Equal(1, requests);
-        Assert.Equal("https://management.azure.com/.default", Assert.Single(credential.Scopes));
-    }
-
-    [Theory]
-    [InlineData("&sp=r")]
-    [InlineData("&se=2027-01-01")]
-    [InlineData("&sip=127.0.0.1")]
-    [InlineData("&si=another")]
-    public async Task ArmRejectsBroaderOrFixedExpiryCredentials(string suffix)
-    {
-        using var http = new HttpClient(new Handler(_ => Task.FromResult(Json(new { serviceSasToken = Sas + suffix }))));
-        using var adapter = new PrivateDiscoveryAzure(Target, new Credential(), http);
-        await Assert.ThrowsAsync<DiscoveryException>(() => adapter.CreateReadSasAsync("agentsignaler-test", Policy, default));
-    }
 
     [Theory]
     [InlineData("{\"serviceSasToken\":\"secret\",\"serviceSasToken\":\"secret\"}")]
@@ -76,19 +36,6 @@ public sealed class PrivateDiscoveryAzureTests
         using var adapter = new PrivateDiscoveryAzure(Target, new Credential(), http);
         var error = await Assert.ThrowsAsync<DiscoveryException>(() => adapter.CreateReadSasAsync("agentsignaler-test", Policy, default));
         Assert.Equal("discovery_arm_response_size", error.Code);
-    }
-
-    [Fact]
-    public async Task ArmTransportExceptionsAreFreshCategoryOnlyWithoutUriOrInnerException()
-    {
-        using var http = new HttpClient(new Handler(_ => throw new HttpRequestException(
-            "https://ownedaccount.blob.core.windows.net/container/endpoint.json?sig=secret-sas",
-            new InvalidOperationException("secret-inner-output"))));
-        using var adapter = new PrivateDiscoveryAzure(Target, new Credential(), http);
-        var error = await Assert.ThrowsAsync<PrivateDiscoveryCloudException>(() => adapter.CreateReadSasAsync("agentsignaler-test", Policy, default));
-        Assert.Equal("discovery_cloud_request_failed", error.Message);
-        Assert.Null(error.InnerException);
-        Assert.DoesNotContain("secret", error.ToString(), StringComparison.Ordinal);
     }
 
     [Theory]

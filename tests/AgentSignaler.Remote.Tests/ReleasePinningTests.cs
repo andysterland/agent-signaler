@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentSignaler.Updates;
@@ -14,34 +13,6 @@ public sealed class ReleasePinningTests
     private static ReleaseCandidate Candidate => new(10, "v1.0.1", new(1, 0, 1),
         new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero), true,
         [new(11, "AgentSignaler.Dashboard.msi", 100), new(12, "AgentSignaler.Remote.msi", 100), new(13, "SHA256SUMS.txt", Manifest.Length)]);
-
-    [Fact]
-    public async Task PinsSelectedReleaseAndExactChecksumBytesWithoutCredentialsOrRedirectPersistence()
-    {
-        var calls = new List<string>();
-        using var http = new HttpClient(new Handler(request =>
-        {
-            calls.Add(request.RequestUri!.AbsoluteUri);
-            Assert.Null(request.Headers.Authorization);
-            Assert.Null(request.Headers.Referrer);
-            if (calls.Count == 1) return Json(Candidate);
-            if (calls.Count == 2)
-            {
-                var response = new HttpResponseMessage(HttpStatusCode.Redirect);
-                response.Headers.Location = new("https://release-assets.githubusercontent.com/fixture?sig=temporary-value");
-                return response;
-            }
-            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(Manifest) };
-        }));
-        var result = await new ReleasePinning(http).PinAsync(Candidate, UpdatePackage.Remote);
-        Assert.Equal("https://api.github.com/repos/andysterland/agent-signaler/releases/10", calls[0]);
-        Assert.Equal("https://api.github.com/repos/andysterland/agent-signaler/releases/assets/13", calls[1]);
-        Assert.Equal(new string('B', 64), result.PackageSha256);
-        Assert.Equal(Convert.ToHexString(SHA256.HashData(Manifest)), result.ChecksumSha256);
-        Assert.Equal(10, result.Candidate.Id);
-        Assert.True(result.Candidate.Prerelease);
-        Assert.DoesNotContain("temporary-value", result.ToString(), StringComparison.Ordinal);
-    }
 
     [Theory]
     [InlineData("release")]

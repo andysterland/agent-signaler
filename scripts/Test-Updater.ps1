@@ -10,6 +10,45 @@ function Reject([scriptblock] $Action) {
     Assert $rejected 'Expected invalid fixture to fail closed.'
 }
 $root = Split-Path -Parent $PSScriptRoot
+Add-Type -AssemblyName System.Net.Http
+$parserTokens = $null
+$parserErrors = $null
+$updaterAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $PSScriptRoot 'Update-AgentSignaler.ps1'), [ref]$parserTokens, [ref]$parserErrors)
+Assert ($parserErrors.Count -eq 0) 'Updater must parse without errors.'
+foreach ($functionName in @('Read-GitHubJsonResponse', 'Get-LatestGitHubRelease')) {
+    $definitions = @($updaterAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $functionName
+    }, $true))
+    Assert ($definitions.Count -eq 1) 'Expected exactly one updater release function.'
+    . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+$releaseResponses = [Collections.Generic.Queue[string]]::new()
+function Open-GitHubResponse {
+    param($Uri, $Token, $Accept)
+    $response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+    $response.Content = [Net.Http.StringContent]::new($releaseResponses.Dequeue())
+    return $response
+}
+$apiRoot = 'https://api.github.com/repos/andysterland/agent-signaler'
+foreach ($case in @(
+    @{ Json = '[]'; Count = 0 },
+    @{ Json = '[{"draft":false}]'; Count = 1 },
+    @{ Json = '[{"draft":false},{"draft":false}]'; Count = 2 }
+)) {
+    $releaseResponses.Enqueue($case.Json)
+    $parsedReleases = @(Read-GitHubJsonResponse (Open-GitHubResponse))
+    Assert ($parsedReleases.Count -eq $case.Count) 'GitHub release arrays must enumerate on every supported PowerShell host.'
+    Assert (@($parsedReleases | Where-Object { -not $_.draft }).Count -eq $case.Count) 'Published releases must not be filtered out as a nested array.'
+}
+$releaseResponses.Enqueue('[{"draft":false,"prerelease":true,"tag_name":"v1.0.23","published_at":"2026-09-30T13:28:09Z"},{"draft":false,"prerelease":true,"tag_name":"v1.0.24","published_at":"2026-09-30T15:50:32Z"},{"draft":true,"prerelease":false,"tag_name":"v1.0.25","published_at":"2026-10-01T00:00:00Z"}]')
+$latestRelease = Get-LatestGitHubRelease
+Assert ($latestRelease.Release.tag_name -ceq 'v1.0.24' -and
+    $latestRelease.Version -eq [version]'1.0.24') 'Release discovery must select the newest published release, including prereleases but excluding drafts.'
+$releaseResponses.Enqueue('[]')
+Reject { Get-LatestGitHubRelease }
+Assert ($releaseResponses.Count -eq 0) 'Release tests must consume only their synthetic responses.'
 $utcJson = ConvertFrom-AgentSignalerStrictJson '{"utc":"2026-10-20T12:00:00.1234567+00:00"}'
 Assert ($utcJson.utc -is [string] -and $utcJson.utc -ceq '2026-10-20T12:00:00.1234567+00:00') 'Update JSON must preserve canonical UTC strings on every supported PowerShell host.'
 $policyCases = ConvertFrom-AgentSignalerStrictJson ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures\update-policy.json')))

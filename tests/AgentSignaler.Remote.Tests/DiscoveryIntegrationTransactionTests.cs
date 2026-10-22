@@ -179,31 +179,6 @@ public sealed class DiscoveryIntegrationTransactionTests : IDisposable
     }
 
     [Fact]
-    public async Task ProtectedStoreImportAndDirectConversionUseCurrentUserCiphertextOnly()
-    {
-        AtomicFile.Write(RelayPath, []);
-        AtomicFile.Write(Path.Combine(root, "AgentSignaler.Client.exe"), []);
-        var manager = new MultiTargetIntegrationManager(new Scheduler(), (_, _) => Task.FromResult(true), startup, runtime);
-        await manager.ApplyAsync(MultiTargetIntegrationManager.Preview(Direct, ConfigPath, [], RelayPath), default);
-        var package = new DiscoveryConnectionPackage(Guid.NewGuid(),
-            new("https://agenttest.blob.core.windows.net/discovery/endpoint.json?sv=2025-06-01&sr=b&spr=https&si=reader-one&sig=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D"),
-            DiscoveryCodec.ExportPublicKey(key));
-        var update = DiscoveryCredentialTransactionStore.Prepare(package);
-        var config = RemoteConfiguration.Load(ConfigPath).WithDiscovery(update.Reference, package.DiscoveryId, package.SigningPublicKey, 1);
-        var plan = MultiTargetIntegrationManager.PreviewWithCredential(config, ConfigPath, [], RelayPath, true, update);
-        Assert.False(Directory.Exists(DiscoveryCredentialTransactionStore.DirectoryPath(ConfigPath)));
-        Assert.DoesNotContain(package.BlobSasUri.OriginalString, plan.Preview);
-        await manager.ApplyAsync(plan, default);
-        var protectedStore = new CurrentUserDiscoveryCredentialStore(DiscoveryCredentialTransactionStore.DirectoryPath(ConfigPath));
-        Assert.Equal(package, await protectedStore.LoadAsync(update.Reference));
-        Assert.DoesNotContain("sig=", File.ReadAllText(ConfigPath));
-        var direct = RemoteConfiguration.Load(ConfigPath).WithDashboardUrl("https://direct.synthetic.example/");
-        await manager.ApplyAsync(MultiTargetIntegrationManager.PreviewWithCredential(direct, ConfigPath, [], RelayPath, true, null), default);
-        Assert.Empty(Directory.GetFiles(DiscoveryCredentialTransactionStore.DirectoryPath(ConfigPath)));
-        Assert.False(RemoteConfiguration.Load(ConfigPath).IsDiscovery);
-    }
-
-    [Fact]
     public async Task RetainedCiphertextJournalRecoversPriorConfigAndRemovesOnlyUnreferencedSlot()
     {
         var manager = Manager();

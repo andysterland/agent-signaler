@@ -1,0 +1,8 @@
+<Project>
+  <!-- WinUI's MSVC discovery fails without the C++ workload, which managed metadata does not need. -->
+  <PropertyGroup Condition="'$(UseWinUI)' == 'true' and '$(IsNativeLanguage)' == 'false' and '$(UseVCMetaManaged)' == 'true'">
+    <MarkupCompilePass1DependsOn>$([MSBuild]::Unescape($(MarkupCompilePass1DependsOn.Replace('GetVCInstallPath;', ''))))</MarkupCompilePass1DependsOn>
+    <MarkupCompilePass2DependsOn>$([MSBuild]::Unescape($(MarkupCompilePass2DependsOn.Replace('GetVCInstallPath;', ''))))</MarkupCompilePass2DependsOn>
+    <Prep_ComputeProcessXamlFilesDependsOn>$([MSBuild]::Unescape($(Prep_ComputeProcessXamlFilesDependsOn.Replace('GetVCInstallPath;', ''))))</Prep_ComputeProcessXamlFilesDependsOn>
+  </PropertyGroup>
+</Project>

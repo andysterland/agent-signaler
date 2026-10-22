@@ -103,6 +103,197 @@ Development validation is fake-backed and build-and-inspect only. Production
 signing, real MSI execution, clean-image upgrade/rollback, reboot-required behavior
 and interactive update walkthroughs require separately authorized acceptance.
 
+### Manual local Azure Artifact Signing
+
+Normal `Build-Installers.ps1` builds remain **unsigned**. Explicitly invoke
+`Sign-Installers.ps1` to produce locally signed application payloads and the two
+application MSIs using the same existing account/profile as the release workflow.
+After local signing succeeds, it copies only the two signed application MSIs to
+`\\tsclient\C\public\AgentSignaler` by default.
+This is a repository PowerShell script, not a Visual Studio or scheduled task.
+
+Prerequisites, installed/configured separately:
+
+- 64-bit PowerShell 5.1 or 7 on Windows, plus the ordinary installer build tools.
+- Official x64 SignTool and `Azure.CodeSigning.Dlib.dll`, and the .NET 8 runtime
+  required by the signing client. SignTool must have a valid Microsoft signature.
+  The current official Dlib is unsigned: obtain it only through Microsoft's
+  official distribution; its filename and x64 PE architecture are checked.
+  If a Dlib carries a signature, it must be a valid Microsoft signature. See
+  [Microsoft's signing integration instructions](https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-signing-integrations).
+  The official WinGet package is `Microsoft.Azure.ArtifactSigningClientTools`.
+- An existing Azure CLI sign-in authorized to sign with the account/profile.
+  The wrapper checks `az account show --output none`; it never logs in, changes
+  roles/subscriptions or prints access tokens. Profile permission is checked by
+  the signing service when signing actually starts.
+
+Supply `-Endpoint`, `-Account`, and `-Profile`, or set these **process-level**
+environment variables to the existing release configuration:
+
+```powershell
+$env:ARTIFACT_SIGNING_ENDPOINT = 'https://<region>.codesigning.azure.net/'
+$env:ARTIFACT_SIGNING_ACCOUNT = '<existing-account-name>'
+$env:ARTIFACT_SIGNING_PROFILE = '<existing-profile-name>'
+
+# Preview only: no build, authentication command, network, signing or writes.
+.\scripts\Sign-Installers.ps1 -Version 1.0.25 -WhatIf
+
+# Explicit opt-in: this contacts Azure Artifact Signing and its timestamp service.
+.\scripts\Sign-Installers.ps1 -Version 1.0.25
+
+# Override delivery to another existing, trusted local or UNC directory.
+.\scripts\Sign-Installers.ps1 -Version 1.0.25 -DestinationPath C:\Releases\AgentSignaler
+```
+
+Replace the placeholders; do not commit account-specific settings or secrets.
+If GitHub CLI is authenticated for this repository, load the existing release
+configuration into the current terminal without saving it to a file:
+
+```powershell
+foreach ($name in @('ARTIFACT_SIGNING_ENDPOINT', 'ARTIFACT_SIGNING_ACCOUNT', 'ARTIFACT_SIGNING_PROFILE')) {
+    $value = gh variable get $name --repo andysterland/agent-signaler --env artifact-signing
+    if ($LASTEXITCODE -ne 0) { throw "Could not read $name." }
+    Set-Item -LiteralPath "Env:$name" -Value $value
+}
+az login
+```
+
+Open a new terminal after installing Azure CLI so `az` is on PATH. Sign in with
+an identity that has the Artifact Signing Certificate Profile Signer role for
+the selected profile; GitHub's workflow identity does not grant the local user
+that permission. Choose the MSI version appropriate for your deployment; the
+example does not reserve or publish a GitHub release.
+
+`-WhatIf` validates these configuration values but needs no Azure CLI login and
+does not invoke the signing or authentication tools. It displays the destination
+and both MSI filenames without inspecting/contacting the destination.
+The endpoint must be a public HTTPS `*.codesigning.azure.net` base URI without
+credentials, a port, path, query or fragment. `-Version` is required and must be a
+canonical three-part MSI version within `255.255.65535`. `-Configuration Release`
+(default) or `Debug` and `-NoRestore` are forwarded to both existing build phases.
+`-ExpectedPublisher` defaults to `Andy Sterland`, matching the release workflow.
+
+Use `-SignToolPath` and `-DlibPath` to select explicit local x64 files, including
+the official signing package's `bin\x64` layout. Automatic Dlib discovery first
+checks the current-user WinGet installation's flat directory:
+`%LOCALAPPDATA%\Microsoft\MicrosoftArtifactSigningClientTools`.
+Other Dlib installation locations require `-DlibPath`; speculative installation
+directories are not searched. SignTool discovery uses
+installed Windows Kits 10 SDK `bin\<version>\x64\signtool.exe`, newest SDK first.
+The client tools' `signtool.bat` and `ArtifactSigning.WindowsSignToolInstaller.exe`
+helpers are **not invoked**: tool installation/download remains a separate,
+explicit operation. No arbitrary downloads or repository executables are searched.
+Azure CLI resolution accepts application
+`az.exe`/`az.cmd` on PATH and the standard Program Files
+`Microsoft SDKs\Azure\CLI2\wbin\az.cmd` installation. Its directory is added to
+PATH only inside the operation and the previous process PATH is restored.
+
+The wrapper:
+
+1. Validates inputs, tool architecture, available tool signatures and the existing Azure CLI
+   session before any destructive publishing.
+2. Invokes `Build-Installers.ps1 -PublishOnly`, then signs and verifies only
+   `AgentSignaler.*.exe` / `AgentSignaler.*.dll` and the three bundled updater
+   scripts inside the Dashboard/Remote publish trees. Other dependencies are not
+   signed. The updater dependency hashes are regenerated after signing.
+3. Invokes `Build-Installers.ps1 -SkipPublish -ApplicationMsisOnly`, then signs
+   exactly `AgentSignaler.Dashboard.msi` and `AgentSignaler.Remote.msi`.
+4. Requires valid Authenticode signatures, the exact expected publisher, and
+   timestamps for every selected binary and MSI. Signing uses SHA-256 and
+   RFC3161 `/tr http://timestamp.acs.microsoft.com /td SHA256`; SignTool
+   verification uses `/pa /all /tw`. Timestamping is mandatory because the
+   service's signing certificates are short-lived.
+5. Writes `artifacts\msi\SHA256SUMS.txt` as the **last local signing output**, hashing the final signed MSIs
+   in the release workflow's `SHA256␠␠filename` format. No bundle, prerequisite,
+   retired package or unrelated historical artifact is signed or included.
+6. Commits local signing, then verifies that the two signed MSIs still match
+   `SHA256SUMS.txt` and copies only those MSIs to `-DestinationPath`. It does not
+   copy the checksum manifest, payload directories, bundle or other files.
+
+Only `AzureCliCredential` is enabled in the temporary signing metadata; all
+other documented credentials are excluded, including interactive browser,
+environment, managed identity, Visual Studio and PowerShell credentials.
+There is no GitHub CLI dependency, release publication, installation,
+registry/firewall/startup change or automatic tool installation.
+
+Run without concurrent publish/package/signing operations. Payload traversal is
+bounded (10,000 entries / 8 GiB per tree, 1 GiB per file, at most 256 selected
+first-party binaries), and reparse points and escaping paths are rejected.
+Each target is signed and verified on an independent staged copy before replacing
+its output path, preserving other names of hard-linked build/cache files.
+Existing owned payload directories, the two MSIs and their checksum
+manifest are moved to run-specific backups in `artifacts\signing-staging`.
+Backup hard links are detached before building so a rebuild cannot change the
+saved originals through another build/cache path.
+This transaction covers the publish payloads, selected MSI packages and checksum
+manifest, not ordinary compiler/WiX intermediate files under `bin`/`obj`.
+During local signing, ordinary errors/cancellation restore the originals; a fresh failed run leaves
+no partially signed payload/MSI or success checksum manifest. Signing metadata
+is removed in cleanup. If rollback is blocked, backups and `recovery.json`
+remain and no new checksum manifest is accepted. Force-killing PowerShell or
+power loss can interrupt cleanup: the persistent transaction marker blocks a
+retry. Review `recovery.json`, restore the mapped backups (manifest last, only
+after its MSIs), and resolve the interrupted transaction before removing that
+run's marker. Never blindly delete backups or assume a leftover manifest is a
+successful new release.
+
+#### MSI delivery and copy-only retries
+
+The destination must already exist; the script does not create directories.
+Before expensive signing it checks destination accessibility, directory/file
+shape and any interrupted copy marker, without creating probe files. A later
+write/access failure is a **delivery failure**, not a failed local signature.
+Valid local signed payloads, MSIs and `SHA256SUMS.txt` remain available for retry.
+The script rejects drive/share roots, repository/ancestor/artifact overlap,
+reparse directories or targets, and directory-vs-file collisions. Unrelated
+destination files are untouched. An existing selected MSI must itself have a
+valid timestamped signature from the expected publisher before replacement;
+a same-named unsigned/foreign file is not silently overwritten.
+
+Delivery stages both files under unique names in the exact destination and
+verifies their hashes before replacing either selected target. Remote hash reads
+use 1 MiB buffering. Prior targets are retained as unique backups until both
+replacements verify. Failures restore the prior pair when it is safe; concurrent
+edits are never deliberately overwritten or deleted. A rollback conflict reports
+the exact recovery paths and retains `.AgentSignaler-copy.lock`, a small recovery
+journal containing the selected filenames, hashes and backup names. An interrupted
+copy can leave a mixed pair: do not use it or retry blindly; inspect the reported
+backups/journal and preserve concurrent edits before resolving that marker.
+Cleanup addresses only this operation's exact staging/backup files, never the
+destination directory recursively. Do not run concurrent deliveries.
+
+To deliver an already completed signing run—without rebuilding, signing again,
+Azure CLI authentication or a signing profile—load the helper from the repository
+root:
+
+```powershell
+. .\scripts\LocalSigning.ps1
+Copy-AgentSignalerSignedMsis -Root (Get-Location).Path -WhatIf
+Copy-AgentSignalerSignedMsis -Root (Get-Location).Path
+
+# Optional override; the same switch is available on Sign-Installers.ps1.
+Copy-AgentSignalerSignedMsis -Root (Get-Location).Path -DestinationPath C:\Releases\AgentSignaler
+```
+
+The helper defaults to `\\tsclient\C\public\AgentSignaler` and accepts
+`-ExpectedPublisher` and `-SignToolPath`. It rechecks the exact two-entry local
+manifest, both local signatures/publisher/timestamps and the copied bytes.
+It never changes the signed local files or their checksum manifest.
+
+Synthetic validation needs no signing account, tools or network:
+
+```powershell
+.\scripts\Test-LocalSigning.ps1
+```
+
+It covers phase ordering and forwarded flags, exact target selection,
+signing/authentication/verification failures, publisher/timestamp checks,
+rollback and interrupted recovery, final signed hashes, input/path bounds,
+`az.cmd`, x64 checks and genuinely non-mutating `-WhatIf`.
+Copy fixtures additionally cover exact/default/overridden destinations, no remote
+access during preview, staging failures, hash mismatches, two-file rollback,
+concurrent-edit recovery, unchanged local signed outputs and unrelated files.
+
 ## Install
 
 Install as the intended Windows user. Both application packages are per-user

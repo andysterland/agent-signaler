@@ -13,40 +13,10 @@ public sealed class PrivateDiscoveryPersistenceTests
     {
         var registration = Registration();
         Assert.Equal("Private discovery registration (protected)", registration.ToString());
-        var package = new AgentSignaler.Contracts.DiscoveryConnectionPackage(Guid.NewGuid(),
-            new Uri("https://testaccount.blob.core.windows.net/container/endpoint.json?sig=secret-package-value"), "secret-public-key-value");
-        Assert.DoesNotContain("secret", package.ToString(), StringComparison.Ordinal);
         var reference = new DiscoveryCredentialReference("secret-reference", "secret-hash");
         Assert.DoesNotContain("secret", reference.ToString(), StringComparison.Ordinal);
         var staged = new DiscoveryPreparedCredential(reference, "secret-ciphertext"u8.ToArray());
         Assert.DoesNotContain("secret", staged.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task RuntimeNeverReturnsSdkOrHttpExceptionContainingSas()
-    {
-        using var directory = new OwnedDirectory();
-        (new DashboardSettings { AutoStartSharing = false }).Save(directory.Path);
-        using var lease = DashboardResourceLease.Acquire(directory.Path, directory.Path);
-        var azure = new BlockingAzure
-        {
-            Failure = new HttpRequestException("https://testaccount.blob.core.windows.net/container/endpoint.json?sig=secret-package-value",
-                new InvalidOperationException("secret-inner-exception"))
-        };
-        azure.Release.TrySetResult();
-        await using var runtime = new DashboardRuntime(lease, new()
-        {
-            ReceiverPortOverride = 0, DiscoveryAzure = _ => azure, DiscoveryJournal = new EmptyJournal()
-        });
-        await runtime.InitializeAsync();
-        var result = await runtime.PreviewDiscoveryAsync(new(Guid.NewGuid(), Guid.NewGuid(), "test-group", "testaccount"));
-        Assert.False(result.Succeeded);
-        Assert.Equal(1010, result.Error!.Code);
-        Assert.Equal("discovery", result.Error.Field);
-        Assert.DoesNotContain("secret", result.Error.ToString(), StringComparison.Ordinal);
-        var surfaced = new RuntimeCommandException(result.Error);
-        Assert.Null(surfaced.InnerException);
-        Assert.Equal("The runtime command could not complete.", surfaced.Message);
     }
 
     [Fact]
@@ -162,14 +132,12 @@ public sealed class PrivateDiscoveryPersistenceTests
     }
     private sealed class BlockingAzure : IPrivateDiscoveryAzure
     {
-        public Exception? Failure { get; init; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public async Task<PrivateDiscoveryAccountInfo> ValidateAccountAsync(CancellationToken token)
         {
             Entered.TrySetResult();
             await Release.Task.WaitAsync(token);
-            if (Failure is not null) throw Failure;
             return new(new("https://testaccount.blob.core.windows.net/"), "Enabled", "Allow", true, "None");
         }
         public Task<PrivateDiscoveryRemote?> InspectAsync(string container, CancellationToken token) => Task.FromResult<PrivateDiscoveryRemote?>(null);

@@ -12,8 +12,12 @@ Use Windows 11 x64 with:
 - the .NET SDK selected by `global.json`;
 - Visual Studio Windows application/WinUI development tools;
 - Windows SDK build tools;
-- Visual Studio x64 C++ tools for the native bootstrapper;
+- Visual Studio x64 C++ tools only when building the native bootstrapper;
 - PowerShell 5.1 or later.
+
+Dashboard and Configurator use managed XAML metadata and do not require the C++
+workload. `Directory.Build.targets` skips WinUI's native toolchain discovery for
+these managed builds, including Visual Studio design-time builds.
 
 WiX is restored through NuGet. Azure CLI, Dev Tunnels CLI, Windows App, and live
 cloud accounts are not required for default builds or tests.

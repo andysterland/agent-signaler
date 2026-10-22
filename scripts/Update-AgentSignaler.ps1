@@ -138,7 +138,7 @@ function Read-GitHubJsonResponse($Response, [int] $BudgetMilliseconds = 15000) {
                     $memory.Write($buffer, 0, $read)
                 }
                 $json = [Text.UTF8Encoding]::new($false, $true).GetString($memory.ToArray())
-                return ConvertFrom-AgentSignalerStrictJson $json 4MB
+                return (ConvertFrom-AgentSignalerStrictJson $json 4MB)
             }
             finally { $memory.Dispose(); $stream.Dispose() }
         }
