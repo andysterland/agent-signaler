@@ -10,8 +10,7 @@ function Reject([scriptblock] $Action) {
 	try { & $Action | Out-Null } catch { $rejected = $true }
 	Assert $rejected 'Unsafe handoff fixture was accepted.'
 }
-$root = Split-Path -Parent $source
-$fixture = Join-Path $root ('artifacts\updater-handoff-tests\' + [guid]::NewGuid().ToString('N'))
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('AS.Handoff.' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $fixture -Force)
 $priorLocalAppData = $env:LOCALAPPDATA
 $priorSystemRoot = $env:SystemRoot
@@ -25,7 +24,11 @@ try {
 	$runId = [guid]::NewGuid().ToString('N')
 	$run = Join-Path $storage $runId
 	[void](New-Item -ItemType Directory -Path $run -Force)
-	foreach ($name in $script:AgentSignalerUpdaterFiles) { Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $run $name) }
+	foreach ($name in $script:AgentSignalerUpdaterFiles) {
+		$dependencyPath = Join-Path $run $name
+		Assert ($dependencyPath.Length -lt 260) 'Fixture exceeds the Windows PowerShell authorization path limit; use a shorter temporary root.'
+		Copy-Item -LiteralPath (Join-Path $source $name) -Destination $dependencyPath
+	}
 	. (Join-Path $run 'UpdateHandoff.ps1')
 	$systemInstaller = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)) 'System32\msiexec.exe'
 	$untrustedSystemRoot = Join-Path $fixture 'untrusted-windows'
