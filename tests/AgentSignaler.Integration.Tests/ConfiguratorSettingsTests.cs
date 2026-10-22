@@ -10,7 +10,7 @@ namespace AgentSignaler.Integration.Tests;
 
 public sealed class ConfiguratorSettingsTests : IDisposable
 {
-    private readonly string directory = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string directory = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly Guid machineId = Guid.NewGuid();
     private string SettingsPath => Path.Combine(directory, "configurator-settings.json");
 

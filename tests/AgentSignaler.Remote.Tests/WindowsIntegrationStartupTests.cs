@@ -9,7 +9,7 @@ namespace AgentSignaler.Remote.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsIntegrationStartupTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly StartupRegistry registry = new();
     private string Config => Path.Combine(root, "configuration with spaces", "remote.json");
     private string Client => Path.Combine(root, "installation with spaces", "AgentSignaler.Client.exe");

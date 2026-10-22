@@ -10,7 +10,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class SessionDisplayNameFlowTests : IDisposable
 {
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private static readonly DateTimeOffset Now = new(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
     private string StatePath => Path.Combine(_root, "state.json");
     private SessionStore Store(Func<SessionSnapshot, string?>? reader = null) =>

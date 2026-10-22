@@ -7,7 +7,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class EnrichedPresenceTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Directory.GetCurrentDirectory(), $"enriched-{Guid.NewGuid():N}");
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"enriched-{Guid.NewGuid():N}");
     private readonly ManualTimeProvider _clock = new();
     private readonly Guid _machine = Guid.NewGuid();
     private static readonly SourceDescriptor Source = new("vscode", "scope", "1");

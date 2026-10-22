@@ -11,7 +11,7 @@ namespace AgentSignaler.Integration.Tests;
 public sealed class ClientRelayIpcTests : IAsyncLifetime
 {
     private const string Secret = "PRIVATE-HOOK-CONTENT-MUST-NOT-LEAVE-RELAY";
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "client-ipc-e2e", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "client-ipc-e2e", Guid.NewGuid().ToString("N"));
     private string ConfigPath => Path.Combine(_root, "remote.json");
     private string _relay = "";
     private RemoteConfiguration _configuration = null!;

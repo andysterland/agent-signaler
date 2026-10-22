@@ -9,7 +9,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class EnrichedSessionTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Directory.GetCurrentDirectory(), $"enriched-local-{Guid.NewGuid():N}");
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"enriched-local-{Guid.NewGuid():N}");
     private static readonly DateTimeOffset Now = new(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
     private string StatePath => Path.Combine(_root, "state.json");
     private SessionStore Store => new(StatePath, new DiagnosticLog(Path.Combine(_root, "relay.log")));

@@ -7,7 +7,7 @@ public sealed class TranscriptIngressTests
     [Fact]
     public void GlobalConcurrencyHasFourImmediateSlotsAndNoWaitQueue()
     {
-        var directory = Path.Combine(Directory.GetCurrentDirectory(), $"Transcript-ingress-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"Transcript-ingress-{Guid.NewGuid():N}");
         try
         {
             using var machines = new MachineStore(Path.Combine(directory, "state.db"));
@@ -25,7 +25,7 @@ public sealed class TranscriptIngressTests
     [Fact]
     public void GlobalRateHasFortyBurstTwentyPerSecondBeforeAnyMachineBucket()
     {
-        var directory = Path.Combine(Directory.GetCurrentDirectory(), $"Transcript-rate-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"Transcript-rate-{Guid.NewGuid():N}");
         try
         {
             using var machines = new MachineStore(Path.Combine(directory, "state.db"));
@@ -44,7 +44,7 @@ public sealed class TranscriptIngressTests
     [Fact]
     public async Task KnownMachineGetsOneSlotTenBurstAndFivePerSecond()
     {
-        var directory = Path.Combine(Directory.GetCurrentDirectory(), $"Transcript-machine-rate-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"Transcript-machine-rate-{Guid.NewGuid():N}");
         try
         {
             using var machines = new MachineStore(Path.Combine(directory, "state.db"));

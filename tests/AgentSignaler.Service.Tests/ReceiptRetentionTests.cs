@@ -5,7 +5,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class ReceiptRetentionTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"AgentSignaler-receipts-{Guid.NewGuid()}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"AgentSignaler-receipts-{Guid.NewGuid()}");
     private readonly ManualTimeProvider _clock = new();
     private string DatabasePath => Path.Combine(_directory, "state.db");
 

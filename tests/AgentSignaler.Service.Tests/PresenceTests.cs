@@ -7,7 +7,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class PresenceTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"presence-tests-{Guid.NewGuid()}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"presence-tests-{Guid.NewGuid()}");
     private readonly ManualTimeProvider _clock = new();
     private readonly MachineStore _store;
     private readonly Guid _machine = Guid.NewGuid();

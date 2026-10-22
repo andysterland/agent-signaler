@@ -12,7 +12,7 @@ public sealed class WindowsHookCommandTests
     [InlineData("ampersand & (parentheses) ^ unicode-\u00e9")]
     public async Task CmdExecutesExactRelayAndConfigurationWithoutControlOutput(string folder)
     {
-        var root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
         var binaries = Path.Combine(root, folder);
         var configurationDirectory = Path.Combine(root, folder, "configuration & data");
         Directory.CreateDirectory(binaries);

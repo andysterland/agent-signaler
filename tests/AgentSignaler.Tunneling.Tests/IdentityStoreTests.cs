@@ -5,7 +5,7 @@ namespace AgentSignaler.Tunneling.Tests;
 
 public sealed class IdentityStoreTests : IDisposable
 {
-    private readonly string directory = Path.Combine(Directory.GetCurrentDirectory(), "artifacts", "tunneling-state-tests", Guid.NewGuid().ToString("N"));
+    private readonly string directory = Path.Combine(Path.GetTempPath(), "tunneling-state-tests", Guid.NewGuid().ToString("N"));
     private string StatePath => Path.Combine(directory, "tunnel-state.json");
 
     [Fact]

@@ -12,7 +12,7 @@ namespace AgentSignaler.Remote.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class DiscoveryIntegrationTransactionTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly Store store = new();
     private readonly Startup startup = new();
     private readonly Runtime runtime = new();

@@ -53,7 +53,7 @@ public sealed partial class TunnelTests
     [Fact]
     public void SavePathResolutionDoesNotRequireInstalledExecutable()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, $"not-installed-{Guid.NewGuid():N}.exe");
+        var path = Path.Combine(Path.GetTempPath(), $"not-installed-{Guid.NewGuid():N}.exe");
         Assert.False(File.Exists(path));
         Assert.Equal(path, DevTunnelDiagnostics.ResolvePath("  " + path + "  "));
         Assert.Equal(CliTunnelController.DefaultCliPath, DevTunnelDiagnostics.ResolvePath(null));
@@ -72,7 +72,7 @@ public sealed partial class TunnelTests
     [Fact]
     public async Task MissingDiagnosticExecutableIsActionable()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, $"missing-{Guid.NewGuid():N}.exe");
+        var path = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.exe");
         var result = await DevTunnelDiagnostics.TestAsync(path);
         Assert.Contains(path, result);
         Assert.Contains("install the required CLI explicitly", result);
@@ -83,7 +83,7 @@ public sealed partial class TunnelTests
     public async Task UnsignedExecutableFailsProductionSignatureCheck()
     {
         if (!OperatingSystem.IsWindows()) return;
-        var path = Path.Combine(AppContext.BaseDirectory, $"unsigned-{Guid.NewGuid():N}.exe");
+        var path = Path.Combine(Path.GetTempPath(), $"unsigned-{Guid.NewGuid():N}.exe");
         try
         {
             await File.WriteAllTextAsync(path, "This is not a signed executable.");

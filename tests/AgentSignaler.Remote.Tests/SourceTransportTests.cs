@@ -10,7 +10,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class SourceTransportTests : IDisposable
 {
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly DateTimeOffset _now = new(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
     private string ConfigPath => Path.Combine(_root, "remote.json");
     private SourceDescriptor Code => new("vscode", "profile-a", "1.137");

@@ -11,7 +11,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class ReceiverControlTests : IAsyncLifetime
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"AgentSignaler-controls-{Guid.NewGuid()}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"AgentSignaler-controls-{Guid.NewGuid()}");
     private MachineStore _store = null!;
     private DashboardServer _server = null!;
     private HttpClient _client = null!;

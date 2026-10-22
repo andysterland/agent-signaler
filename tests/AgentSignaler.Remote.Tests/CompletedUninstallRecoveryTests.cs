@@ -9,7 +9,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class CompletedUninstallRecoveryTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly Guid machineId = Guid.NewGuid();
     private readonly Scheduler scheduler = new();
     private readonly Startup startup = new();

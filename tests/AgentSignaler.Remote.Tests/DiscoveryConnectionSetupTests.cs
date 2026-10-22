@@ -13,7 +13,7 @@ namespace AgentSignaler.Remote.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class DiscoveryConnectionSetupTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     private const string Sas = "https://agenttest.blob.core.windows.net/discovery/endpoint.json?sv=2025-06-01&sr=b&spr=https&si=reader-one&sig=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D";
     private string ConfigPath => Path.Combine(root, "remote.json");

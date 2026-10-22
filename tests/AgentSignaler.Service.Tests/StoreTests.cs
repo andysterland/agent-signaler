@@ -14,7 +14,7 @@ public sealed class ManualTimeProvider : TimeProvider
 
 public sealed class StoreTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"AgentSignaler-tests-{Guid.NewGuid()}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"AgentSignaler-tests-{Guid.NewGuid()}");
     private readonly ManualTimeProvider _clock = new();
     private readonly MachineStore _store;
     public StoreTests() => _store = new MachineStore(Path.Combine(_directory, "state.db"), _clock);

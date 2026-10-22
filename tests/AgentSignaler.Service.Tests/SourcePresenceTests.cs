@@ -7,7 +7,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class SourcePresenceTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"source-presence-{Guid.NewGuid()}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"source-presence-{Guid.NewGuid()}");
     private readonly ManualTimeProvider _clock = new();
     private readonly Guid _machine = Guid.NewGuid();
     private readonly MachineStore _store;

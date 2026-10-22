@@ -13,7 +13,7 @@ namespace AgentSignaler.Integration.Tests;
 public sealed class RelayToDashboardTests : IAsyncLifetime
 {
     private const string SensitiveMarker = "SYNTHETIC-PRIVATE-CONTENT-DO-NOT-STORE";
-    private readonly string _directory = Path.Combine(AppContext.BaseDirectory, "AgentSignaler-e2e", Guid.NewGuid().ToString());
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "AgentSignaler-e2e", Guid.NewGuid().ToString());
     private readonly Clock _clock = new();
     private MachineStore _store = null!;
     private DashboardServer _server = null!;

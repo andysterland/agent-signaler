@@ -7,7 +7,7 @@ namespace AgentSignaler.Remote.Tests;
 public sealed class SessionDisplayNameReaderTests : IDisposable
 {
     private const string SessionId = "f58e1207-231b-4a6f-b311-34bbd544139a";
-    private readonly string _home = Path.Combine(AppContext.BaseDirectory, "test-data", "names-" + Guid.NewGuid().ToString("N"));
+    private readonly string _home = Path.Combine(Path.GetTempPath(), "test-data", "names-" + Guid.NewGuid().ToString("N"));
     private string Metadata => Path.Combine(_home, "session-state", SessionId, "workspace.yaml");
     private string LogPath => Path.Combine(_home, "diagnostic.log");
     private SourceDescriptor Source(string kind = "copilot-cli") => new(kind, "verified-scope");

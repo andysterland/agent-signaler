@@ -14,7 +14,7 @@ public sealed class PrivateDiscoveryAcceptanceTests
     [Fact]
     public async Task FakeProvisionImportTransactionalApplyReplaceRenewRotateAndRevoke()
     {
-        var directory = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var configPath = Path.Combine(directory, "remote.json");
         var relayPath = Path.Combine(directory, "AgentSignaler.Relay.exe");
@@ -119,7 +119,7 @@ public sealed class PrivateDiscoveryAcceptanceTests
 
     private sealed class Clock : TimeProvider
     {
-        private long ticks = new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero).UtcTicks;
+        private long ticks = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()).UtcTicks;
         public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref ticks), TimeSpan.Zero);
         public override long GetTimestamp() => Interlocked.Read(ref ticks);
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;

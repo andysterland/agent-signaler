@@ -9,7 +9,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class SettingsServicingTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly Guid id = Guid.NewGuid();
     private string ConfigPath => Path.Combine(root, "remote.json");
     private RemoteConfiguration Config => new RemoteConfiguration { Host = "localhost", MachineId = id }.ToVersion3();

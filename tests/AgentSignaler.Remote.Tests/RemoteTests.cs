@@ -11,7 +11,7 @@ namespace AgentSignaler.Remote.Tests;
 public sealed class RemoteTests : IDisposable
 {
     // Test scratch stays under the project output, never the real profile or integration directories.
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly DateTimeOffset now = DateTimeOffset.UtcNow;
     private string ConfigPath => Path.Combine(root, "remote.json");
     private RemoteConfiguration Config => new() { Host = "localhost", MachineId = Guid.Parse("9e40ba11-c2c8-4212-bbfb-c051c12cfe3f"), ClientVersion = "1.0.80" };

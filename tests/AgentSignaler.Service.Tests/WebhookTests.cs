@@ -9,7 +9,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class WebhookTests : IAsyncLifetime
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"AgentSignaler-http-{Guid.NewGuid()}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"AgentSignaler-http-{Guid.NewGuid()}");
     private MachineStore _store = null!;
     private DashboardServer _server = null!;
     private HttpClient _client = null!;

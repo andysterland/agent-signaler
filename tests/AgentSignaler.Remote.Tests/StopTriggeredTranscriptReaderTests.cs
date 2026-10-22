@@ -9,7 +9,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class StopTriggeredTranscriptReaderTests : IDisposable
 {
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "test-data", "reader-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "test-data", "reader-" + Guid.NewGuid().ToString("N"));
     private readonly ConcurrentQueue<TranscriptReaderOutput> _output = new();
     private readonly SyntheticTranscriptFileAdapter _adapter;
     private readonly TranscriptScratchBudget _scratch = new();

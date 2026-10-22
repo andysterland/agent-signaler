@@ -8,7 +8,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class ClientDeliveryOrderingTests : IDisposable
 {
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private string ConfigPath => Path.Combine(_root, "remote.json");
 
     [Fact]

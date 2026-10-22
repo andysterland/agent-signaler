@@ -84,7 +84,7 @@ public sealed class TranscriptAllocationTests(ITestOutputHelper output)
     [InlineData(true)]
     public async Task MeasuredIngressAllocationTimesFourFitsScratchPartition(bool escapingHeavy)
     {
-        var directory = Path.Combine(Directory.GetCurrentDirectory(), $"Transcript-allocations-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"Transcript-allocations-{Guid.NewGuid():N}");
         try
         {
             using var machines = new MachineStore(Path.Combine(directory, "state.db"));

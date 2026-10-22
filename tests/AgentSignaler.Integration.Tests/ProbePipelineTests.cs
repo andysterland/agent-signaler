@@ -10,7 +10,7 @@ public sealed class ProbePipelineTests : IDisposable
 {
     private const string PrivatePayload = "SYNTHETIC-PROMPT-TOOL-TRANSCRIPT-MUST-NOT-BE-STORED";
     private const string Session = "synthetic-private-session-identity";
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private string ConfigPath => Path.Combine(root, "remote.json");
 
     [Theory]

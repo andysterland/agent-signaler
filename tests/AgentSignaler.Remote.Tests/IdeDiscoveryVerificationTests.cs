@@ -7,7 +7,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class IdeDiscoveryVerificationTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private string ConfigPath => Path.Combine(root, "remote.json");
     private string RelayPath => Path.Combine(root, "AgentSignaler.Relay.exe");
     private DiscoveryEnvironment EnvironmentFixture => new(Path.Combine(root, "user"), Path.Combine(root, "local"),

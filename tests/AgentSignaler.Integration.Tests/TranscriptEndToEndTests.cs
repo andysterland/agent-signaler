@@ -30,7 +30,7 @@ public sealed class TranscriptEndToEndTests : IAsyncLifetime
     private const string Suppressed = "SYNTHETIC-OPTED-OUT-MESSAGE";
     private const string Session = "synthetic-session";
     private static readonly SourceDescriptor Source = new("copilot-cli", "test-only-transcript-scope", "test-only-v1");
-    private readonly string _root = Path.Combine(Directory.GetCurrentDirectory(), "transcript-e2e", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "transcript-e2e", Guid.NewGuid().ToString("N"));
     private readonly ConcurrentQueue<(string Path, byte[] Body)> _wire = new();
     private readonly ConcurrentQueue<(string Command, bool Accepted)> _ipcResponses = new();
     private Func<ClientIpcRequest, CancellationToken, Task>? _beforeIpc;

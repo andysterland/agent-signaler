@@ -8,7 +8,7 @@ namespace AgentSignaler.Remote.Tests;
 
 public sealed class DetailedReportingConfigurationTests : IDisposable
 {
-    private readonly string root = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private readonly Guid machineId = Guid.NewGuid();
     private string ConfigPath => Path.Combine(root, "remote.json");
     private string RelayPath => Path.Combine(root, "AgentSignaler.Relay.exe");

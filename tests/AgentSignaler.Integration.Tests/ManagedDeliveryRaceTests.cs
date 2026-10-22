@@ -9,7 +9,7 @@ namespace AgentSignaler.Integration.Tests;
 
 public sealed class ManagedDeliveryRaceTests : IDisposable
 {
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "delivery-races", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "delivery-races", Guid.NewGuid().ToString("N"));
     private string ConfigPath => Path.Combine(_root, "remote.json");
 
     public ManagedDeliveryRaceTests()

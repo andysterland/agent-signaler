@@ -10,7 +10,7 @@ namespace AgentSignaler.Service.Tests;
 
 public sealed class TranscriptEndpointTests : IAsyncLifetime
 {
-    private readonly string _directory = Path.Combine(Directory.GetCurrentDirectory(), $"AgentSignaler-transcript-{Guid.NewGuid():N}");
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"AgentSignaler-transcript-{Guid.NewGuid():N}");
     private readonly Guid _machine = Guid.NewGuid();
     private MachineStore _machines = null!;
     private DashboardServer _server = null!;
