@@ -126,7 +126,10 @@ try {
 		[Security.AccessControl.FileSystemRights]::WriteData, [Security.AccessControl.AccessControlType]::Allow)
 	$acl = Get-Acl -LiteralPath $aclPath
 	$acl.AddAccessRule($foreignRule); Set-Acl -LiteralPath $aclPath -AclObject $acl
-	Reject { Assert-AgentSignalerProtectedPath $aclPath $sid }
+	$beforeAcl = (Get-Acl -LiteralPath $aclPath).Sddl
+	Assert-AgentSignalerProtectedPath $aclPath $sid
+	Assert ((Get-Acl -LiteralPath $aclPath).Sddl -ceq $beforeAcl) 'Managed update-state permissions must not be rewritten during validation.'
+	Reject { Assert-AgentSignalerProtectedPath $aclPath 'S-1-5-18' }
 	$acl.RemoveAccessRuleSpecific($foreignRule); Set-Acl -LiteralPath $aclPath -AclObject $acl
 	$pinTarget = Join-Path $storage 'pin-test'
 	[void](New-Item -ItemType Directory -Path $pinTarget)

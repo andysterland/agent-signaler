@@ -35,7 +35,7 @@ public sealed class UpdateStorageTests
     }
 
     [Fact]
-    public void MissingInventoryProbeRejectsForeignWritableStorageWithoutRepairingIt()
+    public void MissingInventoryProbeAcceptsManagedStoragePermissionsWithoutChangingThem()
     {
         using var fixture = new TemporaryRoot();
         using var storage = new UpdateStorage(fixture.Path, fixture.Install);
@@ -43,11 +43,29 @@ public sealed class UpdateStorageTests
         var info = new DirectoryInfo(storage.DirectoryPath);
         var acl = info.GetAccessControl();
         var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+        acl.SetAccessRuleProtection(false, true);
         acl.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Modify, AccessControlType.Allow));
         info.SetAccessControl(acl);
-        Assert.Throws<UnauthorizedAccessException>(() => UpdateStorage.HasMaintenanceRecords(fixture.Path, fixture.Install));
-        Assert.Contains(info.GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier)).OfType<FileSystemAccessRule>(),
-            rule => rule.IdentityReference.Equals(users) && (rule.FileSystemRights & FileSystemRights.Write) != 0);
+        var before = info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+        Assert.True(UpdateStorage.HasMaintenanceRecords(fixture.Path, fixture.Install));
+        Assert.Equal(before, info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+        Assert.Equal("{}"u8.ToArray(), storage.Read("gate.json"));
+    }
+
+    [Fact]
+    public void ManualUpdaterDirectoryWithInheritedPermissionsSupportsStartupWithoutChangingItsAcl()
+    {
+        using var fixture = new TemporaryRoot();
+        var directory = Directory.CreateDirectory(System.IO.Path.Combine(fixture.Path, "AgentSignaler", "Updates"));
+        Assert.False(directory.GetAccessControl().AreAccessRulesProtected);
+        var before = directory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+        Assert.False(UpdateStorage.HasMaintenanceRecords(fixture.Path, fixture.Install));
+        using var storage = new UpdateStorage(fixture.Path, fixture.Install);
+        using var lease = storage.AcquireLease();
+        storage.Write("gate.json", "{}"u8);
+        Assert.True(UpdateStorage.HasMaintenanceRecords(fixture.Path, fixture.Install));
+        Assert.Equal("{}"u8.ToArray(), storage.Read("gate.json"));
+        Assert.Equal(before, directory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
     }
 
     [Fact]
@@ -138,7 +156,7 @@ public sealed class UpdateStorageTests
     }
 
     [Fact]
-    public void ForeignWritableDirectoryIsRejectedWithoutRepairingItsAcl()
+    public void ManagedDirectoryPermissionsAreAcceptedWithoutChangingItsAcl()
     {
         using var fixture = new TemporaryRoot();
         string directory;
@@ -148,8 +166,36 @@ public sealed class UpdateStorageTests
         var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
         acl.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Modify, AccessControlType.Allow));
         info.SetAccessControl(acl);
-        Assert.Throws<UnauthorizedAccessException>(() => new UpdateStorage(fixture.Path, fixture.Install));
-        Assert.Contains(info.GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier)).OfType<FileSystemAccessRule>(), r => r.IdentityReference.Equals(users));
+        var before = info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+        using var reopened = new UpdateStorage(fixture.Path, fixture.Install);
+        reopened.Write("check.json", "{}"u8);
+        Assert.Equal("{}"u8.ToArray(), reopened.Read("check.json"));
+        Assert.Equal(before, info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+    }
+
+    [Fact]
+    public void ManagedDocumentPermissionsDoNotBlockMaintenanceOrRecoveryReads()
+    {
+        using var fixture = new TemporaryRoot();
+        using var storage = new UpdateStorage(fixture.Path, fixture.Install);
+        storage.Write("gate.json", "{}"u8);
+        var runId = Guid.NewGuid();
+        var run = storage.CreateRunDirectory(runId);
+        File.WriteAllText(System.IO.Path.Combine(run, "result.json"), "{}");
+        foreach (var path in new[] { System.IO.Path.Combine(storage.DirectoryPath, "gate.json"), System.IO.Path.Combine(run, "result.json") })
+        {
+            var info = new FileInfo(path);
+            var acl = info.GetAccessControl();
+            acl.SetAccessRuleProtection(false, true);
+            acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                FileSystemRights.Modify, AccessControlType.Allow));
+            info.SetAccessControl(acl);
+            var before = info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+            Assert.True(UpdateStorage.HasMaintenanceRecords(fixture.Path, fixture.Install));
+            Assert.Equal("{}"u8.ToArray(), storage.Read("gate.json"));
+            Assert.Equal("{}"u8.ToArray(), storage.ReadRun(runId, "result.json"));
+            Assert.Equal(before, info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+        }
     }
 
     [Fact]

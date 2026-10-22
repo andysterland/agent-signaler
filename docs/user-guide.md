@@ -56,6 +56,11 @@ settings contents or raw release bodies. A subsequent launch may show retained
 results, but does not automatically retry installation. Existing data, credentials
 and foreign IDE configuration remain outside the update handoff.
 
+Existing update storage can retain inherited Windows permissions and additional
+administrator or organization-managed grants; a current-user-only ACL is not
+required. Validation does not rewrite those permissions. Current-user ownership,
+path/link checks, maintenance gates and package verification still apply.
+
 The first release containing this feature must be installed manually. Older
 versions cannot retroactively offer in-app updates. Ordinary manual updater
 invocation remains non-restarting. Real installer, clean-image and interactive

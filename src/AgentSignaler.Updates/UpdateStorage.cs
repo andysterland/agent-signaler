@@ -220,7 +220,7 @@ public sealed class UpdateStorage : IUpdateStorage, IDisposable
         var path = Path.Combine(directory, name);
         try
         {
-            Validate(new FileInfo(path), false);
+            Validate(new FileInfo(path));
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (stream.Length is < 1 or > MaximumDocumentBytes) throw new InvalidDataException("update_document_limit");
             var bytes = new byte[checked((int)stream.Length)];
@@ -262,17 +262,16 @@ public sealed class UpdateStorage : IUpdateStorage, IDisposable
         Validate(new DirectoryInfo(path));
     }
 
-    private void Validate(FileSystemInfo info, bool requireProtected = true)
+    private void Validate(FileSystemInfo info)
     {
         if ((File.GetAttributes(info.FullName) & FileAttributes.ReparsePoint) != 0) throw new UnauthorizedAccessException("update_storage_link");
         info.Refresh();
         if (!info.Exists) throw new FileNotFoundException("update_storage_missing");
         if ((info.Attributes & FileAttributes.ReparsePoint) != 0) throw new UnauthorizedAccessException("update_storage_link");
         FileSystemSecurity security = info is DirectoryInfo directory ? directory.GetAccessControl() : ((FileInfo)info).GetAccessControl();
-        if (!user.Equals(security.GetOwner(typeof(SecurityIdentifier))) || requireProtected && !security.AreAccessRulesProtected ||
-            security.GetAccessRules(true, true, typeof(SecurityIdentifier)).OfType<FileSystemAccessRule>()
-                .Any(rule => rule.AccessControlType == AccessControlType.Allow && !user.Equals(rule.IdentityReference)))
-            throw new UnauthorizedAccessException("update_storage_acl");
+        // Centrally managed ACLs may include inherited and organization-controlled grants.
+        if (!user.Equals(security.GetOwner(typeof(SecurityIdentifier))))
+            throw new UnauthorizedAccessException("update_storage_owner");
     }
 
     private void PinAncestors(string path)

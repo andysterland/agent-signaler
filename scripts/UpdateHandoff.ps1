@@ -119,7 +119,7 @@ function Get-AgentSignalerInstalledIdentity($Installer, $Installation) {
 			$directoryPins.Add((Open-AgentSignalerDirectoryPin $current))
 			$current = [IO.Path]::GetDirectoryName($current)
 		} while ($current)
-		Assert-AgentSignalerProtectedPath $directory $sid
+		Assert-AgentSignalerProtectedPath $directory $sid -InstallationDirectory
 		$cached = Get-AgentSignalerInstalledProperty $code $sid 'LocalPackage'
 		$package = Read-Package $Installer $cached $Installation.package
 		$version = ConvertTo-AgentSignalerVersion (Get-AgentSignalerInstalledProperty $code $sid 'VersionString')
@@ -169,22 +169,24 @@ function Get-AgentSignalerSystemInstallerPath {
 	return $path
 }
 
-function Assert-AgentSignalerProtectedPath([string] $Path, [string] $UserSid) {
+function Assert-AgentSignalerProtectedPath([string] $Path, [string] $UserSid, [switch] $InstallationDirectory) {
 	[void](Assert-AgentSignalerLocalPath $Path)
 	$acl = Get-Acl -LiteralPath $Path
 	if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $UserSid) {
 		throw 'Update state is not owned by the current user.'
 	}
-	$allowed = @($UserSid, 'S-1-5-18', 'S-1-5-32-544')
-	foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-		if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-			$rule.IdentityReference.Value -notin $allowed -and
-			($rule.FileSystemRights -band ([Security.AccessControl.FileSystemRights]::Write -bor
-				[Security.AccessControl.FileSystemRights]::Delete -bor
-				[Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-				[Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-				[Security.AccessControl.FileSystemRights]::TakeOwnership)) -ne 0) {
-			throw 'Update state grants foreign write access.'
+	if ($InstallationDirectory) {
+		$allowed = @($UserSid, 'S-1-5-18', 'S-1-5-32-544')
+		foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+			if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+				$rule.IdentityReference.Value -notin $allowed -and
+				($rule.FileSystemRights -band ([Security.AccessControl.FileSystemRights]::Write -bor
+					[Security.AccessControl.FileSystemRights]::Delete -bor
+					[Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+					[Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+					[Security.AccessControl.FileSystemRights]::TakeOwnership)) -ne 0) {
+				throw 'Installed directory grants foreign write access.'
+			}
 		}
 	}
 }
