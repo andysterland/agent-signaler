@@ -30,6 +30,7 @@
     <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorSettings.cs" Link="ConfiguratorSettings.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorConnectionPresentation.cs" Link="ConfiguratorConnectionPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorActionState.cs" Link="ConfiguratorActionState.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorEditState.cs" Link="ConfiguratorEditState.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\HookTargetRow.cs" Link="HookTargetRow.cs" />
   </ItemGroup>
   <Target Name="RecordRelayLocation" AfterTargets="Build">

@@ -23,6 +23,7 @@ public sealed class ConfiguratorActionStateTests
         Assert.Equal(!busy, state.CanUseConnection);
         Assert.Equal(!busy, state.CanChangeIntegration);
         Assert.Equal(!busy, state.CanApply);
+        Assert.Equal(!busy, state.CanSave);
         Assert.Equal(discovery, state.CanCancelDiscovery);
         Assert.Equal(connectionTest, state.CanCancelTest);
     }
@@ -32,7 +33,9 @@ public sealed class ConfiguratorActionStateTests
     {
         var ready = new ConfiguratorActionState(false, false, false);
         Assert.True(ready.CanApply);
+        Assert.True(ready.CanSave);
         Assert.False((ready with { Busy = true }).CanApply);
+        Assert.False((ready with { Busy = true }).CanSave);
         Assert.True((ready with { Busy = false }).CanApply);
     }
 }

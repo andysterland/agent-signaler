@@ -240,11 +240,14 @@ public sealed partial class MainWindow : Window
         return selected;
     }
 
-    private MultiTargetIntegrationPlan CreatePlan()
+    private MultiTargetIntegrationPlan CreatePlan(bool settingsOnly = false)
     {
         if (!startupPreferenceLoaded)
             throw new InvalidOperationException("The startup preference is unavailable. Refresh and resolve the startup error before applying settings.");
-        var config = ReadConfiguration();
+        var config = ReadConfiguration(includeHookEdits: !settingsOnly);
+        if (settingsOnly)
+            return MultiTargetIntegrationManager.PreviewSettings(config, ConfigPath, config.RelayPath!,
+                startClientAtSignIn: StartClientAtSignInCheckBox.IsChecked == true);
         return MultiTargetIntegrationManager.Preview(config, ConfigPath, SelectedTargets(), config.RelayPath!,
             startClientAtSignIn: StartClientAtSignInCheckBox.IsChecked == true);
     }
@@ -260,34 +263,15 @@ public sealed partial class MainWindow : Window
     {
         if (!File.Exists(ConfigPath))
         {
-            RuntimeText.Text = "No saved settings. Client is not configured.";
-            DetailedReportingText.Text = "Not configured. The v5 save preview defaults to sharing details.";
+            ClientDiscoveryText.Text = string.Empty;
             return;
         }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         var state = await runtime.QueryDiscoveryStatusAsync(ConfigPath, timeout.Token);
         var saved = RemoteConfiguration.Load(ConfigPath);
-        DetailedReportingText.Text = detailsSuspended ? "Detailed reporting suspended locally; apply successfully to reconcile the saved preference." :
-            saved.Version < 5 ? "Saved legacy configuration: status only. Apply settings explicitly to migrate to v5." :
-            !saved.DetailedReportingEnabled ? "Sharing disabled. Status reporting is unchanged; remote purge acknowledgement is not guaranteed." :
-            saved.ConnectionMode == RemoteConnectionMode.Direct && saved.BaseUri.Scheme != Uri.UriSchemeHttps ? "HTTPS required for details. Status reporting remains available." :
-            !state.Running ? "Sharing enabled in settings; Client is stopped. No details are being captured." :
-            "Sharing enabled in settings; capture requires a compatible receiver and verified host capability. Remote state has not been confirmed.";
         var revision = ClientConfigurationRevision.Read(ConfigPath);
-        var startupName = IntegrationStartup.Name(ConfigPath);
-        var startupStatus = startup.Read(startupName) is null
-            ? " Sign-in startup is not configured."
-            : startup.IsDisabled(startupName)
-                ? " Windows has disabled sign-in startup; enable it in Startup Apps."
-                : " Client is registered to start when you sign in.";
-        RuntimeText.Text = $"Saved heartbeat: {saved.HeartbeatIntervalSeconds / 60} minutes. " +
-            (state.Running ? $"Client running; effective heartbeat: {(state.HeartbeatIntervalSeconds is { } seconds ? $"{seconds / 60} minutes" : "unknown")}; " +
-                $"effective revision: {state.EffectiveRevision ?? "unknown"}. " +
-                (revision == state.EffectiveRevision
-                    ? "Saved settings revision is effective." : "Saved settings revision is not yet effective.") :
-                "Client not running; saved settings are not active.") +
-            startupStatus +
-            (saved.IsDiscovery ? "\n" + ConfiguratorConnectionPresentation.ClientDnsHealth(state, revision) : "");
+        ClientDiscoveryText.Text = saved.IsDiscovery
+            ? ConfiguratorConnectionPresentation.ClientDnsHealth(state, revision) : string.Empty;
     }
 
     private async void StartClient_Click(object sender, RoutedEventArgs e)
@@ -337,8 +321,9 @@ public sealed partial class MainWindow : Window
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e) => await ApplySettingsAsync();
+    private async void SaveSettings_Click(object sender, RoutedEventArgs e) => await ApplySettingsAsync(settingsOnly: true);
 
-    private async Task<bool> ApplySettingsAsync(CancellationToken cancellationToken = default)
+    private async Task<bool> ApplySettingsAsync(CancellationToken cancellationToken = default, bool settingsOnly = false)
     {
         if (busy) return false;
         using var applyLifetime = CancellationTokenSource.CreateLinkedTokenSource(windowLifetime.Token, cancellationToken);
@@ -351,32 +336,40 @@ public sealed partial class MainWindow : Window
             {
                 await runtime.SuspendTranscriptAsync(ConfigPath, applyToken);
                 detailsSuspended = true;
-                DetailedReportingText.Text = "Detailed reporting suspended locally. The preference is not saved until Apply completes.";
                 ShowStatus("Detailed reporting is suspended for this Client run while applying. Cancelling or a failed save does not automatically resume sharing.",
                     InfoBarSeverity.Warning, "Preference not yet saved");
             }
-            var approved = CreatePlan();
-            ShowPreview(approved.Preview);
-            if (!await ConfirmAsync("Apply settings and selected hook integrations?", approved.Preview, "Apply settings", applyToken)) return false;
+            var approved = CreatePlan(settingsOnly);
+            if (settingsOnly) PreviewBox.Text = approved.Preview;
+            else ShowPreview(approved.Preview);
+            if (!await ConfirmAsync(settingsOnly ? "Save settings without changing hooks?" : "Apply settings and selected hook integrations?",
+                approved.Preview, settingsOnly ? "Save settings" : "Apply settings", applyToken)) return false;
             var result = await multiIntegration.ApplyAsync(approved, applyToken);
             settingsCommitted = result.SettingsCommitted;
-            if (settingsCommitted) UpdateDiscoveryDescription();
+            if (settingsCommitted)
+            {
+                UpdateDiscoveryDescription();
+                if (settingsOnly) CaptureSavedConnectionState(approved.RelayPath);
+            }
             if (result.RuntimeApplied) detailsSuspended = false;
             InvalidatePreview();
-            if (RememberSuccessfulUrl(approved.Config, result.RuntimeApplied ? "Installation/update" : "Saving integration settings"))
+            if (RememberSuccessfulUrl(approved.Config, settingsOnly ? "Saving settings" :
+                result.RuntimeApplied ? "Installation/update" : "Saving integration settings"))
                 ShowStatus(result.Message, result.RuntimeApplied ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
-            await RefreshAsync(preserveSelection: false);
+            if (settingsOnly) await RefreshRuntimeAsync();
+            else await RefreshAsync(preserveSelection: false);
             return settingsCommitted;
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex))
         {
             InvalidatePreview();
-            ShowError(ex, settingsCommitted ? "Settings saved; status refresh failed" : "Apply settings failed",
-                ReviewTab, PreviewButton);
+            ShowError(ex, settingsCommitted ? "Settings saved; status refresh failed" :
+                settingsOnly ? "Save settings failed" : "Apply settings failed",
+                settingsOnly ? ConnectionTab : ReviewTab, settingsOnly ? SaveSettingsButton : PreviewButton);
             if (detailsSuspended && !settingsCommitted)
                 ShowStatus(ex is AggregateException
                     ? "Apply failed with a recovery conflict. Detailed reporting remains suspended; any saved opt-out is preserved. Resolve the retained journal without re-enabling sharing."
-                    : "The preference was not saved. Detailed reporting remains suspended for this Client run; it will not resume automatically. Resolve the error and apply again.",
+                    : "The preference was not saved. Detailed reporting remains suspended for this Client run; it will not resume automatically. Resolve the error and save again.",
                     InfoBarSeverity.Error, "Detailed reporting suspended");
             return false;
         }
@@ -560,12 +553,13 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
-    private RemoteConfiguration ReadConfiguration()
+    private RemoteConfiguration ReadConfiguration(bool includeHookEdits = true)
     {
         var config = File.Exists(ConfigPath) ? RemoteConfiguration.Load(ConfigPath) : new RemoteConfiguration { MachineId = machineId };
         if (config.MachineId != machineId)
             throw new InvalidDataException("Configuration and persistent identity disagree.");
-        var relayPath = ValidateInput(() => ConfiguratorSettings.RelayLocation(RelayPathBox.Text), HooksTab, RelayPathBox);
+        var relayPath = ValidateInput(() => ConfiguratorSettings.RelayLocation(includeHookEdits ? RelayPathBox.Text :
+            config.RelayPath ?? Path.Combine(AppContext.BaseDirectory, "AgentSignaler.Relay.exe")), HooksTab, RelayPathBox);
         if (ConnectionModeBox.SelectedIndex == 1)
         {
             var name = ValidateInput(() => ConfiguratorSettings.ValidateDnsRecordName(DnsRecordBox.Text), ConnectionTab, DnsRecordBox);
@@ -637,6 +631,7 @@ public sealed partial class MainWindow : Window
             UninstallButton.IsEnabled = state.CanChangeIntegration;
         PreviewButton.IsEnabled &= startupPreferenceLoaded;
         ApplyButton.IsEnabled = state.CanApply && startupPreferenceLoaded;
+        SaveSettingsButton.IsEnabled = state.CanSave && startupPreferenceLoaded;
         CancelDiscoveryButton.IsEnabled = state.CanCancelDiscovery;
         CancelTestButton.IsEnabled = state.CanCancelTest;
     }

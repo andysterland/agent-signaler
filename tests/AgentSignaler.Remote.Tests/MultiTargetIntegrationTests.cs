@@ -6,7 +6,7 @@ using Xunit;
 
 namespace AgentSignaler.Remote.Tests;
 
-public sealed class MultiTargetIntegrationTests : IDisposable
+public sealed partial class MultiTargetIntegrationTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "test-data", Guid.NewGuid().ToString("N"));
     private string ConfigPath => Path.Combine(root, "remote.json");
@@ -814,14 +814,19 @@ public sealed class MultiTargetIntegrationTests : IDisposable
     private sealed class FakeRuntime : IIntegrationRuntime
     {
         public int Starts, Reloads, Stops;
+        public int Pauses, Suspends, TranscriptReloads;
         public bool Running;
         public Exception? QueryFailure;
-        public Task SuspendTranscriptAsync(string path, CancellationToken token) => Task.CompletedTask;
-        public Task PauseTranscriptAsync(string path, CancellationToken token) => Task.CompletedTask;
-        public Task ReloadTranscriptAsync(string path, CancellationToken token) => Task.CompletedTask;
-        public Task<IntegrationRuntimeState> QueryAsync(string path, CancellationToken token) =>
-            QueryFailure is null ? Task.FromResult(new IntegrationRuntimeState(Running)) :
+        public Action? OnQuery;
+        public Task SuspendTranscriptAsync(string path, CancellationToken token) { Suspends++; return Task.CompletedTask; }
+        public Task PauseTranscriptAsync(string path, CancellationToken token) { Pauses++; return Task.CompletedTask; }
+        public Task ReloadTranscriptAsync(string path, CancellationToken token) { TranscriptReloads++; return Task.CompletedTask; }
+        public Task<IntegrationRuntimeState> QueryAsync(string path, CancellationToken token)
+        {
+            OnQuery?.Invoke();
+            return QueryFailure is null ? Task.FromResult(new IntegrationRuntimeState(Running)) :
                 Task.FromException<IntegrationRuntimeState>(QueryFailure);
+        }
         public Task<IntegrationRuntimeState> StartAsync(string client, string config, CancellationToken token)
         { Starts++; Running = true; return Task.FromResult(new IntegrationRuntimeState(true, ClientConfigurationRevision.Read(config))); }
         public Task<IntegrationRuntimeState> ReloadAsync(string config, CancellationToken token)

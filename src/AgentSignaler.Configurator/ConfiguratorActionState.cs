@@ -5,6 +5,7 @@ internal readonly record struct ConfiguratorActionState(
 {
     internal bool CanUseConnection => !Busy;
     internal bool CanChangeIntegration => !Busy;
+    internal bool CanSave => !Busy;
     internal bool CanApply => !Busy;
     internal bool CanCancelDiscovery => DiscoveryActive;
     internal bool CanCancelTest => ConnectionTestActive;

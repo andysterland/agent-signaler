@@ -14,16 +14,19 @@ public sealed partial class MainWindow
     private bool updateClosing;
     private bool updateCleanupFailed;
     private Task? updateCloseTask;
-    private EditSnapshot? savedUpdateState;
+    private ConfiguratorEditState? savedUpdateState;
 
-    private sealed record EditSnapshot(string Url, double Heartbeat, int Mode, bool ShareDetails,
-        string Relay, bool Startup, string DnsRecordName);
-
-    private EditSnapshot CurrentUpdateState() => new(UrlBox.Text, HeartbeatBox.Value,
+    private ConfiguratorEditState CurrentUpdateState() => new(UrlBox.Text, HeartbeatBox.Value,
         ConnectionModeBox.SelectedIndex, ShareDetailsSwitch.IsOn, RelayPathBox.Text,
         StartClientAtSignInCheckBox.IsChecked == true, DnsRecordBox.Text);
 
     private void CaptureSavedUpdateState() => savedUpdateState = CurrentUpdateState();
+    private void CaptureSavedConnectionState(string savedRelayPath)
+    {
+        var current = CurrentUpdateState();
+        var previous = savedUpdateState ?? current with { Relay = savedRelayPath };
+        savedUpdateState = previous.WithSavedConnection(current);
+    }
     private bool HasUnsavedUpdateEdits => savedUpdateState is null || savedUpdateState != CurrentUpdateState() ||
         rows.Any(row => row.HasPendingChange || row.IsDraft);
 
@@ -53,7 +56,7 @@ public sealed partial class MainWindow
                 {
                     XamlRoot = RootPanel.XamlRoot,
                     Title = "Unsaved Remote setup changes",
-                    Content = "Connection, integration or startup edits have not been saved. Save uses the existing verified Apply settings preview and confirmation. Discard reloads saved settings. Cancel leaves this app running.",
+                    Content = "Connection, integration or startup edits have not been saved. Save changes uses Apply settings to save all edits, including pending hooks and the relay location, after preview and confirmation. Discard reloads saved settings. Cancel leaves this app running.",
                     PrimaryButtonText = "Save changes", SecondaryButtonText = "Discard changes", CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Close
                 };

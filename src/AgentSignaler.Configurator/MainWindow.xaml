@@ -80,7 +80,7 @@
                             <ToolTip Placement="Left" MaxWidth="440">
                                 <StackPanel Spacing="10" MaxWidth="400">
                                     <TextBlock Text="New setups use DNS TXT discovery at signaler.cablesorter.io by default. Edit the DNS record hostname or select Direct Dashboard URL to use a fixed address. Saved connections retain their selected mode. The heartbeat interval must be a whole number of minutes from 1 to 60. The persistent machine UUID is retained when integration or the application is removed." TextWrapping="Wrap" />
-                                    <TextBlock Text="Enable Start client when I sign in to add an owned shortcut to your Startup folder when you apply settings. Exit stops reporting until you explicitly start Client or sign in again with startup enabled. Start client uses saved settings." TextWrapping="Wrap" />
+                                    <TextBlock Text="Save settings saves connection, heartbeat, sharing and sign-in startup preferences without changing hooks or the selected relay location. Pending hook edits remain unsaved. Enable Start client when I sign in to add an owned shortcut when you save or apply settings. Start client uses saved settings." TextWrapping="Wrap" />
                                     <TextBlock Text="Select integrations on Hooks, then Apply settings and confirm the preview. Hook files and required profile settings are configured automatically. Opening, editing and testing do not change hooks or start Client." TextWrapping="Wrap" />
                                     <TextBlock Text="Legacy settings report status only. Applying settings explicitly upgrades to v5 for Direct or v7 for DNS discovery; upgrade Client, Relay and Configurator together first. Detailed sharing sends allowed user and assistant messages plus tool names, never tool arguments/results, raw errors or reasoning. Hook failures never block Copilot." TextWrapping="Wrap" />
                                 </StackPanel>
@@ -100,22 +100,15 @@
                                          MaxLength="253" TextChanged="DnsRecordChanged" />
                                 <TextBlock x:Name="DiscoveryConnectionText" Text="DNS and Dashboard health have not been tested in this window."
                                            TextWrapping="Wrap" />
-                                <TextBlock Text="Use only a public DNS record you trust. It contains one HTTPS Dashboard URL, not a secret or authentication credential. Manage the record externally; Dashboard never writes DNS. Only the running Client resolves DNS for reporting; hooks and Relay do not network. Test performs a read-only lookup and Dashboard health check. Apply saves only the hostname, not the resolved URL. There is no direct-URL fallback."
-                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="ClientDiscoveryText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                             </StackPanel>
                             <NumberBox x:Name="HeartbeatBox" Header="Heartbeat interval (minutes)" Value="5" Minimum="1" Maximum="60" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="HeartbeatChanged" />
                             <CheckBox x:Name="StartClientAtSignInCheckBox" Content="Start client when I sign in"
                                       Checked="StartupChanged" Unchecked="StartupChanged" />
-                            <TextBlock Text="Apply settings to add or remove Agent Signaler's shortcut in your Startup programs folder. Disabling startup does not stop a running Client."
+                            <TextBlock Text="Save settings or Apply settings to add or remove Agent Signaler's shortcut in your Startup programs folder. Disabling startup does not stop a running Client."
                                        TextWrapping="Wrap" />
                             <ToggleSwitch x:Name="ShareDetailsSwitch" Header="Share detailed conversations" IsOn="True"
                                           Toggled="ShareDetailsChanged" />
-                            <TextBlock Text="Message text, including personal information, is sent to the configured Dashboard. Consent is handled outside the app. Requires HTTPS, a running upgraded Client, a compatible receiver and verified source capabilities. Apply settings to save; legacy settings stay status-only until this explicit v5 (Direct) or v7 (DNS discovery) upgrade."
-                                       TextWrapping="Wrap" />
-                            <TextBlock Text="The anonymous prototype keeps details in bounded memory for up to 30 minutes at the receiver; this does not prevent OS paging or host history. Opt-out stops local capture immediately when applied. Remote purge is best effort, not an offline acknowledgement."
-                                       TextWrapping="Wrap" />
-                            <TextBlock x:Name="DetailedReportingText" TextWrapping="Wrap" />
-                            <TextBlock x:Name="RuntimeText" Text="Client runtime status has not been queried." TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                             <TextBox x:Name="IdentityBox" Header="Machine UUID" IsReadOnly="True" />
                             <Button x:Name="TestButton" Content="Test discovery and connection" Click="Test_Click" />
                             <Button x:Name="CancelTestButton" Content="Cancel test" Click="CancelTest_Click" IsEnabled="False" />
@@ -228,7 +221,7 @@
                         <ToolTipService.ToolTip>
                             <ToolTip Placement="Left" MaxWidth="440">
                                 <StackPanel Spacing="10" MaxWidth="400">
-                                    <TextBlock Text="Preview settings changes shows the exact planned changes without writing files. Apply settings always builds a fresh preview and asks for confirmation; a separate preview is optional." TextWrapping="Wrap" />
+                                    <TextBlock Text="Save settings saves connection and startup preferences without changing hooks. Apply settings also configures the selected hooks and relay location. Both show a fresh preview and ask for confirmation; a separate preview is optional." TextWrapping="Wrap" />
                                     <TextBlock Text="Recover an interrupted integration transaction to restore its prior owned files and startup settings. Clean up legacy diagnostic hooks before applying if diagnostic cleanup is pending. Changed user files are preserved." TextWrapping="Wrap" />
                                     <TextBlock Text="After a completed MSI uninstall or reinstall, use Complete finished uninstall to clear a verified leftover removal journal. Wait for Windows Installer to finish first. This does not restore hooks, change saved settings, or start Client." TextWrapping="Wrap" />
                                     <TextBlock Text="Uninstall integration removes this user's owned integrations and stops Client. The persistent machine UUID is retained. Each maintenance action asks for confirmation." TextWrapping="Wrap" />
@@ -270,6 +263,8 @@
                            ToolTipService.ToolTip="{Binding Text, ElementName=RelayPathText}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+                <Button x:Name="SaveSettingsButton" Content="Save settings" Click="SaveSettings_Click"
+                        ToolTipService.ToolTip="Save connection, heartbeat, sharing and sign-in startup preferences without changing hooks." />
                 <Button x:Name="StartClientButton" Content="Start client" Click="StartClient_Click" />
                 <Button x:Name="ApplyButton" Content="Apply settings" Click="Apply_Click"
                         Style="{StaticResource AccentButtonStyle}" />

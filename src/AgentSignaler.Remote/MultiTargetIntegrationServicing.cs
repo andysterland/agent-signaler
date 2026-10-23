@@ -78,6 +78,7 @@ public sealed partial class MultiTargetIntegrationManager
                 if (startup is null) throw new InvalidOperationException("Startup servicing is unavailable.");
                 startup.Replace(journal.StartupName, journal.StartupBefore, journal.StartupAfter);
             }
+            token.ThrowIfCancellationRequested();
             CheckFiles(journal.Changes, false);
             if (!retainJournal) File.Delete(journalPath);
         }

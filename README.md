@@ -160,8 +160,8 @@ This status-only walkthrough uses one computer and no cloud account.
 3. Select **Test connection**. Expect a connectivity result and a dismissible
    notification inside Dashboard, **not** a computer card. This checks the
    receiver, not whether an IDE emits hooks.
-4. Select **Apply settings**, review the exact changes, and confirm. For an
-   initial connectivity-only trial, leave hook targets unselected and use
+4. Select **Save settings**, review the exact changes, and confirm. For an
+   initial connectivity-only trial, no hooks are needed; use
    **Start client** explicitly. Successful delivery registers the computer as
    **Idle** without requiring an agent session.
 5. To report actual agent activity, open **Hooks**, enable the desired eligible
@@ -309,7 +309,7 @@ JSON edits. Both use `%LOCALAPPDATA%\AgentSignaler` by default.
 | Heartbeat | `heartbeatIntervalSeconds` in `remote.json`; default `300`, valid `60..3600` in whole-minute increments. Managed offline detection is twice the interval plus 60 seconds. |
 | Hook selection | Configurator manages `relayPath` and `integrations` in `remote.json` together with owned hook files. |
 | Conversation details | Remote v5 and later `detailedReportingEnabled` and receiver `ReceiveDetailedConversations` both default to `true`. Disable explicitly for status-only use. HTTP/LAN and legacy remote v1-v4 remain status-only. |
-| Windows sign-in | Separate explicit Dashboard/Client startup controls. Client's setting manages an owned current-user Startup shortcut. |
+| Windows sign-in | Separate explicit Dashboard/Client startup controls. Client's setting manages an owned current-user Startup shortcut. **Save settings** saves connection, heartbeat, sharing and Client startup preferences without applying pending hook or relay changes; **Apply settings** also configures the selected hooks. |
 
 Dashboard settings use PascalCase JSON fields; remote configuration uses camelCase.
 Do not hand-change schema versions or copy a live database to bypass ownership.

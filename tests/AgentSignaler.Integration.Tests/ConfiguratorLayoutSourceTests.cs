@@ -30,6 +30,24 @@ public sealed class ConfiguratorLayoutSourceTests
     }
 
     [Fact]
+    public void ConnectionOmitsExplanatoryAndSummaryTextButRetainsDnsHealth()
+    {
+        var document = XDocument.Load(SourcePath("MainWindow.xaml"));
+        var connection = document.Descendants().Single(element =>
+            (string?)element.Attribute(Xaml + "Name") == "ConnectionTab");
+        var text = connection.ToString();
+        Assert.DoesNotContain("Use only a public DNS record you trust.", text);
+        Assert.DoesNotContain("Message text, including personal information,", text);
+        Assert.DoesNotContain("The anonymous prototype keeps details", text);
+        Assert.DoesNotContain("DetailedReportingText", text);
+        Assert.DoesNotContain("RuntimeText", text);
+        var dnsPanel = connection.Descendants().Single(element =>
+            (string?)element.Attribute(Xaml + "Name") == "DnsDiscoveryPanel");
+        Assert.Contains(dnsPanel.Elements(), element =>
+            (string?)element.Attribute(Xaml + "Name") == "ClientDiscoveryText");
+    }
+
+    [Fact]
     public void StartClientIsImmediatelyBeforeApplyInSharedBottomActionGroup()
     {
         var document = XDocument.Load(SourcePath("MainWindow.xaml"));
@@ -40,7 +58,7 @@ public sealed class ConfiguratorLayoutSourceTests
         Assert.Equal("StackPanel", group.Name.LocalName);
         Assert.Equal("Horizontal", (string?)group.Attribute("Orientation"));
         Assert.Equal("Right", (string?)group.Attribute("HorizontalAlignment"));
-        Assert.Equal(new[] { "StartClientButton", "ApplyButton" },
+        Assert.Equal(new[] { "SaveSettingsButton", "StartClientButton", "ApplyButton" },
             group.Elements().Select(element => (string?)element.Attribute(Xaml + "Name")));
         var footer = Assert.IsType<XElement>(group.Parent);
         var root = document.Descendants().Single(element => (string?)element.Attribute(Xaml + "Name") == "RootPanel");
@@ -51,6 +69,9 @@ public sealed class ConfiguratorLayoutSourceTests
             (string?)footer.Attribute("Grid.Row"));
         Assert.Equal("StartClient_Click", (string?)start.Attribute("Click"));
         Assert.Equal("Apply_Click", (string?)apply.Attribute("Click"));
+        var save = group.Elements().First();
+        Assert.Equal("Save settings", (string?)save.Attribute("Content"));
+        Assert.Equal("SaveSettings_Click", (string?)save.Attribute("Click"));
     }
 
     [Fact]
@@ -70,15 +91,41 @@ public sealed class ConfiguratorLayoutSourceTests
         Assert.Contains("StartClientAtSignInCheckBox.IsEnabled =", source);
         Assert.Contains("if (!preserveSelection || !startupPreferenceLoaded) LoadStartupPreference();", source);
         Assert.Contains("ApplyButton.IsEnabled = state.CanApply && startupPreferenceLoaded;", source);
+        Assert.Contains("SaveSettingsButton.IsEnabled = state.CanSave && startupPreferenceLoaded;", source);
         Assert.Contains("private async void Apply_Click(object sender, RoutedEventArgs e) => await ApplySettingsAsync();", source);
         var apply = MethodSource(source, "private async Task<bool> ApplySettingsAsync(");
         Assert.Contains("CancellationTokenSource.CreateLinkedTokenSource(windowLifetime.Token, cancellationToken)", apply);
-        AssertBefore(apply, "var approved = CreatePlan();", "ShowPreview(approved.Preview);");
-        AssertBefore(apply, "ShowPreview(approved.Preview);",
-            "if (!await ConfirmAsync(\"Apply settings and selected hook integrations?\", approved.Preview, \"Apply settings\", applyToken)) return false;");
+        AssertBefore(apply, "var approved = CreatePlan(settingsOnly);", "ShowPreview(approved.Preview);");
+        AssertBefore(apply, "ShowPreview(approved.Preview);", "if (!await ConfirmAsync(");
+        Assert.Contains("settingsOnly ? \"Save settings without changing hooks?\" : \"Apply settings and selected hook integrations?\"", apply);
+        Assert.Contains("approved.Preview, settingsOnly ? \"Save settings\" : \"Apply settings\", applyToken)) return false;", apply);
         AssertBefore(apply, "if (!await ConfirmAsync(", "await multiIntegration.ApplyAsync(approved, applyToken)");
         Assert.Contains("return settingsCommitted;", apply);
         Assert.DoesNotContain("startup.Replace(", source);
+    }
+
+    [Fact]
+    public void SettingsSaveIgnoresPendingHookInputsAndPreservesTheirUnsavedState()
+    {
+        var source = File.ReadAllText(SourcePath("MainWindow.xaml.cs"));
+        Assert.Contains("private async void SaveSettings_Click(object sender, RoutedEventArgs e) => await ApplySettingsAsync(settingsOnly: true);", source);
+        var plan = MethodSource(source, "private MultiTargetIntegrationPlan CreatePlan(");
+        Assert.Contains("ReadConfiguration(includeHookEdits: !settingsOnly)", plan);
+        AssertBefore(plan, "if (settingsOnly)", "return MultiTargetIntegrationManager.PreviewSettings(");
+        AssertBefore(plan, "return MultiTargetIntegrationManager.PreviewSettings(", "SelectedTargets()");
+        var read = MethodSource(source, "private RemoteConfiguration ReadConfiguration(");
+        Assert.Contains("includeHookEdits ? RelayPathBox.Text :", read);
+        Assert.Contains("config.RelayPath ?? Path.Combine(AppContext.BaseDirectory, \"AgentSignaler.Relay.exe\")", read);
+        var apply = MethodSource(source, "private async Task<bool> ApplySettingsAsync(");
+        AssertBefore(apply, "settingsCommitted = result.SettingsCommitted;", "if (settingsOnly) CaptureSavedConnectionState(approved.RelayPath);");
+        Assert.Contains("if (settingsOnly) await RefreshRuntimeAsync();\n            else await RefreshAsync(preserveSelection: false);",
+            apply.Replace("\r\n", "\n", StringComparison.Ordinal));
+        var updates = File.ReadAllText(SourcePath("MainWindow.Updates.cs"));
+        var capture = MethodSource(updates, "private void CaptureSavedConnectionState(");
+        Assert.Contains("previous.WithSavedConnection(current)", capture);
+        Assert.DoesNotContain("CaptureSavedUpdateState()", capture);
+        Assert.DoesNotContain("rows.", capture);
+        Assert.Contains("rows.Any(row => row.HasPendingChange || row.IsDraft)", updates);
     }
 
     [Fact]

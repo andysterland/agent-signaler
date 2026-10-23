@@ -182,8 +182,10 @@ public sealed partial class ClientCoordinator
                         return new(false, "sharing-suspended-preference-not-saved");
                     Interlocked.Exchange(ref _transcriptExplicitSuspension, 0);
                     _transcriptSuspensionHash = null;
+                    // Reloaded target collections have different object identities. Compare the
+                    // committed revision, not record equality, when reconciling discovery settings.
                     if (config.IsDiscovery != _configuration.IsDiscovery ||
-                        config.IsDiscovery && config != _configuration)
+                        config.IsDiscovery && hash != _revision)
                         return new(false, "connection-reload-required");
                     ConfigureTranscripts(config, hash, _generation, _startedAcknowledged &&
                         (config.IsDiscovery || config.BaseUri == _configuration.BaseUri));

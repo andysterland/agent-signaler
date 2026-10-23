@@ -262,6 +262,25 @@ public sealed class WindowsIntegrationStartupTests : IDisposable
         return (new(new Scheduler(), (_, _) => Task.FromResult(true), Startup, new Runtime()), config, relay);
     }
 
+    [Fact]
+    public async Task SettingsOnlySavePreservesDisabledStartupAcrossOffAndOn()
+    {
+        var (manager, config, relay) = CreateManager();
+        registry.ShortcutApproval = [3, 0, 0, 0];
+        await manager.ApplyAsync(MultiTargetIntegrationManager.PreviewSettings(config, Config, relay, true), default);
+        Assert.True(Startup.IsDisabled(Name));
+        Assert.Equal(new byte[] { 3, 0, 0, 0 }, registry.ShortcutApproval);
+        var saved = RemoteConfiguration.Load(Config);
+        await manager.ApplyAsync(MultiTargetIntegrationManager.PreviewSettings(saved, Config, relay, false), default);
+        Assert.False(File.Exists(Shortcut));
+        Assert.Equal(new byte[] { 3, 0, 0, 0 }, registry.ShortcutApproval);
+        await manager.ApplyAsync(MultiTargetIntegrationManager.PreviewSettings(saved, Config, relay, true), default);
+        Assert.True(File.Exists(Shortcut));
+        Assert.True(Startup.IsDisabled(Name));
+        Assert.Equal(new byte[] { 3, 0, 0, 0 }, registry.ShortcutApproval);
+        Assert.Equal(0, registry.ApprovalWrites);
+    }
+
     private sealed class Scheduler : IIntegrationTaskScheduler
     {
         public string? ReadXml(string name) => null;

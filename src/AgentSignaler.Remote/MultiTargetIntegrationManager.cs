@@ -27,6 +27,7 @@ public sealed class MultiTargetIntegrationPlan
     public IReadOnlyList<IntegrationTarget> Targets => Config.Integrations;
     public bool IsRemoval { get; }
     public bool IsStatusOnlyDowngrade { get; }
+    public bool IsSettingsOnly { get; }
     public bool StartClientAtSignIn { get; }
     internal bool PreserveStartupPreference { get; }
     public string Preview { get; }
@@ -38,7 +39,7 @@ public sealed class MultiTargetIntegrationPlan
     internal MultiTargetIntegrationPlan(RemoteConfiguration config, string configPath,
         IReadOnlyList<IntegrationFileChange> changes, IntegrationManifest? prior, bool removal,
         Func<string, bool>? loaderHookExists = null, bool statusOnlyDowngrade = false,
-        bool startClientAtSignIn = true, bool preserveStartupPreference = false)
+        bool startClientAtSignIn = true, bool preserveStartupPreference = false, bool settingsOnly = false)
     {
         Config = config;
         ConfigPath = configPath;
@@ -46,10 +47,28 @@ public sealed class MultiTargetIntegrationPlan
         Prior = prior;
         IsRemoval = removal;
         IsStatusOnlyDowngrade = statusOnlyDowngrade;
+        IsSettingsOnly = settingsOnly;
         StartClientAtSignIn = startClientAtSignIn;
         PreserveStartupPreference = preserveStartupPreference;
         ConfigBytes = MultiTargetIntegrationManager.Serialize(config);
         LoaderHookExists = loaderHookExists ?? File.Exists;
+        if (settingsOnly)
+        {
+            Preview = $"SAVE reporter settings {configPath}\n{Encoding.UTF8.GetString(ConfigBytes)}" +
+                $"\n{(startClientAtSignIn ? "REGISTER owned" : "REMOVE owned")} current-user Startup programs shortcut: {IntegrationStartup.Name(configPath)}.lnk" +
+                (startClientAtSignIn ? "\n" + IntegrationStartup.Command(
+                    Path.Combine(Path.GetDirectoryName(config.RelayPath!)!, "AgentSignaler.Client.exe"), configPath) : "") +
+                "\nWindows Startup Apps disabled state is preserved. Startup changes do not start or stop the current Client." +
+                "\nPreserve saved integration targets, Relay selection, hook/profile files and artifact ownership metadata. No hook repair or legacy task removal." +
+                "\nSave works offline: no Dashboard health, DNS or source capability verification. Only an already-running Client may reload; a stopped Client stays stopped." +
+                (config.Version >= 5 ? config.DetailedReportingEnabled
+                    ? "\nShare detailed conversations: ON. Message text, including personal information, goes to the configured Dashboard. Consent is handled outside the app."
+                    : "\nShare detailed conversations: OFF. Status reporting remains available." :
+                    "\nLegacy configuration remains status-only.") +
+                "\nSaving is not proof of delivery or receiver capability. Remote receipt or purge is best effort; an offline Dashboard cannot acknowledge it." +
+                "\nConcurrent edits require a fresh preview. Ownership-checked rollback retains a recovery journal on conflicts; a saved detailed-sharing opt-out is never undone.";
+            return;
+        }
         Preview = string.Join("\n\n", changes.Where(c => !MultiTargetIntegrationManager.Equal(c.Before, c.After))
             .Select(c => $"{(c.After is null ? "REMOVE" : "WRITE")} {c.Path}" +
                 (c.After is null ? "" : "\n" + Encoding.UTF8.GetString(c.After)))) +
@@ -442,6 +461,8 @@ public sealed partial class MultiTargetIntegrationManager(IIntegrationTaskSchedu
     {
         if (!Equal(Serialize(plan.Config), plan.ConfigBytes))
             throw new InvalidDataException("Preview was changed; create a fresh preview.");
+        if (plan.IsSettingsOnly)
+            return await ApplySettingsAsync(plan, token);
         using var held = AtomicFile.Acquire(plan.ConfigPath + ".integration.lock", TimeSpan.FromSeconds(1));
         if (plan.Config.Version >= 5 && runtime is not null)
             await Bounded(async t =>

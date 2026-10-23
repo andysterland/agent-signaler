@@ -697,7 +697,7 @@ Dashboard does not change DNS. DNS records are public and provide no receiver
 authentication or endpoint secrecy.
 
 **Test connection** resolves the TXT record and checks Dashboard health without
-installing hooks or starting Client. Then use **Apply settings**, inspect the
+installing hooks or starting Client. Then use **Save settings**, inspect the
 preview and confirm. Version 7 stores `connectionMode: "dnsTxtDiscovery"` and
 `dnsRecordName`, not the resolved URL or Azure credentials. Existing direct
 configurations remain unchanged unless explicitly switched. Upgrade Client,
@@ -830,7 +830,9 @@ checkbox controls an owned `AgentSignaler-Client-<configuration identity>.lnk` i
 the current user's Startup programs folder (`shell:startup`). The shortcut targets
 the Client beside the selected Relay with `--background --config` and the exact
 canonical configuration path. Startup is at **this user's sign-in**, not pre-login,
-and requires no service or elevation. Apply previews and saves the choice;
+and requires no service or elevation. **Save settings** previews and saves the
+choice without changing hooks. **Apply settings** also saves it while configuring
+the selected hooks;
 unchecking removes only the owned registration, without stopping a running Client.
 Repair and servicing preserve an absent registration rather than re-enabling it.
 An exact owned legacy HKCU Run registration is migrated to the shortcut (or removed
@@ -853,7 +855,7 @@ Exit). Acknowledgement makes Dashboard Offline immediately, overriding activity.
 If delivery cannot be confirmed, Client still exits and the dashboard ages out.
 Hooks never restart Client, send HTTP as fallback, or replay missed stopped-period
 events. Use the **Start Client** shortcut or Configurator's explicit start action
-to resume; ordinary Configurator launch, testing, and settings-only Apply after
+to resume; ordinary Configurator launch, testing, **Save settings**, and settings-only Apply after
 Exit do not resume reporting. Startup registration remains for next sign-in.
 
 Each new Client run starts Idle until fresh hooks arrive: hooks missed while
@@ -863,8 +865,8 @@ updates continue, and a later heartbeat snapshot reconciles missed delivery.
 Saved settings and effective runtime settings are distinct; a failed reload must
 show saved-but-not-applied status, not claim the running interval changed.
 Configurator's **Start client** uses the saved configuration only, never unsaved
-edits. A running Client confirms the effective revision after Apply; recover a
-saved-but-not-applied result with explicit Start client or retry Apply as appropriate.
+edits. A running Client confirms the effective revision after Save or Apply; recover a
+saved-but-not-applied result with explicit Start client or retry Save/Apply as appropriate.
 The displayed effective revision/interval changes only after Dashboard acknowledges
 it. While acknowledgement is pending, Client uses the shorter of the old and new
 intervals so an interval increase cannot silently cause a false timeout.
@@ -925,7 +927,7 @@ Configurator has three fixed, non-closable, non-reorderable tabs:
 
 | Tab | Controls and workflow |
 | --- | --- |
-| **Connection** | Explicit direct/DNS TXT selector; direct Dashboard URL or DNS record name; heartbeat; Share detailed conversations with its external-consent/PII notice; machine UUID; saved/effective runtime status; Test connection / Cancel test; Start client. |
+| **Connection** | Explicit direct/DNS TXT selector; direct Dashboard URL or DNS record name; heartbeat; Share detailed conversations; Client sign-in startup; machine UUID; Client DNS health; Test connection / Cancel test. |
 | **Hooks** | Editable remote relay executable location, saved as `relayPath` in `remote.json` when applying settings. Discovered locations with Enable checkboxes and pending-change feedback. Refresh / Cancel discovery and Add custom location. Custom type and path editors appear only for explicitly added rows. |
 | **Review & maintenance** | Optional settings preview, integration transaction recovery, completion of a finished uninstall, cleanup of legacy diagnostic hooks, and full Uninstall integration. |
 
@@ -935,11 +937,19 @@ and the privacy summary live in these tooltips rather than inline paragraphs;
 field labels, current status, pending changes and errors remain visible.
 
 The branded header, version, global status, and configuration/Relay
-paths and **Apply settings** stay visible outside the tabs. Long status messages scroll within the global
+paths, **Save settings**, **Start client**, and **Apply settings** stay visible outside the tabs. Long status messages scroll within the global
 bar; shortened footer paths remain available in full through tooltips and copying.
 Each tab scrolls independently. Normal startup
 always selects **Connection**; the last tab is not remembered, and opening, editing,
 testing, or switching tabs never starts the reporter.
+
+**Save settings** persists only connection mode/address, heartbeat, conversation
+sharing, and Client sign-in startup. It works without a reachable Dashboard and
+does not install, repair, remove, or migrate hooks. Existing hook files,
+registrations, the saved relay location, and pending hook/relay edits stay
+unchanged. A running Client is asked to reload; a stopped Client stays stopped.
+Use **Apply settings** to commit hook selections and the relay location as well.
+Both actions show an exact preview and require confirmation.
 
 Tab switches and discovery refresh preserve unsaved selections and custom rows.
 Editing does not write hook files. Tabs remain navigable during work; conflicting
