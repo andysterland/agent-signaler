@@ -1,6 +1,7 @@
 # DNS TXT endpoint discovery
 
-DNS TXT discovery is an opt-in alternative to a fixed Dashboard URL. It does not
+DNS TXT discovery is the default connection mode for new Configurator setups.
+Existing saved connections and preferences keep their selected mode. It does not
 change the reporting path:
 
 `verified hook -> Relay -> current-user named pipe -> Client -> Dashboard`
@@ -24,9 +25,12 @@ That tunnel URL is an example, not a permanent endpoint. Update the record when
 Dashboard's tunnel URL changes. No Azure Storage account, blob, SAS, connection
 package, Client Azure account or server-side discovery code is required.
 
-In Configurator's Connection tab, explicitly choose DNS TXT discovery and enter
-the record name. Test the connection, review the settings preview and Apply.
-Existing direct configurations are not automatically switched.
+In Configurator's Connection tab, DNS TXT discovery is preselected for new setups
+and the editable record hostname defaults to `signaler.cablesorter.io`. Change
+the hostname if needed, test the connection, review the settings preview and Apply.
+To use a fixed address instead, select Direct Dashboard URL. Existing direct
+configurations are not automatically switched. Opening Configurator alone never
+applies the default or starts Client.
 
 Configuration v7 stores `connectionMode: "dnsTxtDiscovery"` and `dnsRecordName`.
 The resolved URL is runtime state, not a saved fallback. Update Client,

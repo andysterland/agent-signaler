@@ -676,11 +676,13 @@ Failed migration rollback restores prior readable configuration/runtime without
 starting a stopped reporter. Successfully saved false must not be replaced by
 older true during recovery; report a conflict instead. See `installers\README.md`.
 
-#### Opt-in DNS TXT discovery (configuration v7)
+#### DNS TXT discovery (configuration v7)
 
-On **Connection**, explicitly select DNS TXT discovery and enter
-`signaler.cablesorter.io`, or another controlled DNS record name. Publish one TXT
-record containing the current root HTTPS Dev Tunnel URL. For example:
+New Configurator setups select DNS TXT discovery by default. On **Connection**,
+the editable **DNS TXT record hostname** is prefilled with
+`signaler.cablesorter.io`; change it to another controlled DNS record name if
+needed. Existing saved connections and mode preferences keep their choice.
+Publish one TXT record containing the current root HTTPS Dev Tunnel URL. For example:
 
 ```text
 Name: signaler.cablesorter.io
@@ -801,7 +803,10 @@ artifacts without installation or redirected-drive copying with:
 3. In LAN mode only, if required, explicitly add the inbound firewall rule from the dashboard.
    This requests elevation and opens only the **Private** network profile.
 4. On each remote computer, install and open the remote configurator.
-5. In **Connection**, paste the dashboard's **Copy URL** value into **Dashboard URL**, test connectivity,
+5. In **Connection**, new setups default to DNS TXT discovery using
+   `signaler.cablesorter.io`. Edit the DNS hostname if needed, or select **Direct
+   Dashboard URL** and paste the dashboard's **Copy URL** value to use a fixed
+   address. Test connectivity,
    and set the heartbeat interval. In **Hooks**, tick **Enable** for the desired
    discovered or custom locations. Select **Apply settings** and confirm the exact
    hook, profile, Client/startup and connection changes; no manual hook setup is required.

@@ -63,7 +63,7 @@ internal sealed record ConfiguratorSettings(string? LastSuccessfulDashboardUrl,
 
     internal static RemoteConnectionMode LoadMode(string path)
     {
-        if (!File.Exists(path)) return RemoteConnectionMode.Direct;
+        if (!File.Exists(path)) return RemoteConnectionMode.DnsTxtDiscovery;
         var settings = Read(path);
         // Discontinued numeric value 1 is never reinterpreted as DNS or used to read credentials.
         if ((int)settings.SelectedConnectionMode == 1) return RemoteConnectionMode.Direct;

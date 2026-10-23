@@ -141,11 +141,30 @@ public sealed class ConfiguratorSettingsTests : IDisposable
     }
 
     [Fact]
-    public void DnsDefaultsAreSuggestedWithoutSelectingDns()
+    public void NewSetupDefaultsToDnsWithoutWritingSettingsOrConfiguration()
     {
-        Assert.Equal(RemoteConnectionMode.Direct, ConfiguratorSettings.LoadMode(SettingsPath));
-        Assert.Equal("signaler.cablesorter.io", ConfiguratorSettings.LoadDnsRecordName(SettingsPath));
+        Assert.Equal(RemoteConnectionMode.DnsTxtDiscovery, ConfiguratorSettings.LoadMode(SettingsPath));
+        var recordName = ConfiguratorSettings.LoadDnsRecordName(SettingsPath);
+        Assert.Equal("signaler.cablesorter.io", recordName);
         Assert.Equal("signaler.cablesorter.io", ConfiguratorSettings.ValidateDnsRecordName(" signaler.cablesorter.io "));
+        var configuration = new RemoteConfiguration { MachineId = machineId }.WithDnsTxtDiscovery(recordName);
+        Assert.Equal(7, configuration.Version);
+        Assert.True(configuration.IsDiscovery);
+        Assert.Null(configuration.DashboardBaseUrl);
+        Assert.False(Directory.Exists(directory));
+    }
+
+    [Fact]
+    public void SavedDnsHostnameOverridesSuggestedDefaultWithoutSelectingDirect()
+    {
+        var configuration = new RemoteConfiguration { MachineId = machineId }
+            .WithDnsTxtDiscovery("custom.example.test");
+        ConfiguratorSettings.SaveUrl(SettingsPath, configuration);
+
+        Assert.Equal(RemoteConnectionMode.DnsTxtDiscovery, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Equal("custom.example.test", ConfiguratorSettings.LoadDnsRecordName(SettingsPath));
+        Assert.Null(ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.Single(Directory.GetFiles(directory));
     }
 
     [Fact]

@@ -108,7 +108,7 @@ public sealed partial class MainWindow : Window
             }
             await RefreshAsync();
             if (!File.Exists(ConfigPath) && ConfiguratorSettings.HasRemovedMode(SettingsPath))
-                ShowStatus("Saved private-sharing UI preferences are discontinued. Direct URL is selected instead; DNS requires explicit opt-in. Saved credentials and Azure resources were not read or changed. Review and explicitly apply a supported connection before reporting.",
+                ShowStatus("Saved private-sharing UI preferences are discontinued. Direct URL is selected instead; select DNS explicitly to use discovery for this saved setup. Saved credentials and Azure resources were not read or changed. Review and explicitly apply a supported connection before reporting.",
                     InfoBarSeverity.Warning, "Connection preferences need review");
             else if (HookVerification.HasPendingCleanup(ConfigPath))
                 ShowStatus("An interrupted diagnostic has pending cleanup. Use Clean up legacy diagnostic hooks on Review & maintenance before applying settings.",

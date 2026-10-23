@@ -385,8 +385,9 @@ interrupted-transaction recovery must preserve a saved
 `"detailedReportingEnabled": false`; replacing it with an older true is a recovery conflict, not successful
 rollback. Failed opt-out persistence leaves the current Client run suspended.
 
-DNS TXT discovery is an explicit v7 configuration choice after the complete Remote
-binary set has been updated. Existing direct v1-v6 configurations keep their
+New Configurator setups default to v7 DNS TXT discovery at
+`signaler.cablesorter.io` after the complete Remote binary set has been updated.
+Its hostname is editable. Existing saved choices and direct v1-v6 configurations keep their
 meaning; installation never switches connection modes. V7 retains detailed-sharing
 and source preferences and stores the DNS record name, not its resolved tunnel
 URL. Older binaries reject v7. Never edit the version discriminator or copy a

@@ -305,7 +305,7 @@ JSON edits. Both use `%LOCALAPPDATA%\AgentSignaler` by default.
 | Network mode and sharing | `ConnectionMode` defaults to Dev Tunnel mode; `AutoStartSharing` defaults to `true`. Configure through Dashboard's Network and Internet sharing tabs. |
 | Appearance | `Compact`, `ShowCompactViewWhenMinimized`, and `Theme` (`System`, `Light`, or `Dark`). |
 | Optional tools/discovery | `DevTunnelCliPath`, `AzureCliPath`, and either `DevBoxSubscriptionId` or `DevCenterName`. Paths must identify trusted executables; change running paths by saving and restarting. |
-| Remote connection | Direct mode retains `dashboardBaseUrl` in `remote.json`. Opt-in v7 DNS TXT discovery stores `dnsRecordName` instead; the resolved tunnel URL is not written into settings. |
+| Remote connection | New Configurator setups default to v7 DNS TXT discovery at `signaler.cablesorter.io`, with an editable `dnsRecordName`. Saved connections keep their selected mode. Direct mode retains `dashboardBaseUrl` in `remote.json`; resolved tunnel URLs are never saved in DNS mode. |
 | Heartbeat | `heartbeatIntervalSeconds` in `remote.json`; default `300`, valid `60..3600` in whole-minute increments. Managed offline detection is twice the interval plus 60 seconds. |
 | Hook selection | Configurator manages `relayPath` and `integrations` in `remote.json` together with owned hook files. |
 | Conversation details | Remote v5 and later `detailedReportingEnabled` and receiver `ReceiveDetailedConversations` both default to `true`. Disable explicitly for status-only use. HTTP/LAN and legacy remote v1-v4 remain status-only. |
@@ -316,8 +316,9 @@ Do not hand-change schema versions or copy a live database to bypass ownership.
 Port/mode/CLI-path changes require restart; the running URL may differ from saved
 settings until then.
 
-DNS TXT discovery is an explicit Configurator connection choice; existing direct
-installations are not migrated. For `signaler.cablesorter.io`, publish one TXT
+DNS TXT discovery is the default Configurator connection choice for new setups;
+existing direct installations and saved choices are not migrated. The DNS record
+hostname is editable on the Connection tab. For `signaler.cablesorter.io`, publish one TXT
 record containing the current root HTTPS Dev Tunnel URL. Dashboard does not
 create or update DNS records. Running Clients refresh the address according to
 its bounded DNS TTL and suspend reporting if no valid endpoint lease remains.

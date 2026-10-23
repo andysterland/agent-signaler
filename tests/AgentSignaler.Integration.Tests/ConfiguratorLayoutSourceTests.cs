@@ -1,10 +1,33 @@
 using System.Xml.Linq;
+using AgentSignaler.Configurator;
 
 namespace AgentSignaler.Integration.Tests;
 
 public sealed class ConfiguratorLayoutSourceTests
 {
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+    [Fact]
+    public void NewConnectionShowsEditableDnsHostnameByDefault()
+    {
+        var document = XDocument.Load(SourcePath("MainWindow.xaml"));
+        XElement Named(string name) => document.Descendants().Single(element =>
+            (string?)element.Attribute(Xaml + "Name") == name);
+        var mode = Named("ConnectionModeBox");
+        var selectedIndex = int.Parse(mode.Attribute("SelectedIndex")!.Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+        var selection = mode.Elements().ElementAt(selectedIndex);
+        Assert.Contains("DNS TXT", (string?)selection.Attribute("Content"));
+        Assert.Equal("ConnectionModeChanged", (string?)mode.Attribute("SelectionChanged"));
+        Assert.NotEqual("Collapsed", (string?)Named("DnsDiscoveryPanel").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)Named("UrlBox").Attribute("Visibility"));
+        var hostname = Named("DnsRecordBox");
+        Assert.Equal("TextBox", hostname.Name.LocalName);
+        Assert.Equal(ConfiguratorSettings.SuggestedDnsRecordName, (string?)hostname.Attribute("Text"));
+        Assert.NotEqual("True", (string?)hostname.Attribute("IsReadOnly"));
+        Assert.Equal("DnsRecordChanged", (string?)hostname.Attribute("TextChanged"));
+        Assert.Equal("Test discovery and connection", (string?)Named("TestButton").Attribute("Content"));
+    }
 
     [Fact]
     public void StartClientIsImmediatelyBeforeApplyInSharedBottomActionGroup()

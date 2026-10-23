@@ -79,28 +79,28 @@
                         <ToolTipService.ToolTip>
                             <ToolTip Placement="Left" MaxWidth="440">
                                 <StackPanel Spacing="10" MaxWidth="400">
-                                    <TextBlock Text="Configure a connection to your dashboard. The heartbeat interval must be a whole number of minutes from 1 to 60. The persistent machine UUID is retained when integration or the application is removed." TextWrapping="Wrap" />
+                                    <TextBlock Text="New setups use DNS TXT discovery at signaler.cablesorter.io by default. Edit the DNS record hostname or select Direct Dashboard URL to use a fixed address. Saved connections retain their selected mode. The heartbeat interval must be a whole number of minutes from 1 to 60. The persistent machine UUID is retained when integration or the application is removed." TextWrapping="Wrap" />
                                     <TextBlock Text="Enable Start client when I sign in to add an owned shortcut to your Startup folder when you apply settings. Exit stops reporting until you explicitly start Client or sign in again with startup enabled. Start client uses saved settings." TextWrapping="Wrap" />
                                     <TextBlock Text="Select integrations on Hooks, then Apply settings and confirm the preview. Hook files and required profile settings are configured automatically. Opening, editing and testing do not change hooks or start Client." TextWrapping="Wrap" />
-                                    <TextBlock Text="Legacy settings report status only. Applying settings explicitly upgrades to v5; upgrade Client, Relay and Configurator together first. Detailed sharing sends allowed user and assistant messages plus tool names, never tool arguments/results, raw errors or reasoning. Hook failures never block Copilot." TextWrapping="Wrap" />
+                                    <TextBlock Text="Legacy settings report status only. Applying settings explicitly upgrades to v5 for Direct or v7 for DNS discovery; upgrade Client, Relay and Configurator together first. Detailed sharing sends allowed user and assistant messages plus tool names, never tool arguments/results, raw errors or reasoning. Hook failures never block Copilot." TextWrapping="Wrap" />
                                 </StackPanel>
                             </ToolTip>
                         </ToolTipService.ToolTip>
                     </Button>
                     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Stretch">
                         <StackPanel Spacing="14">
-                            <ComboBox x:Name="ConnectionModeBox" Header="Connection mode" SelectedIndex="0"
+                            <ComboBox x:Name="ConnectionModeBox" Header="Connection mode" SelectedIndex="1"
                                       SelectionChanged="ConnectionModeChanged" HorizontalAlignment="Stretch">
                                 <ComboBoxItem Content="Direct Dashboard URL" />
-                                <ComboBoxItem Content="Public DNS TXT discovery (opt in)" />
+                                <ComboBoxItem Content="Public DNS TXT discovery (default)" />
                             </ComboBox>
-                            <TextBox x:Name="UrlBox" Header="Dashboard base URL" PlaceholderText="http://desktop-pc:51820 or https://your-service-returned-host" TextChanged="SettingsChanged" />
-                            <StackPanel x:Name="DnsDiscoveryPanel" Spacing="8" Visibility="Collapsed">
+                            <TextBox x:Name="UrlBox" Header="Dashboard base URL" PlaceholderText="http://desktop-pc:51820 or https://your-service-returned-host" TextChanged="SettingsChanged" Visibility="Collapsed" />
+                            <StackPanel x:Name="DnsDiscoveryPanel" Spacing="8">
                                 <TextBox x:Name="DnsRecordBox" Header="DNS TXT record hostname" Text="signaler.cablesorter.io"
                                          MaxLength="253" TextChanged="DnsRecordChanged" />
                                 <TextBlock x:Name="DiscoveryConnectionText" Text="DNS and Dashboard health have not been tested in this window."
                                            TextWrapping="Wrap" />
-                                <TextBlock Text="Opt in only if you trust this public DNS record. It contains one HTTPS Dashboard URL, not a secret or authentication credential. Manage the record externally; Dashboard never writes DNS. Only the running Client resolves DNS for reporting; hooks and Relay do not network. Test performs a read-only lookup and Dashboard health check. Apply saves only the hostname, not the resolved URL. There is no direct-URL fallback."
+                                <TextBlock Text="Use only a public DNS record you trust. It contains one HTTPS Dashboard URL, not a secret or authentication credential. Manage the record externally; Dashboard never writes DNS. Only the running Client resolves DNS for reporting; hooks and Relay do not network. Test performs a read-only lookup and Dashboard health check. Apply saves only the hostname, not the resolved URL. There is no direct-URL fallback."
                                            TextWrapping="Wrap" />
                             </StackPanel>
                             <NumberBox x:Name="HeartbeatBox" Header="Heartbeat interval (minutes)" Value="5" Minimum="1" Maximum="60" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="HeartbeatChanged" />
@@ -110,14 +110,14 @@
                                        TextWrapping="Wrap" />
                             <ToggleSwitch x:Name="ShareDetailsSwitch" Header="Share detailed conversations" IsOn="True"
                                           Toggled="ShareDetailsChanged" />
-                            <TextBlock Text="Message text, including personal information, is sent to the configured Dashboard. Consent is handled outside the app. Requires HTTPS, a running upgraded Client, a compatible receiver and verified source capabilities. Apply settings to save; legacy settings stay status-only until this explicit v5 upgrade."
+                            <TextBlock Text="Message text, including personal information, is sent to the configured Dashboard. Consent is handled outside the app. Requires HTTPS, a running upgraded Client, a compatible receiver and verified source capabilities. Apply settings to save; legacy settings stay status-only until this explicit v5 (Direct) or v7 (DNS discovery) upgrade."
                                        TextWrapping="Wrap" />
                             <TextBlock Text="The anonymous prototype keeps details in bounded memory for up to 30 minutes at the receiver; this does not prevent OS paging or host history. Opt-out stops local capture immediately when applied. Remote purge is best effort, not an offline acknowledgement."
                                        TextWrapping="Wrap" />
                             <TextBlock x:Name="DetailedReportingText" TextWrapping="Wrap" />
                             <TextBlock x:Name="RuntimeText" Text="Client runtime status has not been queried." TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                             <TextBox x:Name="IdentityBox" Header="Machine UUID" IsReadOnly="True" />
-                            <Button x:Name="TestButton" Content="Test connection" Click="Test_Click" />
+                            <Button x:Name="TestButton" Content="Test discovery and connection" Click="Test_Click" />
                             <Button x:Name="CancelTestButton" Content="Cancel test" Click="CancelTest_Click" IsEnabled="False" />
                         </StackPanel>
                     </ScrollViewer>
