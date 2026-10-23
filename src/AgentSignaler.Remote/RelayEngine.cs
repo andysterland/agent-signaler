@@ -284,7 +284,7 @@ public sealed class RelayEngine(HttpClient? client = null)
     public async Task<bool> SendAsync(RemoteConfiguration config, StatusRequest request, CancellationToken cancellationToken)
     {
         if (config.IsDiscovery)
-            throw new InvalidOperationException("Private discovery reporting requires the managed Client and an explicitly resolved endpoint.");
+            throw new InvalidOperationException("DNS discovery reporting requires the managed Client and an explicitly resolved endpoint.");
         if (Protocol.Validate(request).Count != 0) return false;
         var bytes = JsonSerializer.SerializeToUtf8Bytes(request, Protocol.Json);
         if (bytes.Length > Protocol.MaxBodyBytes) return false;

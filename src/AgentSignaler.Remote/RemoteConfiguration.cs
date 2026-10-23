@@ -2,11 +2,10 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentSignaler.Contracts;
-using AgentSignaler.Discovery;
 
 namespace AgentSignaler.Remote;
 
-public enum RemoteConnectionMode { Direct, PrivateAzureDiscovery }
+public enum RemoteConnectionMode { Direct = 0, DnsTxtDiscovery = 2 }
 
 [JsonConverter(typeof(RemoteConfigurationConverter))]
 public sealed record RemoteConfiguration
@@ -16,10 +15,7 @@ public sealed record RemoteConfiguration
     public int Port { get; init; } = Protocol.DefaultPort;
     public string? DashboardBaseUrl { get; init; }
     public RemoteConnectionMode ConnectionMode { get; init; }
-    public DiscoveryCredentialReference? Discovery { get; init; }
-    public Guid DiscoveryId { get; init; }
-    public string? DiscoverySigningPublicKey { get; init; }
-    public long DiscoveryCredentialRevision { get; init; }
+    public string? DnsRecordName { get; init; }
     public Guid MachineId { get; init; }
     public string MachineName { get; init; } = Environment.MachineName;
     public string ClientVersion { get; init; } = "unknown";
@@ -34,7 +30,7 @@ public sealed record RemoteConfiguration
     public bool IsDetailedReportingEnabled => Version >= 5 && DetailedReportingEnabled;
 
     [JsonIgnore]
-    public bool IsDiscovery => Version == 6 && ConnectionMode == RemoteConnectionMode.PrivateAzureDiscovery;
+    public bool IsDiscovery => ConnectionMode == RemoteConnectionMode.DnsTxtDiscovery;
 
     [JsonIgnore]
     public Uri BaseUri
@@ -42,8 +38,8 @@ public sealed record RemoteConfiguration
         get
         {
             Validate();
-            if (ConnectionMode == RemoteConnectionMode.PrivateAzureDiscovery)
-                throw new InvalidOperationException("Private discovery requires explicit endpoint resolution.");
+            if (IsDiscovery)
+                throw new InvalidOperationException("DNS discovery requires explicit endpoint resolution.");
             return Version == 1 ? new UriBuilder(Uri.UriSchemeHttp, Host, Port).Uri :
                 ParseDashboardUrl(DashboardBaseUrl!);
         }
@@ -64,8 +60,7 @@ public sealed record RemoteConfiguration
         var config = this with
         {
             Version = Version >= 3 ? Version : 2, DashboardBaseUrl = endpoint.AbsoluteUri, Host = "", Port = Protocol.DefaultPort,
-            ConnectionMode = RemoteConnectionMode.Direct, Discovery = null, DiscoveryId = Guid.Empty,
-            DiscoverySigningPublicKey = null, DiscoveryCredentialRevision = 0
+            ConnectionMode = RemoteConnectionMode.Direct, DnsRecordName = null
         };
         config.Validate();
         return config;
@@ -75,16 +70,14 @@ public sealed record RemoteConfiguration
     public RemoteConfiguration ToVersion3() => Version >= 6 ? this : WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = Math.Max(Version, 3) };
     public RemoteConfiguration ToVersion4() => Version >= 6 ? this : WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = Math.Max(Version, 4) };
     public RemoteConfiguration ToVersion5() => Version >= 6
-        ? throw new InvalidDataException("Version 6 cannot be downgraded. Explicitly convert to a verified direct connection first.")
+        ? throw new InvalidDataException("Modern configurations cannot be downgraded. Keep the current schema when changing connection modes.")
         : WithDashboardUrl(BaseUri.AbsoluteUri) with { Version = 5 };
 
-    public RemoteConfiguration WithDiscovery(DiscoveryCredentialReference credential, Guid discoveryId,
-        string signingPublicKey, long credentialRevision)
+    public RemoteConfiguration WithDnsTxtDiscovery(string recordName)
     {
-        var config = this with { Version = 6, Host = "", Port = Protocol.DefaultPort, DashboardBaseUrl = null,
-            ConnectionMode = RemoteConnectionMode.PrivateAzureDiscovery, Discovery = credential,
-            DiscoveryId = discoveryId, DiscoverySigningPublicKey = signingPublicKey,
-            DiscoveryCredentialRevision = credentialRevision };
+        var config = this with { Version = 7, Host = "", Port = Protocol.DefaultPort, DashboardBaseUrl = null,
+            ConnectionMode = RemoteConnectionMode.DnsTxtDiscovery,
+            DnsRecordName = DiscoveryProtocol.NormalizeRecordName(recordName) };
         config.Validate();
         return config;
     }
@@ -113,11 +106,11 @@ public sealed record RemoteConfiguration
 
     public void Validate()
     {
-        if (Version is not (1 or 2 or 3 or 4 or 5 or 6) || MachineId == Guid.Empty)
+        if (Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7) || MachineId == Guid.Empty)
             throw new InvalidDataException("Invalid configuration version or identity.");
-        if (!Enum.IsDefined(ConnectionMode) || (Version < 6 && (ConnectionMode != RemoteConnectionMode.Direct || Discovery is not null ||
-            DiscoveryId != Guid.Empty || DiscoverySigningPublicKey is not null || DiscoveryCredentialRevision != 0)))
-            throw new InvalidDataException("Connection modes require configuration version 6.");
+        if (!Enum.IsDefined(ConnectionMode) || (IsDiscovery && Version != 7) ||
+            (!IsDiscovery && DnsRecordName is not null))
+            throw new InvalidDataException("DNS TXT connections require configuration version 7; direct connections cannot contain DNS fields.");
         if (Version == 1 && (DashboardBaseUrl is not null || Port is < 1024 or > 65535 ||
             string.IsNullOrWhiteSpace(Host) || Host != Host.Trim() ||
             Host.IndexOfAny(['/', '\\', '@', '?', '#']) >= 0 ||
@@ -128,27 +121,13 @@ public sealed record RemoteConfiguration
         {
             if (Host != "" || Port != Protocol.DefaultPort)
                 throw new InvalidDataException("Modern configuration does not accept legacy Host or Port fields.");
-            if (ConnectionMode == RemoteConnectionMode.PrivateAzureDiscovery)
+            if (IsDiscovery)
             {
-                if (DashboardBaseUrl is not null || Discovery is null)
-                    throw new InvalidDataException("Discovery requires a protected credential reference and no direct URL.");
-                if (Discovery.Id is null || Discovery.Id.Length != 32 || !Guid.TryParseExact(Discovery.Id, "N", out var slot) || slot == Guid.Empty || Discovery.Id != slot.ToString("N") ||
-                    Discovery.CiphertextHash is null || Discovery.CiphertextHash.Length != 64 ||
-                    Discovery.CiphertextHash.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f')) || DiscoveryId == Guid.Empty ||
-                    DiscoveryCredentialRevision <= 0 || string.IsNullOrEmpty(DiscoverySigningPublicKey) || DiscoverySigningPublicKey.Length > 256)
-                    throw new InvalidDataException("Invalid protected discovery reference or trust metadata.");
-                try
-                {
-                    using var key = System.Security.Cryptography.ECDsa.Create();
-                    var keyBytes = Convert.FromBase64String(DiscoverySigningPublicKey);
-                    key.ImportSubjectPublicKeyInfo(keyBytes, out var consumed);
-                    if (consumed != keyBytes.Length || key.KeySize != 256 || key.ExportParameters(false).Curve.Oid.Value != "1.2.840.10045.3.1.7")
-                        throw new InvalidDataException("Invalid discovery verification key.");
-                }
-                catch (Exception ex) when (ex is FormatException or System.Security.Cryptography.CryptographicException)
-                { throw new InvalidDataException("Invalid discovery verification key."); }
+                if (DashboardBaseUrl is not null || DnsRecordName is null ||
+                    DiscoveryProtocol.NormalizeRecordName(DnsRecordName) != DnsRecordName)
+                    throw new InvalidDataException("DNS discovery requires a canonical DNS record name and no direct URL.");
             }
-            else if (Discovery is not null || DiscoveryId != Guid.Empty || DiscoverySigningPublicKey is not null || DiscoveryCredentialRevision != 0 || DashboardBaseUrl is null ||
+            else if (DashboardBaseUrl is null ||
                 ParseDashboardUrl(DashboardBaseUrl).AbsoluteUri != DashboardBaseUrl)
                 throw new InvalidDataException("Direct connections require only a canonical DashboardBaseUrl.");
         }
@@ -200,21 +179,29 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
         {
             if (field.Name.ToLowerInvariant() is not ("version" or "host" or "port" or "dashboardbaseurl" or
                 "machineid" or "machinename" or "clientversion" or "relaypath" or "heartbeatintervalseconds" or "integrations" or
-                "detailedreportingenabled" or "connectionmode" or "discovery" or "discoveryid" or "discoverysigningpublickey" or "discoverycredentialrevision"))
+                "detailedreportingenabled" or "connectionmode" or "dnsrecordname" or "discovery" or "discoveryid" or "discoverysigningpublickey" or "discoverycredentialrevision"))
                 throw new InvalidDataException("Unknown configuration field.");
             if (!fields.TryAdd(field.Name, field.Value))
                 throw new InvalidDataException("Duplicate configuration fields are not allowed.");
         }
         var version = fields.TryGetValue("version", out var v) ? v.GetInt32() : 1;
-        if (version is not (1 or 2 or 3 or 4 or 5 or 6) ||
+        if (fields.TryGetValue("connectionMode", out var legacyMode) &&
+            legacyMode.ValueKind == JsonValueKind.String && legacyMode.GetString() == "privateAzureDiscovery")
+            throw new InvalidDataException("Azure Blob private discovery is no longer supported. Select Direct URL or opt in to DNS TXT discovery in Configurator. Saved credentials and Azure resources have not been changed.");
+        if (fields.Keys.Any(key => key.Equals("discovery", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("discoveryId", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("discoverySigningPublicKey", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("discoveryCredentialRevision", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("Unsupported Azure discovery fields. Select Direct URL or DNS TXT discovery in Configurator; saved credentials are untouched.");
+        if (version is not (1 or 2 or 3 or 4 or 5 or 6 or 7) ||
             (version == 1 && fields.ContainsKey("dashboardBaseUrl")) ||
             (version >= 2 && (fields.ContainsKey("host") || fields.ContainsKey("port"))) ||
             (version < 3 && fields.ContainsKey("heartbeatIntervalSeconds")) ||
             (version < 4 && fields.ContainsKey("integrations")) ||
             (version < 5 && fields.ContainsKey("detailedReportingEnabled")) ||
-            (version < 6 && (fields.ContainsKey("connectionMode") || fields.ContainsKey("discovery") ||
-                fields.ContainsKey("discoveryId") || fields.ContainsKey("discoverySigningPublicKey") || fields.ContainsKey("discoveryCredentialRevision"))) ||
-            (version == 6 && !fields.ContainsKey("connectionMode")))
+            (version < 6 && fields.ContainsKey("connectionMode")) ||
+            (version < 7 && fields.ContainsKey("dnsRecordName")) ||
+            (version >= 6 && !fields.ContainsKey("connectionMode")))
             throw new InvalidDataException("Unsupported or mixed configuration schema.");
         if (fields.TryGetValue("detailedReportingEnabled", out var preference) &&
             preference.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
@@ -228,14 +215,10 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
             ConnectionMode = fields.TryGetValue("connectionMode", out var mode) ? mode.GetString() switch
             {
                 "direct" => RemoteConnectionMode.Direct,
-                "privateAzureDiscovery" => RemoteConnectionMode.PrivateAzureDiscovery,
+                "dnsTxtDiscovery" => RemoteConnectionMode.DnsTxtDiscovery,
                 _ => throw new InvalidDataException("Unsupported connection mode.")
             } : RemoteConnectionMode.Direct,
-            Discovery = fields.TryGetValue("discovery", out var discovery)
-                ? ReadDiscoveryReference(discovery) : null,
-            DiscoveryId = fields.TryGetValue("discoveryId", out var discoveryId) ? discoveryId.GetGuid() : Guid.Empty,
-            DiscoverySigningPublicKey = fields.TryGetValue("discoverySigningPublicKey", out var publicKey) ? publicKey.GetString() : null,
-            DiscoveryCredentialRevision = fields.TryGetValue("discoveryCredentialRevision", out var credentialRevision) ? credentialRevision.GetInt64() : 0,
+            DnsRecordName = fields.TryGetValue("dnsRecordName", out var recordName) ? recordName.GetString() : null,
             MachineId = fields.TryGetValue("machineId", out var id) ? id.GetGuid() : Guid.Empty,
             MachineName = fields.TryGetValue("machineName", out var name) ? name.GetString()! : Environment.MachineName,
             ClientVersion = fields.TryGetValue("clientVersion", out var client) ? client.GetString()! : "unknown",
@@ -245,26 +228,11 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
             Integrations = fields.TryGetValue("integrations", out var integrations)
                 ? integrations.Deserialize<IntegrationTarget[]>(options) ?? throw new InvalidDataException("Missing integrations.") : []
         };
-        if (version == 6 && (config.IsDiscovery
-            ? fields.ContainsKey("dashboardBaseUrl") || !fields.ContainsKey("discovery") || !fields.ContainsKey("discoveryId") ||
-                !fields.ContainsKey("discoverySigningPublicKey") || !fields.ContainsKey("discoveryCredentialRevision")
-            : fields.ContainsKey("discovery") || fields.ContainsKey("discoveryId") || fields.ContainsKey("discoverySigningPublicKey") || fields.ContainsKey("discoveryCredentialRevision")))
+        if (config.IsDiscovery ? fields.ContainsKey("dashboardBaseUrl") || !fields.ContainsKey("dnsRecordName")
+            : fields.ContainsKey("dnsRecordName"))
             throw new InvalidDataException("Mixed direct and discovery configuration fields.");
         config.Validate();
         return config;
-    }
-
-    private static DiscoveryCredentialReference ReadDiscoveryReference(JsonElement element)
-    {
-        if (element.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Invalid protected discovery reference.");
-        var fields = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
-        foreach (var field in element.EnumerateObject())
-            if (field.Name.ToLowerInvariant() is not ("id" or "ciphertexthash") || !fields.TryAdd(field.Name, field.Value))
-                throw new InvalidDataException("Invalid or duplicate protected discovery reference fields.");
-        if (!fields.TryGetValue("id", out var id) || id.ValueKind != JsonValueKind.String ||
-            !fields.TryGetValue("ciphertextHash", out var hash) || hash.ValueKind != JsonValueKind.String)
-            throw new InvalidDataException("Missing protected discovery reference fields.");
-        return new(id.GetString()!, hash.GetString()!);
     }
 
     public override void Write(Utf8JsonWriter writer, RemoteConfiguration value, JsonSerializerOptions options)
@@ -280,15 +248,8 @@ public sealed class RemoteConfigurationConverter : JsonConverter<RemoteConfigura
         else if (value.ConnectionMode == RemoteConnectionMode.Direct) writer.WriteString("dashboardBaseUrl", value.DashboardBaseUrl);
         if (value.Version >= 6)
         {
-            writer.WriteString("connectionMode", value.ConnectionMode == RemoteConnectionMode.Direct ? "direct" : "privateAzureDiscovery");
-            if (value.Discovery is not null)
-            {
-                writer.WritePropertyName("discovery");
-                JsonSerializer.Serialize(writer, value.Discovery, options);
-                writer.WriteString("discoveryId", value.DiscoveryId);
-                writer.WriteString("discoverySigningPublicKey", value.DiscoverySigningPublicKey);
-                writer.WriteNumber("discoveryCredentialRevision", value.DiscoveryCredentialRevision);
-            }
+            writer.WriteString("connectionMode", value.IsDiscovery ? "dnsTxtDiscovery" : "direct");
+            if (value.IsDiscovery) writer.WriteString("dnsRecordName", value.DnsRecordName);
         }
         writer.WriteString("machineId", value.MachineId);
         writer.WriteString("machineName", value.MachineName);

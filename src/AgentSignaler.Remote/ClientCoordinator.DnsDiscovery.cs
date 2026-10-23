@@ -17,13 +17,30 @@ public sealed partial class ClientCoordinator
         get
         {
             lock (_sync) return !_configuration.IsDiscovery ? "Direct URL" :
-                _endpointSnapshot?.IsValid(_clock) == true ? _discoveryStatus == "verified" ? "Discovery: verified" :
-                    "Discovery: cached; storage unavailable" : "Discovery: unavailable";
+                _endpointSnapshot?.IsValid(_clock) == true ? _discoveryStatus == "resolved" ? "DNS: resolved (public)" :
+                    "DNS: cached within TTL; resolver unavailable" : "DNS: unavailable";
+        }
+
+    }
+
+    private ClientIpcResponse DiscoveryHealthStatus()
+    {
+        lock (_sync)
+        {
+            var code = _stopping || _worker is null ? "not-running" :
+                !_configuration.IsDiscovery ? "direct" :
+                _reloading || _discoveryStatus == "not-resolved" ? "pending" :
+                _endpointSnapshot?.IsValid(_clock) == true
+                    ? _discoveryStatus == "resolved" ? "resolved" : "cached"
+                    : _discoveryStatus == "endpoint-cache-expired" ? "expired" : "unavailable";
+            // Command-specific bounded State reuses the existing response schema.
+            // No endpoint, record name or resolver payload crosses IPC.
+            return new(true, code);
         }
     }
 
     private IDiscoveryEndpointResolver CreateDiscoveryResolver(RemoteConfiguration configuration)
-        => DiscoveryEndpointResolver.FromConfiguration(configuration, _configPath, _clock);
+        => DnsTxtEndpointResolver.FromConfiguration(configuration, _clock);
 
     private void StartDiscovery()
     {
@@ -58,7 +75,7 @@ public sealed partial class ClientCoordinator
             resolver = _discoveryResolverFactory(configuration);
             lock (_sync)
             {
-                if (!ReferenceEquals(run, _discoveryRun) || _stopping) return;
+                if (!ReferenceEquals(run, _discoveryRun) || _stopping || run.IsCancellationRequested) return;
                 _discoveryResolver = resolver;
             }
             var failureTriggered = false;
@@ -70,12 +87,12 @@ public sealed partial class ClientCoordinator
                 await CommitDiscoveryEndpointAsync(result.Snapshot, revision, run);
                 lock (_sync)
                 {
-                    if (ReferenceEquals(run, _discoveryRun) && _revision == revision && !_stopping)
+                    if (ReferenceEquals(run, _discoveryRun) && _revision == revision && !_stopping && !run.IsCancellationRequested)
                     {
                         _discoveryStatus = result.Status;
-                        _discoveryError = result.Snapshot is null || result.Status != "verified"
-                            ? DiscoveryEndpointResolver.DescribeStatus(result.Status) : _endpointSnapshot is null
-                            ? "Discovery is verified; previous transport work is still draining. Reporting remains suspended." : null;
+                        _discoveryError = result.Snapshot is null || result.Status != "resolved"
+                            ? DnsTxtEndpointResolver.DescribeStatus(result.Status) : _endpointSnapshot is null
+                            ? "DNS is resolved; previous transport work is still draining. Reporting remains suspended." : null;
                     }
                 }
                 var delay = result.NextAttemptUtc - _clock.GetUtcNow();
@@ -98,8 +115,8 @@ public sealed partial class ClientCoordinator
                 if (ReferenceEquals(run, _discoveryRun) && !_stopping)
                 {
                     InvalidateDiscoveryEndpoint();
-                    _discoveryStatus = "credential-unavailable";
-                    _discoveryError = "Discovery credentials or protected revision state are unavailable. Repair the saved connection in Configurator.";
+                    _discoveryStatus = "dns-unavailable";
+                    _discoveryError = DnsTxtEndpointResolver.DescribeStatus(_discoveryStatus);
                     _log.Write("discovery-state-unavailable");
                 }
             }
@@ -137,7 +154,7 @@ public sealed partial class ClientCoordinator
                 if (_stopping || !ReferenceEquals(snapshot, _endpointSnapshot) || snapshot.IsValid(_clock)) return;
                 InvalidateDiscoveryEndpoint();
                 _discoveryStatus = "endpoint-cache-expired";
-                _discoveryError = DiscoveryEndpointResolver.DescribeStatus(_discoveryStatus);
+                _discoveryError = DnsTxtEndpointResolver.DescribeStatus(_discoveryStatus);
                 RequestDiscoveryRefresh();
             }
         }, null, due > TimeSpan.Zero ? due : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
@@ -148,7 +165,7 @@ public sealed partial class ClientCoordinator
     {
         lock (_sync)
         {
-            if (_stopping || _reloading || _revision != revision || !ReferenceEquals(run, _discoveryRun)) return;
+            if (_stopping || _reloading || run.IsCancellationRequested || _revision != revision || !ReferenceEquals(run, _discoveryRun)) return;
             if (endpoint is null || !endpoint.IsValid(_clock)) { InvalidateDiscoveryEndpoint(); return; }
             if (_endpointSnapshot is { } current && current.BaseUri == endpoint.BaseUri &&
                 current.EndpointRevision == endpoint.EndpointRevision)
@@ -173,7 +190,7 @@ public sealed partial class ClientCoordinator
             await DrainPresenceEndpointAsync(linked.Token);
             lock (_sync)
             {
-                if (_stopping || _reloading || _revision != revision || !ReferenceEquals(run, _discoveryRun) ||
+                if (_stopping || _reloading || run.IsCancellationRequested || _revision != revision || !ReferenceEquals(run, _discoveryRun) ||
                     !endpoint.IsValid(_clock)) return;
                 var next = _transportFactory(_configuration, endpoint);
                 _transport.Dispose();
@@ -268,7 +285,7 @@ public sealed partial class ClientCoordinator
             lock (_sync)
             {
                 InvalidateDiscoveryEndpoint();
-                _terminalReason = "Client stopped because the saved connection could not be applied. Repair protected credentials or local generation state in Configurator and restart Client.";
+                _terminalReason = "Client stopped because the saved connection could not be applied. Repair the connection or local generation state in Configurator and restart Client.";
                 _log.Write("discovery-reload-failed");
                 _ = StopAsync();
                 return Response(false, _terminalReason);
@@ -294,7 +311,7 @@ public sealed partial class ClientCoordinator
             }
         }
         catch (OperationCanceledException) when (budget.IsCancellationRequested) { }
-        lock (_sync) return Response(false, "Settings saved; verified discovery and Dashboard acknowledgement are pending.");
+        lock (_sync) return Response(false, "Settings saved; DNS resolution and Dashboard acknowledgement are pending.");
     }
 
     private sealed class UnavailablePresenceTransport : IPresenceTransport

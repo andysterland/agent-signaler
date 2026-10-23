@@ -1,7 +1,5 @@
 using System.Text.Json;
-using System.Security.Cryptography;
 using AgentSignaler.Contracts;
-using AgentSignaler.Discovery;
 using AgentSignaler.Remote;
 using Xunit;
 
@@ -31,6 +29,26 @@ public sealed class ClientActivationTests : IDisposable
         Assert.False(Directory.Exists(root));
     }
 
+    [Theory]
+    [InlineData("connected", "connected")]
+    [InlineData("retrying", "retrying")]
+    [InlineData("discovery-unavailable", "discovery-unavailable")]
+    [InlineData("reloading", "reloading")]
+    [InlineData("stopping", "stopping")]
+    [InlineData("unconfigured", "unconfigured")]
+    [InlineData("unexpected-private-payload", "unknown")]
+    public async Task RuntimeStateExposesBoundedObservedReportingStateSeparatelyFromSetupTests(string reported, string expected)
+    {
+        var platform = new FakePlatform { Owned = true, Response = new(true, reported, Error: "Application-defined warning.") };
+        var state = await new ClientIntegrationRuntime(platform).QueryAsync(ConfigPath, default);
+        Assert.Equal(expected, state.State);
+        Assert.Equal("Application-defined warning.", state.Message);
+        Assert.True(state.Running);
+        Assert.Null(state.EffectiveRevision);
+        Assert.False(Directory.Exists(root));
+        Assert.Equal(0, platform.Launches);
+    }
+
     [Fact]
     public async Task UnresponsiveOwnedDirectoryIsNotMistakenForStoppedClient()
     {
@@ -39,12 +57,45 @@ public sealed class ClientActivationTests : IDisposable
         Assert.Equal(0, platform.Launches);
     }
 
-    [Fact]
-    public async Task DiscoveryReloadWaitsForBothConfigurationAndCredentialRevisionAcknowledgement()
+    [Theory]
+    [InlineData("direct", "direct")]
+    [InlineData("not-running", "not-running")]
+    [InlineData("pending", "pending")]
+    [InlineData("resolved", "resolved")]
+    [InlineData("cached", "cached")]
+    [InlineData("unavailable", "unavailable")]
+    [InlineData("expired", "expired")]
+    [InlineData("unexpected-private-payload", "unknown")]
+    public async Task DiscoveryStatusQueryExposesOnlyBoundedCodesAndDoesNotReadConfiguration(string reported, string expected)
     {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var config = new RemoteConfiguration { MachineId = Guid.NewGuid() }.WithDiscovery(
-            new(Guid.NewGuid().ToString("N"), new string('a', 64)), Guid.NewGuid(), DiscoveryCodec.ExportPublicKey(key), 7);
+        var platform = new FakePlatform { Owned = true };
+        platform.Reply = request => new(true, request.Command == "discovery-status" ? reported : "connected");
+        var state = await new ClientIntegrationRuntime(platform).QueryDiscoveryStatusAsync(ConfigPath, default);
+        Assert.Equal(expected, state.DiscoveryStatus);
+        Assert.Equal("connected", state.State);
+        Assert.Equal(new[] { "status", "discovery-status" }, platform.Commands.Select(request => request.Command));
+        Assert.False(Directory.Exists(root));
+        Assert.Equal(0, platform.Launches);
+    }
+
+    [Fact]
+    public async Task DiscoveryStatusQueryIsCompatibleWithOlderClientAndStoppedOwner()
+    {
+        var platform = new FakePlatform { Owned = true };
+        platform.Reply = request => request.Command == "discovery-status" ? new(false, "invalid") : new(true, "connected");
+        var runtime = new ClientIntegrationRuntime(platform);
+        Assert.Equal("unknown", (await runtime.QueryDiscoveryStatusAsync(ConfigPath, default)).DiscoveryStatus);
+        platform.Commands.Clear();
+        platform.Owned = false;
+        Assert.Equal("not-running", (await runtime.QueryDiscoveryStatusAsync(ConfigPath, default)).DiscoveryStatus);
+        Assert.Empty(platform.Commands);
+        Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
+    public async Task DnsReloadWaitsForConfigurationAcknowledgementWithoutCredentialRevision()
+    {
+        var config = new RemoteConfiguration { MachineId = Guid.NewGuid() }.WithDnsTxtDiscovery("signaler.cablesorter.io");
         AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(config, Protocol.Json));
         var revision = ClientConfigurationRevision.Read(ConfigPath);
         var statusReads = 0;
@@ -52,12 +103,11 @@ public sealed class ClientActivationTests : IDisposable
         platform.Reply = request =>
         {
             if (request.Command == "status") statusReads++;
-            return new(true, "connected", revision, 300)
-            { EffectiveCredentialRevision = statusReads >= 3 ? 7 : 6 };
+            return new(true, "connected", statusReads >= 3 ? revision : null, 300);
         };
         var state = await new ClientIntegrationRuntime(platform).ReloadAsync(ConfigPath, default);
         Assert.Equal(revision, state.EffectiveRevision);
-        Assert.Equal(7, state.EffectiveCredentialRevision);
+        Assert.Null(state.EffectiveCredentialRevision);
         Assert.Equal(3, statusReads);
         Assert.Equal(0, platform.Launches);
         Assert.DoesNotContain(platform.Commands, request => request.Command is not ("status" or "reload"));

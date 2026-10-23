@@ -20,7 +20,7 @@ public static class DashboardConnection
         catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
         {
             throw new InvalidOperationException(
-                $"Dashboard capability check timed out for {config.BaseUri}. No settings or hooks were changed. " +
+                $"Dashboard capability check timed out for {(config.IsDiscovery ? "DNS TXT connection" : config.BaseUri.ToString())}. No settings or hooks were changed. " +
                 "Use Connection > Test connection and check that the dashboard is running and sharing at this URL.", ex);
         }
     }

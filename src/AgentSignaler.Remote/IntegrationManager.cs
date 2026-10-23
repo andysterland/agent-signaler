@@ -60,7 +60,7 @@ public sealed partial class IntegrationManager(IIntegrationTaskScheduler schedul
         string relayPath)
     {
         if (config.Version >= 4)
-            throw new InvalidDataException("Use a multi-target preview for version 4 or newer; legacy setup cannot discard selected integrations or protected discovery credentials.");
+            throw new InvalidDataException("Use a multi-target preview for version 4 or newer; legacy setup cannot discard selected integrations or connection preferences.");
         config.Validate();
         foreach (var path in new[] { configPath, copilotHome, relayPath })
             if (!Path.IsPathFullyQualified(path)) throw new InvalidDataException("All integration paths must be absolute.");

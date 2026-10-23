@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Text.Json;
 using AgentSignaler.Contracts;
 using AgentSignaler.Remote;
-using AgentSignaler.Discovery;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -20,12 +19,6 @@ public sealed partial class MainWindow : Window
     private bool closed;
     private bool detailsSuspended;
     private bool startupPreferenceLoaded;
-    private DiscoveryConnectionPackage? importedPackage;
-    private DiscoveryCredentialReference? selectedCredential;
-    private DiscoveryCredentialUpdate? credentialUpdate;
-    private Guid selectedDiscoveryId;
-    private string? selectedSigningPublicKey;
-    private long selectedCredentialRevision;
     private DateTimeOffset? lastDiscoveryTestUtc;
     private readonly CancellationTokenSource windowLifetime = new();
     private CancellationTokenSource? connectionTest;
@@ -87,11 +80,8 @@ public sealed partial class MainWindow : Window
             {
                 var config = RemoteConfiguration.Load(ConfigPath);
                 if (config.MachineId != machineId) throw new InvalidDataException("Configuration and persistent identity disagree.");
-                ConnectionModeBox.SelectedIndex = config.ConnectionMode == RemoteConnectionMode.PrivateAzureDiscovery ? 1 : 0;
-                selectedCredential = config.Discovery;
-                selectedDiscoveryId = config.DiscoveryId;
-                selectedSigningPublicKey = config.DiscoverySigningPublicKey;
-                selectedCredentialRevision = config.DiscoveryCredentialRevision;
+                ConnectionModeBox.SelectedIndex = config.IsDiscovery ? 1 : 0;
+                if (config.IsDiscovery) DnsRecordBox.Text = config.DnsRecordName!;
                 if (config.ConnectionMode == RemoteConnectionMode.Direct)
                     UrlBox.Text = config.BaseUri.GetLeftPart(UriPartial.Authority);
                 UpdateDiscoveryDescription();
@@ -103,17 +93,24 @@ public sealed partial class MainWindow : Window
             {
                 if (!File.Exists(ConfigPath))
                 {
-                    ConnectionModeBox.SelectedIndex = ConfiguratorSettings.LoadMode(SettingsPath) == RemoteConnectionMode.PrivateAzureDiscovery ? 1 : 0;
+                    ConnectionModeBox.SelectedIndex = ConfiguratorSettings.LoadMode(SettingsPath) == RemoteConnectionMode.DnsTxtDiscovery ? 1 : 0;
+                    DnsRecordBox.Text = ConfiguratorSettings.LoadDnsRecordName(SettingsPath);
+                }
+                if (!File.Exists(ConfigPath) || ConnectionModeBox.SelectedIndex == 1)
+                {
                     var savedUrl = ConfiguratorSettings.LoadUrl(SettingsPath, machineId);
                     if (savedUrl is not null) UrlBox.Text = savedUrl;
                 }
             }
             catch (Exception ex) when (RemoteFailure.IsExpected(ex))
             {
-                ShowError(ex, "Saved dashboard URL could not be loaded");
+                ShowError(ex, "Saved connection preferences could not be loaded");
             }
             await RefreshAsync();
-            if (HookVerification.HasPendingCleanup(ConfigPath))
+            if (!File.Exists(ConfigPath) && ConfiguratorSettings.HasRemovedMode(SettingsPath))
+                ShowStatus("Saved private-sharing UI preferences are discontinued. Direct URL is selected instead; DNS requires explicit opt-in. Saved credentials and Azure resources were not read or changed. Review and explicitly apply a supported connection before reporting.",
+                    InfoBarSeverity.Warning, "Connection preferences need review");
+            else if (HookVerification.HasPendingCleanup(ConfigPath))
                 ShowStatus("An interrupted diagnostic has pending cleanup. Use Clean up legacy diagnostic hooks on Review & maintenance before applying settings.",
                     InfoBarSeverity.Warning, "Diagnostic cleanup pending");
             else if (File.Exists(IntegrationRecoveryPath))
@@ -147,13 +144,8 @@ public sealed partial class MainWindow : Window
         if (!preserveSelection)
         {
             ShareDetailsSwitch.IsOn = config?.DetailedReportingEnabled ?? true;
-            importedPackage = null;
-            credentialUpdate = null;
-            selectedCredential = config?.Discovery;
-            selectedDiscoveryId = config?.DiscoveryId ?? Guid.Empty;
-            selectedSigningPublicKey = config?.DiscoverySigningPublicKey;
-            selectedCredentialRevision = config?.DiscoveryCredentialRevision ?? 0;
             ConnectionModeBox.SelectedIndex = config?.IsDiscovery == true ? 1 : 0;
+            if (config?.IsDiscovery == true) DnsRecordBox.Text = config.DnsRecordName!;
             if (config is { IsDiscovery: false }) UrlBox.Text = config.BaseUri.GetLeftPart(UriPartial.Authority);
             UpdateDiscoveryDescription();
         }
@@ -253,9 +245,8 @@ public sealed partial class MainWindow : Window
         if (!startupPreferenceLoaded)
             throw new InvalidOperationException("The startup preference is unavailable. Refresh and resolve the startup error before applying settings.");
         var config = ReadConfiguration();
-        return MultiTargetIntegrationManager.PreviewWithCredential(config, ConfigPath, SelectedTargets(), config.RelayPath!,
-            startClientAtSignIn: StartClientAtSignInCheckBox.IsChecked == true,
-            config.IsDiscovery ? credentialUpdate : null);
+        return MultiTargetIntegrationManager.Preview(config, ConfigPath, SelectedTargets(), config.RelayPath!,
+            startClientAtSignIn: StartClientAtSignInCheckBox.IsChecked == true);
     }
 
     private void LoadStartupPreference()
@@ -274,7 +265,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        var state = await runtime.QueryAsync(ConfigPath, timeout.Token);
+        var state = await runtime.QueryDiscoveryStatusAsync(ConfigPath, timeout.Token);
         var saved = RemoteConfiguration.Load(ConfigPath);
         DetailedReportingText.Text = detailsSuspended ? "Detailed reporting suspended locally; apply successfully to reconcile the saved preference." :
             saved.Version < 5 ? "Saved legacy configuration: status only. Apply settings explicitly to migrate to v5." :
@@ -292,10 +283,11 @@ public sealed partial class MainWindow : Window
         RuntimeText.Text = $"Saved heartbeat: {saved.HeartbeatIntervalSeconds / 60} minutes. " +
             (state.Running ? $"Client running; effective heartbeat: {(state.HeartbeatIntervalSeconds is { } seconds ? $"{seconds / 60} minutes" : "unknown")}; " +
                 $"effective revision: {state.EffectiveRevision ?? "unknown"}. " +
-                (revision == state.EffectiveRevision && (!saved.IsDiscovery || state.EffectiveCredentialRevision == saved.DiscoveryCredentialRevision)
-                    ? "Saved settings and credential revision are effective." : "Saved settings or credential revision are not yet effective.") :
+                (revision == state.EffectiveRevision
+                    ? "Saved settings revision is effective." : "Saved settings revision is not yet effective.") :
                 "Client not running; saved settings are not active.") +
-            startupStatus;
+            startupStatus +
+            (saved.IsDiscovery ? "\n" + ConfiguratorConnectionPresentation.ClientDnsHealth(state, revision) : "");
     }
 
     private async void StartClient_Click(object sender, RoutedEventArgs e)
@@ -310,8 +302,7 @@ public sealed partial class MainWindow : Window
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(config.Version >= 6 ? 15 : 7));
             var state = await runtime.StartAsync(Path.Combine(Path.GetDirectoryName(relayPath)!, "AgentSignaler.Client.exe"),
                 ConfigPath, timeout.Token);
-            var effective = state.Running && state.EffectiveRevision == ClientConfigurationRevision.Read(ConfigPath) &&
-                (!config.IsDiscovery || state.EffectiveCredentialRevision == config.DiscoveryCredentialRevision);
+            var effective = state.Running && state.EffectiveRevision == ClientConfigurationRevision.Read(ConfigPath);
             ShowStatus(effective ? "Client started with the saved settings. Reporting continues after Configurator closes." :
                 state.Running ? "Client is running, but saved settings are not yet acknowledged. " + state.Message :
                 "Client did not start. Repair the installation and retry. " + state.Message,
@@ -369,16 +360,7 @@ public sealed partial class MainWindow : Window
             if (!await ConfirmAsync("Apply settings and selected hook integrations?", approved.Preview, "Apply settings", applyToken)) return false;
             var result = await multiIntegration.ApplyAsync(approved, applyToken);
             settingsCommitted = result.SettingsCommitted;
-            if (settingsCommitted)
-            {
-                credentialUpdate = null;
-                importedPackage = null;
-                selectedCredential = approved.Config.Discovery;
-                selectedDiscoveryId = approved.Config.DiscoveryId;
-                selectedSigningPublicKey = approved.Config.DiscoverySigningPublicKey;
-                selectedCredentialRevision = approved.Config.DiscoveryCredentialRevision;
-                UpdateDiscoveryDescription();
-            }
+            if (settingsCommitted) UpdateDiscoveryDescription();
             if (result.RuntimeApplied) detailsSuspended = false;
             InvalidatePreview();
             if (RememberSuccessfulUrl(approved.Config, result.RuntimeApplied ? "Installation/update" : "Saving integration settings"))
@@ -409,17 +391,18 @@ public sealed partial class MainWindow : Window
         try
         {
             var config = ReadConfiguration();
-            using var timeout = new CancellationTokenSource(DashboardConnection.TestTimeout);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(windowLifetime.Token);
+            timeout.CancelAfter(DashboardConnection.TestTimeout);
             connectionTest = timeout;
             UpdateActionStates();
-            await DiscoveryConnectionSetup.TestAsync(config, ConfigPath, config.IsDiscovery ? importedPackage : null,
-                cancellationToken: timeout.Token);
+            await DiscoveryConnectionSetup.TestAsync(config, timeout.Token);
             if (config.IsDiscovery)
             {
                 lastDiscoveryTestUtc = DateTimeOffset.UtcNow;
                 UpdateDiscoveryDescription();
-                ShowStatus("Private reader access, publisher signature and Dashboard health verified. This test was read-only: no settings, credential files, hooks or Azure resources changed.",
-                    InfoBarSeverity.Success, "Discovery and connection verified");
+                if (RememberSuccessfulUrl(config, "Connection test"))
+                    ShowStatus("DNS TXT lookup succeeded and the resolved Dashboard passed its protocol health check. DNS is public and does not authenticate the receiver. Only the hostname was remembered; active settings and hooks were not changed.",
+                        InfoBarSeverity.Success, "DNS lookup and Dashboard health succeeded");
             }
             else if (RememberSuccessfulUrl(config, "Connection test"))
                 ShowStatus("Dashboard is reachable and supports this protocol. Direct URL remembered; active integration settings and hooks were not changed.",
@@ -428,7 +411,8 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) when (RemoteFailure.IsExpected(ex))
         {
             ShowError(ex, ex is OperationCanceledException
-                ? "Connection test cancelled or timed out" : "Connection test failed",
+                ? "Connection test cancelled or timed out" : ConnectionModeBox.SelectedIndex == 1
+                    ? "DNS lookup or resolved Dashboard health check failed" : "Connection test failed",
                 ConnectionTab, TestButton);
         }
         finally
@@ -484,9 +468,9 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex) when (RemoteFailure.IsExpected(ex))
         {
-            ShowStatus($"{operation} succeeded, but its dashboard URL could not be saved. " +
+            ShowStatus($"{operation} succeeded, but its connection preference could not be saved. " +
                 $"Check file access to {SettingsPath} and retry.",
-                InfoBarSeverity.Error, "Dashboard URL not saved");
+                InfoBarSeverity.Error, "Connection preference not saved");
             return false;
         }
     }
@@ -572,8 +556,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> VerifyDelivery(RemoteConfiguration config, CancellationToken token)
     {
-        await DiscoveryConnectionSetup.TestAsync(config, ConfigPath, config.IsDiscovery ? importedPackage : null,
-            cancellationToken: token);
+        await DiscoveryConnectionSetup.TestAsync(config, token);
         return true;
     }
 
@@ -585,9 +568,8 @@ public sealed partial class MainWindow : Window
         var relayPath = ValidateInput(() => ConfiguratorSettings.RelayLocation(RelayPathBox.Text), HooksTab, RelayPathBox);
         if (ConnectionModeBox.SelectedIndex == 1)
         {
-            if (selectedCredential is null)
-                throw new InputValidationException(new InvalidDataException("Import a connection package before applying private discovery."), ConnectionTab, ConnectionPackageBox);
-            config = config.WithDiscovery(selectedCredential, selectedDiscoveryId, selectedSigningPublicKey!, selectedCredentialRevision);
+            var name = ValidateInput(() => ConfiguratorSettings.ValidateDnsRecordName(DnsRecordBox.Text), ConnectionTab, DnsRecordBox);
+            config = config.WithDnsTxtDiscovery(name);
         }
         else
         {
@@ -604,64 +586,27 @@ public sealed partial class MainWindow : Window
     private void HeartbeatChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => InvalidatePreview();
     private void ConnectionModeChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (UrlBox is null || PrivateDiscoveryPanel is null) return;
+        if (UrlBox is null || DnsDiscoveryPanel is null) return;
         var discovery = ConnectionModeBox.SelectedIndex == 1;
         UrlBox.Visibility = discovery ? Visibility.Collapsed : Visibility.Visible;
-        PrivateDiscoveryPanel.Visibility = discovery ? Visibility.Visible : Visibility.Collapsed;
+        DnsDiscoveryPanel.Visibility = discovery ? Visibility.Visible : Visibility.Collapsed;
         if (TestButton is not null) TestButton.Content = discovery ? "Test discovery and connection" : "Test connection";
         InvalidatePreview();
     }
 
     private void UpdateDiscoveryDescription()
     {
-        DiscoveryConnectionText.Text = selectedCredential is null ? "No saved credential selected. Import a package or select direct URL mode." :
-            $"Discovery identity: {selectedDiscoveryId:D}. Credential revision: {selectedCredentialRevision}. " +
-            (importedPackage is not null ? "Package imported in memory only. Apply is required to save it. " :
-                "Current-user protected credential and pinned verification key saved. ") +
-            (lastDiscoveryTestUtc is { } tested ? $"Reader access and Dashboard last verified at {tested:u}." : "Reader access has not been tested in this window.");
+        if (DiscoveryConnectionText is null) return;
+        DiscoveryConnectionText.Text = lastDiscoveryTestUtc is { } tested
+            ? $"DNS lookup and resolved Dashboard health succeeded at {tested:u}. This is not proof of current Client delivery."
+            : "DNS lookup and Dashboard health have not been tested for this hostname in this window.";
     }
 
-    private void ImportPackage_Click(object sender, RoutedEventArgs e)
+    private void DnsRecordChanged(object sender, TextChangedEventArgs e)
     {
-        if (busy) return;
-        try
-        {
-            var package = DiscoveryCodec.ParsePackage(ConnectionPackageBox.Password);
-            var saved = File.Exists(ConfigPath) ? RemoteConfiguration.Load(ConfigPath) : null;
-            if (saved?.DiscoveryCredentialRevision == long.MaxValue)
-                throw new InvalidDataException("The credential revision limit was reached. Preserve the configuration and contact support.");
-            var prepared = DiscoveryCredentialTransactionStore.Prepare(package);
-            importedPackage = package;
-            credentialUpdate = prepared;
-            selectedCredential = prepared.Reference;
-            selectedDiscoveryId = package.DiscoveryId;
-            selectedSigningPublicKey = package.SigningPublicKey;
-            selectedCredentialRevision = (saved?.DiscoveryCredentialRevision ?? 0) + 1;
-            lastDiscoveryTestUtc = null;
-            ConnectionModeBox.SelectedIndex = 1;
-            UpdateDiscoveryDescription();
-            InvalidatePreview();
-            ShowStatus("Package imported in memory only. Test reader access and Dashboard health, then preview and Apply. No settings or credential files were written.", InfoBarSeverity.Informational);
-        }
-        catch (Exception ex) when (RemoteFailure.IsExpected(ex)) { ShowError(ex, "Package import failed", ConnectionTab, ConnectionPackageBox); }
-        finally { ConnectionPackageBox.Password = ""; }
-    }
-
-    private void RemovePackage_Click(object sender, RoutedEventArgs e)
-    {
-        if (busy) return;
-        importedPackage = null;
-        credentialUpdate = null;
-        selectedCredential = null;
-        selectedDiscoveryId = Guid.Empty;
-        selectedSigningPublicKey = null;
-        selectedCredentialRevision = 0;
         lastDiscoveryTestUtc = null;
-        ConnectionPackageBox.Password = "";
-        ConnectionModeBox.SelectedIndex = 0;
         UpdateDiscoveryDescription();
         InvalidatePreview();
-        ShowStatus("Credential removal is staged, not saved. Enter and verify a direct Dashboard URL, then preview and Apply to remove only the exact saved protected credential. Until Apply succeeds, saved reporting settings are unchanged.", InfoBarSeverity.Warning);
     }
     private void SettingsChanged(object sender, TextChangedEventArgs e) => InvalidatePreview();
     private void ShareDetailsChanged(object sender, RoutedEventArgs e) => InvalidatePreview();
@@ -683,7 +628,7 @@ public sealed partial class MainWindow : Window
         if (closed) return;
         updates?.SetConflicting(busy || updatePreparing);
         var state = new ConfiguratorActionState(busy || updatePreparing, discoveryCancellation is not null, connectionTest is not null);
-        ConnectionModeBox.IsEnabled = ConnectionPackageBox.IsEnabled = ImportPackageButton.IsEnabled = RemovePackageButton.IsEnabled = state.CanUseConnection;
+        ConnectionModeBox.IsEnabled = DnsRecordBox.IsEnabled = state.CanUseConnection;
         UrlBox.IsEnabled = HeartbeatBox.IsEnabled = ShareDetailsSwitch.IsEnabled =
             TestButton.IsEnabled = StartClientButton.IsEnabled = state.CanUseConnection;
         StartClientAtSignInCheckBox.IsEnabled = state.CanUseConnection && startupPreferenceLoaded;

@@ -1,8 +1,6 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentSignaler.Contracts;
-using AgentSignaler.Discovery;
 using AgentSignaler.Remote;
 using Xunit;
 
@@ -15,9 +13,7 @@ public sealed class DiscoveryRelayTests : IDisposable
 
     private static RemoteConfiguration Configuration()
     {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        return new RemoteConfiguration { MachineId = Guid.NewGuid() }.WithDiscovery(
-            new(Guid.NewGuid().ToString("N"), new string('a', 64)), Guid.NewGuid(), DiscoveryCodec.ExportPublicKey(key), 1);
+        return new RemoteConfiguration { MachineId = Guid.NewGuid() }.WithDnsTxtDiscovery("signaler.cablesorter.io");
     }
 
     [Fact]
@@ -45,7 +41,7 @@ public sealed class DiscoveryRelayTests : IDisposable
         Assert.Equal(0, await new RelayEngine(http).RunAsync(
             ["hook", "--event", "sessionStart", "--config", ConfigPath], new MemoryStream(payload)));
         Assert.Equal(new[] { "hook", "transcript-negotiate" }, commands);
-        Assert.False(Directory.Exists(DiscoveryCredentialTransactionStore.DirectoryPath(ConfigPath)));
+        Assert.False(Directory.Exists(Path.Combine(root, "discovery-credentials")));
         Assert.DoesNotContain("PRIVATE-PROMPT", File.ReadAllText(RemotePaths.Log(ConfigPath)));
     }
 

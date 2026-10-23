@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text.Json;
 using AgentSignaler.Contracts;
-using AgentSignaler.Discovery;
 using Xunit;
 using static AgentSignaler.Remote.Tests.ClientRuntimeTests;
 
@@ -15,10 +13,38 @@ public sealed class ClientDiscoveryRuntimeTests : IDisposable
 
     private void Save()
     {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var configuration = new RemoteConfiguration { MachineId = Guid.NewGuid(), MachineName = "fixture" }
-            .WithDiscovery(new(Guid.NewGuid().ToString("N"), new string('a', 64)), Guid.NewGuid(), DiscoveryCodec.ExportPublicKey(key), 1);
+            .WithDnsTxtDiscovery("first.example.test");
         AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(configuration, Protocol.Json));
+    }
+
+    [Fact]
+    public async Task DiscoveryHealthCommandReportsResolverStateWithoutTriggeringLookupOrExposingAddress()
+    {
+        Save();
+        var clock = new ManualClock();
+        var resolver = new Resolver(clock) { Endpoint = new(new("https://first-51820.use.devtunnels.ms/"), 1, clock.GetUtcNow().AddMinutes(10)) };
+        await using var runtime = new ClientCoordinator(ConfigPath, clock, discoveryResolverFactory: _ => resolver,
+            endpointTransportFactory: (_, _) => new RecordingTransport());
+        var request = new ClientIpcRequest(ClientIpc.Version, "discovery-status");
+        Assert.Equal("not-running", (await runtime.HandleAsync(request)).State);
+        runtime.Start();
+        await Eventually(() => runtime.Status().State == "connected");
+        var health = await runtime.HandleAsync(request);
+        Assert.Equal("resolved", health.State);
+        Assert.Null(health.Error);
+        Assert.Null(health.EffectiveRevision);
+        Assert.Null(health.EffectiveCredentialRevision);
+        var lookups = resolver.Calls;
+        await runtime.HandleAsync(request);
+        Assert.Equal(lookups, resolver.Calls);
+        resolver.Status = "dns-unavailable";
+        runtime.RequestSnapshot();
+        await Eventually(() => runtime.HandleAsync(request).GetAwaiter().GetResult().State == "cached");
+        resolver.Endpoint = null;
+        runtime.RequestSnapshot();
+        await Eventually(() => runtime.HandleAsync(request).GetAwaiter().GetResult().State == "unavailable");
+        Assert.False((await runtime.HandleAsync(new(ClientIpc.LegacyVersion, "discovery-status"))).Accepted);
     }
 
     [Fact]
@@ -115,7 +141,7 @@ public sealed class ClientDiscoveryRuntimeTests : IDisposable
     }
 
     [Fact]
-    public async Task ExplicitCredentialReplacementAcknowledgesNewProtectedRevisionAndDirectConversionClearsIt()
+    public async Task HostnameReloadAndDirectConversionUseConfigurationRevisionsNotLiveEndpoint()
     {
         Save();
         var clock = new ManualClock();
@@ -123,7 +149,7 @@ public sealed class ClientDiscoveryRuntimeTests : IDisposable
         var nextResolver = new Resolver(clock) { Endpoint = new(new("https://second-51820.use.devtunnels.ms/"), 1, clock.GetUtcNow().AddMinutes(10)) };
         var transports = new ConcurrentQueue<(EffectiveEndpointSnapshot Endpoint, RecordingTransport Transport)>();
         await using var runtime = new ClientCoordinator(ConfigPath, clock,
-            discoveryResolverFactory: configuration => configuration.DiscoveryCredentialRevision == 1 ? firstResolver : nextResolver,
+            discoveryResolverFactory: configuration => configuration.DnsRecordName == "first.example.test" ? firstResolver : nextResolver,
             endpointTransportFactory: (_, endpoint) =>
             {
                 var transport = new RecordingTransport();
@@ -132,15 +158,15 @@ public sealed class ClientDiscoveryRuntimeTests : IDisposable
             });
         runtime.Start();
         await Eventually(() => runtime.Status().State == "connected");
-        Assert.Equal(1, runtime.Status().EffectiveCredentialRevision);
+        Assert.Null(runtime.Status().EffectiveCredentialRevision);
         var configuration = RemoteConfiguration.Load(ConfigPath) with
         {
-            Discovery = new(Guid.NewGuid().ToString("N"), new string('b', 64)), DiscoveryCredentialRevision = 2
+            DnsRecordName = "second.example.test"
         };
         AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(configuration, Protocol.Json));
         var changed = await runtime.ReloadAsync(ClientConfigurationRevision.Read(ConfigPath));
         Assert.True(changed.Accepted);
-        Assert.Equal(2, changed.EffectiveCredentialRevision);
+        Assert.Null(changed.EffectiveCredentialRevision);
         Assert.True(firstResolver.Disposed);
         Assert.Equal("second-51820.use.devtunnels.ms", transports.Last().Endpoint.BaseUri.Host);
         Assert.DoesNotContain(transports.First().Transport.Reports, report => report.Kind == PresenceKind.Offline);
@@ -151,7 +177,70 @@ public sealed class ClientDiscoveryRuntimeTests : IDisposable
         Assert.Null(direct.EffectiveCredentialRevision);
         Assert.True(nextResolver.Disposed);
         Assert.Equal("explicit-direct.example", transports.Last().Endpoint.BaseUri.Host);
-        Assert.Equal(6, RemoteConfiguration.Load(ConfigPath).Version);
+        Assert.Equal(7, RemoteConfiguration.Load(ConfigPath).Version);
+    }
+
+    [Fact]
+    public async Task DirectToDnsReloadDoesNotResolveUntilPersistentClientAppliesTheSavedRevision()
+    {
+        Save();
+        var configuration = RemoteConfiguration.Load(ConfigPath).WithDashboardUrl("https://direct.example/");
+        AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(configuration, Protocol.Json));
+        var clock = new ManualClock();
+        var resolver = new Resolver(clock) { Endpoint = new(new("https://first-51820.use.devtunnels.ms/"), 1, clock.GetUtcNow().AddMinutes(10)) };
+        var resolutions = 0;
+        var transports = new ConcurrentQueue<RecordingTransport>();
+        await using var runtime = new ClientCoordinator(ConfigPath, clock, discoveryResolverFactory: _ =>
+        {
+            Interlocked.Increment(ref resolutions);
+            return resolver;
+        }, endpointTransportFactory: (_, _) =>
+        {
+            var transport = new RecordingTransport();
+            transports.Enqueue(transport);
+            return transport;
+        });
+        runtime.Start();
+        await Eventually(() => runtime.Status().State == "connected");
+        Assert.Equal(0, resolutions);
+        configuration = configuration.WithDnsTxtDiscovery("first.example.test");
+        AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(configuration, Protocol.Json));
+        Assert.Equal(0, resolutions);
+        var result = await runtime.ReloadAsync(ClientConfigurationRevision.Read(ConfigPath));
+        Assert.True(result.Accepted);
+        Assert.Equal(1, resolutions);
+        Assert.Equal(ClientConfigurationRevision.Read(ConfigPath), result.EffectiveRevision);
+        Assert.True(transports.First().Disposed);
+        Assert.Equal(PresenceKind.Started, transports.Last().Reports.First().Kind);
+        Assert.True(transports.Last().Reports.First().Generation > transports.First().Reports.First().Generation);
+    }
+
+    [Fact]
+    public async Task CanceledReloadCannotCommitLateAnswerFromPreviousHostname()
+    {
+        Save();
+        var clock = new ManualClock();
+        var resolver = new DeferredResolver(clock);
+        var transports = 0;
+        await using var runtime = new ClientCoordinator(ConfigPath, clock, discoveryResolverFactory: _ => resolver,
+            endpointTransportFactory: (_, _) =>
+            {
+                Interlocked.Increment(ref transports);
+                return new RecordingTransport();
+            });
+        runtime.Start();
+        await resolver.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var configuration = RemoteConfiguration.Load(ConfigPath).WithDnsTxtDiscovery("changed.example.test");
+        AtomicFile.Write(ConfigPath, JsonSerializer.SerializeToUtf8Bytes(configuration, Protocol.Json));
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        Assert.False((await runtime.ReloadAsync(ClientConfigurationRevision.Read(ConfigPath), caller.Token)).Accepted);
+        resolver.Complete.SetResult(new(new(new("https://previous-51820.use.devtunnels.ms/"), 1,
+            clock.GetUtcNow().AddMinutes(10)), "resolved", clock.GetUtcNow().AddMinutes(5)));
+        await Eventually(() => resolver.Disposed);
+        Assert.Equal(0, transports);
+        Assert.Equal("discovery-unavailable", runtime.Status().State);
+        Assert.Null(runtime.Status().EffectiveRevision);
     }
 
     [Fact]
@@ -192,15 +281,33 @@ public sealed class ClientDiscoveryRuntimeTests : IDisposable
     private sealed class Resolver(TimeProvider clock) : IDiscoveryEndpointResolver
     {
         public EffectiveEndpointSnapshot? Endpoint { get; set; }
+        public string? Status { get; set; }
+        public int Calls;
         public bool Disposed { get; private set; }
         public Task<DiscoveryResolution> ResolveAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(new DiscoveryResolution(Endpoint, Endpoint is null ? "publisher-unavailable" : "verified",
+            Interlocked.Increment(ref Calls);
+            return Task.FromResult(new DiscoveryResolution(Endpoint, Status ?? (Endpoint is null ? "dns-unavailable" : "resolved"),
                 clock.GetUtcNow().AddMinutes(5)));
         }
         public Task<DiscoveryResolution> RefreshAfterFailureAsync(CancellationToken cancellationToken = default)
             => ResolveAsync(cancellationToken);
+        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
+    }
+
+    private sealed class DeferredResolver(TimeProvider clock) : IDiscoveryEndpointResolver
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<DiscoveryResolution> Complete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Disposed { get; private set; }
+        public Task<DiscoveryResolution> ResolveAsync(CancellationToken cancellationToken = default)
+        {
+            Entered.TrySetResult();
+            return Complete.Task;
+        }
+        public Task<DiscoveryResolution> RefreshAfterFailureAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DiscoveryResolution(null, "dns-unavailable", clock.GetUtcNow().AddMinutes(5)));
         public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
     }
 }

@@ -37,6 +37,48 @@ public sealed class MultiTargetIntegrationTests : IDisposable
     private IntegrationManager Legacy() => new(scheduler, (_, _) => Task.FromResult(true), startup, runtime);
     private IntegrationManifest Manifest() => JsonSerializer.Deserialize<IntegrationManifest>(File.ReadAllBytes(ManifestPath), Protocol.Json)!;
 
+    [Fact]
+    public async Task DnsConfigurationTransactionsPreserveCredentialsAndRollbackWithoutEndpointOwnership()
+    {
+        var credentialPath = Path.Combine(root, "discovery-credentials", "saved-slot");
+        var credential = Encoding.UTF8.GetBytes("synthetic-protected-credential");
+        AtomicFile.Write(credentialPath, credential);
+        var config = Config.ToVersion5().WithDnsTxtDiscovery("signaler.cablesorter.io") with { DetailedReportingEnabled = false };
+        var target = Cli();
+        var plan = MultiTargetIntegrationManager.Preview(config, ConfigPath, [target], RelayPath, startClientAtSignIn: false);
+        Assert.Contains("does not authenticate", plan.Preview);
+        await Manager().ApplyAsync(plan, default);
+        var original = File.ReadAllBytes(ConfigPath);
+        var hook = File.ReadAllBytes(Path.Combine(target.HookDirectory, "agent-signaler.json"));
+        Assert.False(RemoteConfiguration.Load(ConfigPath).DetailedReportingEnabled);
+        var changed = RemoteConfiguration.Load(ConfigPath).WithDnsTxtDiscovery("changed.example.test");
+        startup.Fail = true;
+        await Assert.ThrowsAsync<IOException>(() => Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(
+            changed, ConfigPath, [target], RelayPath, startClientAtSignIn: true), default));
+        Assert.Equal(original, File.ReadAllBytes(ConfigPath));
+        Assert.Equal(hook, File.ReadAllBytes(Path.Combine(target.HookDirectory, "agent-signaler.json")));
+        Assert.Equal(credential, File.ReadAllBytes(credentialPath));
+        startup.Fail = false;
+        await Manager().ApplyAsync(MultiTargetIntegrationManager.Preview(changed, ConfigPath, [target], RelayPath, startClientAtSignIn: false), default);
+        Assert.Equal(hook, File.ReadAllBytes(Path.Combine(target.HookDirectory, "agent-signaler.json")));
+        Assert.Equal(credential, File.ReadAllBytes(credentialPath));
+    }
+
+    [Fact]
+    public void LegacyPrivateConfigurationCannotBeRepairedOrSilentlyRewrittenAndCredentialsStayUntouched()
+    {
+        var old = JsonSerializer.Serialize(Config.ToVersion6(), Protocol.Json).Replace("\"direct\"", "\"privateAzureDiscovery\"");
+        var credentialPath = Path.Combine(root, "discovery-credentials", "saved-slot");
+        var credential = Encoding.UTF8.GetBytes("synthetic-protected-credential");
+        AtomicFile.Write(credentialPath, credential);
+        AtomicFile.Write(ConfigPath, Encoding.UTF8.GetBytes(old));
+        var error = Assert.Throws<InvalidDataException>(() => MultiTargetIntegrationManager.Preview(
+            Config.WithDnsTxtDiscovery("signaler.cablesorter.io"), ConfigPath, [], RelayPath, startClientAtSignIn: false));
+        Assert.Contains("no longer supported", error.Message);
+        Assert.Equal(old, File.ReadAllText(ConfigPath));
+        Assert.Equal(credential, File.ReadAllBytes(credentialPath));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -774,6 +816,9 @@ public sealed class MultiTargetIntegrationTests : IDisposable
         public int Starts, Reloads, Stops;
         public bool Running;
         public Exception? QueryFailure;
+        public Task SuspendTranscriptAsync(string path, CancellationToken token) => Task.CompletedTask;
+        public Task PauseTranscriptAsync(string path, CancellationToken token) => Task.CompletedTask;
+        public Task ReloadTranscriptAsync(string path, CancellationToken token) => Task.CompletedTask;
         public Task<IntegrationRuntimeState> QueryAsync(string path, CancellationToken token) =>
             QueryFailure is null ? Task.FromResult(new IntegrationRuntimeState(Running)) :
                 Task.FromException<IntegrationRuntimeState>(QueryFailure);

@@ -14,7 +14,8 @@ internal sealed partial class MainWindow
 
     private void InitializeUpdates()
     {
-        _updates = new UpdatePanel(UpdatePackage.Dashboard, DispatcherQueue, BeginUpdateAsync, _updateHost.ReadRecoveryAsync);
+        _updates = new UpdatePanel(UpdatePackage.Dashboard, DispatcherQueue, BeginUpdateAsync, _updateHost.ReadRecoveryAsync,
+            _updateHost.StartupWarning);
         AddRow(_updates.Banner, 4);
         AddRow(_updates.RecoveryBanner, 5);
         _updateParticipant = new WinUiUpdateParticipant(DispatcherQueue, PrepareUpdateAsync,

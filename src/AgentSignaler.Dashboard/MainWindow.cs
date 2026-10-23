@@ -326,7 +326,6 @@ internal sealed partial class MainWindow : Window
                 _updateConnectionControls?.Invoke();
                 _compactWindow?.UpdateConnectionAvailability();
                 _updatePrerequisiteControls?.Invoke();
-                _updateDiscoveryControls?.Invoke();
                 UpdateConnectionPresentation();
                 if (progress is not null) ReportStartupProgress(progress);
             });
@@ -1199,7 +1198,6 @@ internal sealed partial class MainWindow : Window
             var sharing = new StackPanel { Spacing = 14 };
             var sharingHelp = new StackPanel { Spacing = 10 };
             BuildTunnelSettings(sharing, sharingHelp);
-            BuildDiscoverySettings(sharing, sharingHelp);
             var receive = new ToggleSwitch
             {
                 Header = "Receive detailed conversations", IsOn = _runtime.Settings.State.Effective.ReceiveDetailedConversations
@@ -1378,7 +1376,6 @@ internal sealed partial class MainWindow : Window
             _updateDevBoxSettingsControls = null;
             ReleasePrerequisiteSettings();
             ReleaseTunnelSettings();
-            ReleaseDiscoverySettings();
             _dialogOpen = false;
             _activeDialog = null;
             _dialogFinished.TrySetResult();

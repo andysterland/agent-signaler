@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\AgentSignaler.Contracts\AgentSignaler.Contracts.csproj" />
-    <ProjectReference Include="..\AgentSignaler.Discovery\AgentSignaler.Discovery.csproj" />
+    <PackageReference Include="DnsClient" Version="1.8.0" />
   </ItemGroup>
 </Project>

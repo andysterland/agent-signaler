@@ -92,19 +92,15 @@
                             <ComboBox x:Name="ConnectionModeBox" Header="Connection mode" SelectedIndex="0"
                                       SelectionChanged="ConnectionModeChanged" HorizontalAlignment="Stretch">
                                 <ComboBoxItem Content="Direct Dashboard URL" />
-                                <ComboBoxItem Content="Private Azure Blob discovery (opt in)" />
+                                <ComboBoxItem Content="Public DNS TXT discovery (opt in)" />
                             </ComboBox>
                             <TextBox x:Name="UrlBox" Header="Dashboard base URL" PlaceholderText="http://desktop-pc:51820 or https://your-service-returned-host" TextChanged="SettingsChanged" />
-                            <StackPanel x:Name="PrivateDiscoveryPanel" Spacing="8" Visibility="Collapsed">
-                                <PasswordBox x:Name="ConnectionPackageBox" Header="Agent connection package (bearer secret)"
-                                             PasswordRevealMode="Hidden" MaxLength="16384" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button x:Name="ImportPackageButton" Content="Import / replace package" Click="ImportPackage_Click" />
-                                    <Button x:Name="RemovePackageButton" Content="Remove saved credential" Click="RemovePackage_Click" />
-                                </StackPanel>
-                                <TextBlock x:Name="DiscoveryConnectionText" Text="No package imported. Paste a package copied explicitly from Dashboard. No Azure sign-in is needed."
+                            <StackPanel x:Name="DnsDiscoveryPanel" Spacing="8" Visibility="Collapsed">
+                                <TextBox x:Name="DnsRecordBox" Header="DNS TXT record hostname" Text="signaler.cablesorter.io"
+                                         MaxLength="253" TextChanged="DnsRecordChanged" />
+                                <TextBlock x:Name="DiscoveryConnectionText" Text="DNS and Dashboard health have not been tested in this window."
                                            TextWrapping="Wrap" />
-                                <TextBlock Text="Import and Test are read-only. Apply verifies the signed discovery document and Dashboard health before saving a current-user protected credential. No fallback URL is used. Revoking the shared reader group affects every machine using its package. Receiver access remains anonymous."
+                                <TextBlock Text="Opt in only if you trust this public DNS record. It contains one HTTPS Dashboard URL, not a secret or authentication credential. Manage the record externally; Dashboard never writes DNS. Only the running Client resolves DNS for reporting; hooks and Relay do not network. Test performs a read-only lookup and Dashboard health check. Apply saves only the hostname, not the resolved URL. There is no direct-URL fallback."
                                            TextWrapping="Wrap" />
                             </StackPanel>
                             <NumberBox x:Name="HeartbeatBox" Header="Heartbeat interval (minutes)" Value="5" Minimum="1" Maximum="60" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="HeartbeatChanged" />

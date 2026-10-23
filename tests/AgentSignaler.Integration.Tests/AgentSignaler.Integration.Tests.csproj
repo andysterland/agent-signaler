@@ -17,6 +17,8 @@
     <Using Include="Xunit" />
     <Compile Include="..\Shared\CurrentUserOwnedTranscriptFixture.cs" Link="CurrentUserOwnedTranscriptFixture.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\DashboardStartupController.cs" Link="DashboardStartupController.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\AppUpdateHost.cs" Link="AppUpdateHost.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Dashboard\UpdatePanelPresentation.cs" Link="UpdatePanelPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardAppearance.cs" Link="MachineCardAppearance.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\MachineCardPresentation.cs" Link="MachineCardPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\SessionSourcePresentation.cs" Link="SessionSourcePresentation.cs" />
@@ -26,6 +28,7 @@
     <Compile Include="..\..\src\AgentSignaler.Dashboard\NativeWindow.cs" Link="NativeWindow.cs" />
     <Compile Include="..\..\src\AgentSignaler.Dashboard\WindowsAppConnectionActions.cs" Link="WindowsAppConnectionActions.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorSettings.cs" Link="ConfiguratorSettings.cs" />
+    <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorConnectionPresentation.cs" Link="ConfiguratorConnectionPresentation.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\ConfiguratorActionState.cs" Link="ConfiguratorActionState.cs" />
     <Compile Include="..\..\src\AgentSignaler.Configurator\HookTargetRow.cs" Link="HookTargetRow.cs" />
   </ItemGroup>

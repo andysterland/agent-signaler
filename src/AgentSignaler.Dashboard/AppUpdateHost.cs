@@ -5,6 +5,26 @@ namespace AgentSignaler.AppUpdates;
 
 internal sealed record UpdateRecoveryNotice(Guid RunId, string Message);
 
+internal sealed record UpdateEligibilityWarning
+{
+    public string Code { get; }
+    public string Message => $"In-app updates are disabled ({Code}). Installation eligibility could not be verified. " +
+        "Dashboard will keep running. Reopen Dashboard to verify again, or follow the signed MSI update instructions.";
+
+    private UpdateEligibilityWarning(string code) => Code = code;
+
+    public static UpdateEligibilityWarning FromFailure(Exception error) => new(error.Message switch
+    {
+        // Only application-defined categories may reach the UI, never arbitrary
+        // exception messages, paths, MSI output, or account identifiers.
+        "update_inventory_unavailable" => "update_inventory_unavailable",
+        "update_inventory_ineligible" => "update_inventory_ineligible",
+        "update_inventory_ambiguous" => "update_inventory_ambiguous",
+        "update_inventory_limit" => "update_inventory_limit",
+        _ => "update_inventory_unverified"
+    });
+}
+
 internal sealed class UpdateStartupRefusedException(string code, string userMessage) : Exception(code)
 {
     public string UserMessage { get; } = userMessage;
@@ -19,42 +39,90 @@ internal sealed class AppUpdateHost : IAsyncDisposable, IDisposable
     private IAsyncDisposable? registration;
     private bool disposed;
     public UpdateInstalledPackage? Installation { get; }
+    public UpdateEligibilityWarning? StartupWarning { get; }
 
     private AppUpdateHost(UpdateInstalledPackage? installation, UpdateStorage? storage,
-        UpdateMaintenanceCoordinator? maintenance)
+        UpdateMaintenanceCoordinator? maintenance, UpdateEligibilityWarning? startupWarning = null)
     {
         Installation = installation;
+        StartupWarning = startupWarning;
         this.storage = storage;
         this.maintenance = maintenance;
     }
 
-    public static AppUpdateHost Open(UpdatePackage package)
+    public static AppUpdateHost Open(UpdatePackage package) => Open(package, allowEligibilityFailure: false);
+
+    // Opt in only at the Dashboard composition root. Client and Configurator keep
+    // their existing fail-closed startup behavior.
+    public static AppUpdateHost OpenDashboard() => Open(UpdatePackage.Dashboard, allowEligibilityFailure: true);
+
+    private static AppUpdateHost Open(UpdatePackage package, bool allowEligibilityFailure)
     {
-        try { return OpenCore(package); }
+        try { return OpenCore(package, allowEligibilityFailure); }
         catch (UpdateStartupRefusedException) { throw; }
         catch (Exception error) when (IsExpectedMaintenanceFailure(error))
         { throw StartupRefusal("update_maintenance_unverified", "Installation ownership or maintenance state could not be verified."); }
     }
 
-    private static AppUpdateHost OpenCore(UpdatePackage package)
+    private static AppUpdateHost OpenCore(UpdatePackage package, bool allowEligibilityFailure)
     {
         var directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        using var identity = WindowsIdentity.GetCurrent();
-        var sid = identity.User?.Value ?? throw new UnauthorizedAccessException("update_user_unavailable");
-        var requiresVerifiedInventory = UpdateStorage.HasMaintenanceRecords(local, directory);
-        var installed = new UpdateInventory(new WindowsUpdateInventoryAdapter(), sid, local)
-            .FindAsync(package).GetAwaiter().GetResult();
-        // MSI registration proves the actual installation scope, including a
-        // custom INSTALLFOLDER. A different source/portable copy cannot service it.
-        if (installed is null || !UpdatePath.EqualsDirectory(directory, installed.InstallDirectory))
+        return OpenVerified(allowEligibilityFailure, directory,
+            () => UpdateStorage.HasMaintenanceRecords(local, directory),
+            () =>
+            {
+                using var identity = WindowsIdentity.GetCurrent();
+                var sid = identity.User?.Value ?? throw new UnauthorizedAccessException("update_user_unavailable");
+                return new UpdateInventory(new WindowsUpdateInventoryAdapter(), sid, local)
+                    .FindAsync(package).GetAwaiter().GetResult();
+            },
+            installed => OpenInstalled(local, installed));
+    }
+
+    // Read-only eligibility boundary, injectable without MSI or installed-state
+    // fixtures. Never degrade failures from record reads or coordinator checks.
+    internal static AppUpdateHost OpenVerified(bool allowEligibilityFailure, string directory,
+        Func<bool> hasMaintenanceRecords, Func<UpdateInstalledPackage?> findInstallation,
+        Func<UpdateInstalledPackage, AppUpdateHost> openInstalled)
+    {
+        try
         {
-            if (requiresVerifiedInventory || UpdateStorage.HasMaintenanceRecords(local, directory))
-                throw StartupRefusal("update_maintenance_inventory_unavailable",
-                    "This executable directory has retained maintenance state, but its MSI installation could not be verified. " +
-                    "Servicing may still be active. It cannot be started as a portable copy or granted an automatic restart.");
-            return new(null, null, null);
+            var requiresVerifiedInventory = hasMaintenanceRecords();
+            UpdateInstalledPackage? installed;
+            UpdateEligibilityWarning? warning = null;
+            try
+            {
+                installed = findInstallation();
+                if (installed is not null && !UpdatePath.EqualsDirectory(directory, installed.InstallDirectory))
+                    installed = null;
+            }
+            catch (Exception error) when (allowEligibilityFailure && IsExpectedMaintenanceFailure(error))
+            {
+                installed = null;
+                warning = UpdateEligibilityWarning.FromFailure(error);
+            }
+            // MSI registration proves the actual installation scope, including a
+            // custom INSTALLFOLDER. A different source/portable copy cannot service it.
+            if (installed is null)
+            {
+                // Recheck after inventory to close the same gate-appearance race
+                // as the portable path. Unknown or unreadable state fails closed.
+                if (requiresVerifiedInventory || hasMaintenanceRecords())
+                    throw StartupRefusal("update_maintenance_inventory_unavailable",
+                        "This executable directory has retained maintenance state, but its MSI installation could not be verified. " +
+                        "Servicing may still be active. It cannot be started as a portable copy or granted an automatic restart.");
+                return new(null, null, null, warning);
+            }
+            return openInstalled(installed);
         }
+        catch (UpdateStartupRefusedException) { throw; }
+        catch (Exception error) when (IsExpectedMaintenanceFailure(error))
+        { throw StartupRefusal("update_maintenance_unverified", "Installation ownership or maintenance state could not be verified."); }
+    }
+
+    private static AppUpdateHost OpenInstalled(string local, UpdateInstalledPackage installed)
+    {
         var storage = new UpdateStorage(local, installed.InstallDirectory);
         try
         {
@@ -143,6 +211,7 @@ internal sealed class AppUpdateHost : IAsyncDisposable, IDisposable
     public async Task<string?> BeginUpdateAsync(ReleaseCandidate candidate, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        if (StartupWarning is not null) return StartupWarning.Message;
         if (Installation is null)
             return "In-app MSI servicing is unavailable for this portable or source installation. The app has not closed. Use the signed MSI update instructions.";
         if (registration is null || disposed) return "Safe update maintenance is unavailable. The app has not closed. Exit and reopen the app or repair its installation.";

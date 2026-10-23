@@ -73,15 +73,34 @@ public sealed class DashboardHeaderTests
     public void MissingMsiRegistrationCannotBypassDirectoryMaintenanceAsPortable()
     {
         var host = MainWindowSource("AppUpdateHost.cs");
-        AssertBefore(host, "var requiresVerifiedInventory = UpdateStorage.HasMaintenanceRecords(local, directory);",
-            "var installed = new UpdateInventory(");
-        var start = host.IndexOf("if (installed is null ||", StringComparison.Ordinal);
-        var end = host.IndexOf("var storage = new UpdateStorage(local, installed.InstallDirectory);", StringComparison.Ordinal);
+        Assert.Contains("() => UpdateStorage.HasMaintenanceRecords(local, directory)", host);
+        AssertBefore(host, "var requiresVerifiedInventory = hasMaintenanceRecords();",
+            "installed = findInstallation();");
+        var start = host.IndexOf("if (installed is null)", StringComparison.Ordinal);
+        var end = host.IndexOf("return openInstalled(installed);", StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var portable = host[start..end];
-        AssertBefore(portable, "if (requiresVerifiedInventory || UpdateStorage.HasMaintenanceRecords(local, directory))",
-            "return new(null, null, null);");
-        AssertBefore(portable, "throw StartupRefusal(\"update_maintenance_inventory_unavailable\"", "return new(null, null, null);");
+        AssertBefore(portable, "if (requiresVerifiedInventory || hasMaintenanceRecords())",
+            "return new(null, null, null, warning);");
+        AssertBefore(portable, "throw StartupRefusal(\"update_maintenance_inventory_unavailable\"", "return new(null, null, null, warning);");
+    }
+
+    [Fact]
+    public void OnlyDashboardOptsIntoEligibilityDegradationAndWiresPersistentWarning()
+    {
+        Assert.Contains("AppUpdateHost.OpenDashboard()", MainWindowSource("Program.cs"));
+        Assert.Contains("AppUpdateHost.Open(UpdatePackage.Remote)", MainWindowSource("Program.cs", "AgentSignaler.Client"));
+        Assert.Contains("AppUpdateHost.Open(UpdatePackage.Remote)", MainWindowSource("Program.cs", "AgentSignaler.Configurator"));
+        var host = MainWindowSource("AppUpdateHost.cs");
+        Assert.Contains("Open(UpdatePackage package) => Open(package, allowEligibilityFailure: false)", host);
+        Assert.Contains("OpenDashboard() => Open(UpdatePackage.Dashboard, allowEligibilityFailure: true)", host);
+        Assert.Contains("_updateHost.StartupWarning", MainWindowSource("MainWindow.Updates.cs"));
+        var panel = MainWindowSource("UpdatePanel.cs");
+        Assert.Contains("Title = \"Software updates\", IsClosable = false", panel);
+        Assert.Contains("UpdatePanelPresentation.Create(state, startupWarning, dismissed)", panel);
+        Assert.Contains("update.IsEnabled = presentation.CanUpdate && !busy && !checking && !conflicting", panel);
+        Assert.Contains("Banner.Severity = presentation.IsWarning ? InfoBarSeverity.Warning", panel);
+        Assert.Contains("Banner.IsOpen = presentation.IsOpen", panel);
     }
 
     [Fact]

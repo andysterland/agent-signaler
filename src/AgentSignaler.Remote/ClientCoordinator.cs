@@ -111,8 +111,8 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         _connected ? "connected" : "retrying", _effectiveRevision,
         _effectiveRevision is null ? null : _acknowledgedInterval, error ?? _terminalReason ?? _discoveryError ?? _deliveryError)
     {
-        EffectiveCredentialRevision = _configuration.IsDiscovery && _effectiveRevision == _revision &&
-            _endpointSnapshot?.IsValid(_clock) == true ? _configuration.DiscoveryCredentialRevision : null
+        // Reserved for wire compatibility with older Clients; DNS has no credentials.
+        EffectiveCredentialRevision = null
     };
 
     public Task<ClientIpcResponse> HandleAsync(ClientIpcRequest request, CancellationToken cancellationToken = default)
@@ -130,6 +130,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         return request.Command switch
         {
             "status" => Task.FromResult(Status()),
+            "discovery-status" when request.Version == ClientIpc.Version => Task.FromResult(DiscoveryHealthStatus()),
             "hook" => Task.FromResult(AcceptHook(request.Event, request.Hook)),
             "probe" => Task.FromResult(AcceptProbe(request)),
             "reload" => ReloadAsync(request.ExpectedRevision, cancellationToken),
@@ -645,7 +646,7 @@ public sealed partial class ClientCoordinator : IAsyncDisposable
         var bytes = AtomicFile.ReadBounded(path, 262144);
         var config = JsonSerializer.Deserialize<RemoteConfiguration>(bytes, Protocol.Json) ?? throw new InvalidDataException();
         config.Validate();
-        if (config.Version is not (3 or 4 or 5 or 6))
+        if (config.Version is not (3 or 4 or 5 or 6 or 7))
             throw new InvalidDataException("Apply managed configuration in Configurator before starting Client.");
         return (config, Convert.ToHexString(SHA256.HashData(bytes)));
     }

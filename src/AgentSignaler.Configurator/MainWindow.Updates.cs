@@ -17,13 +17,11 @@ public sealed partial class MainWindow
     private EditSnapshot? savedUpdateState;
 
     private sealed record EditSnapshot(string Url, double Heartbeat, int Mode, bool ShareDetails,
-        string Relay, bool Startup, Guid DiscoveryId, string? PublicKey, long CredentialRevision,
-        object? CredentialUpdate, object? ImportedPackage, string PendingPackage);
+        string Relay, bool Startup, string DnsRecordName);
 
     private EditSnapshot CurrentUpdateState() => new(UrlBox.Text, HeartbeatBox.Value,
         ConnectionModeBox.SelectedIndex, ShareDetailsSwitch.IsOn, RelayPathBox.Text,
-        StartClientAtSignInCheckBox.IsChecked == true, selectedDiscoveryId, selectedSigningPublicKey,
-        selectedCredentialRevision, credentialUpdate, importedPackage, ConnectionPackageBox.Password);
+        StartClientAtSignInCheckBox.IsChecked == true, DnsRecordBox.Text);
 
     private void CaptureSavedUpdateState() => savedUpdateState = CurrentUpdateState();
     private bool HasUnsavedUpdateEdits => savedUpdateState is null || savedUpdateState != CurrentUpdateState() ||
@@ -55,7 +53,7 @@ public sealed partial class MainWindow
                 {
                     XamlRoot = RootPanel.XamlRoot,
                     Title = "Unsaved Remote setup changes",
-                    Content = "Connection, credential, integration or startup edits have not been saved. Save uses the existing verified Apply settings preview and confirmation. Discard reloads saved settings. Cancel leaves this app running.",
+                    Content = "Connection, integration or startup edits have not been saved. Save uses the existing verified Apply settings preview and confirmation. Discard reloads saved settings. Cancel leaves this app running.",
                     PrimaryButtonText = "Save changes", SecondaryButtonText = "Discard changes", CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Close
                 };
@@ -71,7 +69,6 @@ public sealed partial class MainWindow
                     SetBusy(true);
                     try
                     {
-                        ConnectionPackageBox.Password = "";
                         await RefreshAsync(preserveSelection: false);
                         var config = File.Exists(ConfigPath) ? AgentSignaler.Remote.RemoteConfiguration.Load(ConfigPath) : null;
                         UrlBox.Text = config is { IsDiscovery: false } ? config.BaseUri.GetLeftPart(UriPartial.Authority) : "";

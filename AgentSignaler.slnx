@@ -57,9 +57,6 @@
       <Platform Project="x64" />
     </Project>
   </Folder>
-  <Project Path="src/AgentSignaler.Discovery/AgentSignaler.Discovery.csproj">
-    <Platform Project="x64" />
-  </Project>
   <Project Path="src/AgentSignaler.Updates/AgentSignaler.Updates.csproj">
     <Platform Project="x64" />
   </Project>

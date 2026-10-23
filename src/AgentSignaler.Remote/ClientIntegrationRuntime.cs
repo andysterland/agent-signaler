@@ -27,6 +27,23 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
         return State(response);
     }
 
+    public async Task<IntegrationRuntimeState> QueryDiscoveryStatusAsync(string configPath, CancellationToken token)
+    {
+        configPath = ClientIdentity.CanonicalPath(configPath);
+        var state = await QueryAsync(configPath, token);
+        if (!state.Running) return state with { DiscoveryStatus = "not-running" };
+        var response = await platform.SendAsync(configPath, new(ClientIpc.Version, "discovery-status"), token).WaitAsync(token);
+        var code = response.Accepted && response.Version == ClientIpc.Version ? response.State : "unknown";
+        return state with
+        {
+            DiscoveryStatus = code switch
+            {
+                "direct" or "not-running" or "pending" or "resolved" or "cached" or "unavailable" or "expired" => code,
+                _ => "unknown"
+            }
+        };
+    }
+
     public async Task<IntegrationRuntimeState> ReloadAsync(string configPath, CancellationToken token)
     {
         configPath = ClientIdentity.CanonicalPath(configPath);
@@ -89,15 +106,13 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
     private async Task<IntegrationRuntimeState> AwaitRevision(string configPath, string revision,
         IntegrationRuntimeState latest, CancellationToken caller, CancellationToken budget)
     {
-        var expected = RemoteConfiguration.Load(configPath);
         try
         {
             while (true)
             {
                 try { latest = await QueryAsync(configPath, budget); }
                 catch (InvalidOperationException) { }
-                if (latest.Running && latest.EffectiveRevision == revision &&
-                    (!expected.IsDiscovery || latest.EffectiveCredentialRevision == expected.DiscoveryCredentialRevision)) return latest;
+                if (latest.Running && latest.EffectiveRevision == revision) return latest;
                 await Task.Delay(100, budget);
             }
         }
@@ -130,7 +145,14 @@ public sealed class ClientIntegrationRuntime(IClientRuntimePlatform? platform = 
     }
 
     private static IntegrationRuntimeState State(ClientIpcResponse response) =>
-        new(true, response.EffectiveRevision, response.Error, response.HeartbeatIntervalSeconds, response.EffectiveCredentialRevision);
+        new(true, response.EffectiveRevision, response.Error, response.HeartbeatIntervalSeconds, response.EffectiveCredentialRevision)
+        {
+            State = response.State switch
+            {
+                "connected" or "retrying" or "discovery-unavailable" or "reloading" or "stopping" or "unconfigured" => response.State,
+                _ => "unknown"
+            }
+        };
 }
 
 public sealed class WindowsClientRuntimePlatform : IClientRuntimePlatform

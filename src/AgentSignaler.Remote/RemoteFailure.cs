@@ -23,7 +23,7 @@ public static class RemoteFailure
     public static string DescribeLocalFailure(Exception exception)
     {
         if (exception is DiscoveryException)
-            return "Private discovery could not be verified. Check reader access, expiry, the pinned connection package and current-user protected storage. No fallback URL was used.";
+            return "DNS TXT discovery validation failed. Check the record name and its single HTTPS tunnel root URL. No direct fallback was used.";
         var message = exception.GetBaseException().Message;
         return string.IsNullOrWhiteSpace(message)
             ? "Operation failed. Check file access, the endpoint, startup registration, and legacy Task Scheduler access."

@@ -12,8 +12,7 @@ public sealed record EffectiveEndpointSnapshot(Uri BaseUri, long EndpointRevisio
         var remaining = ValidUntilUtc - clock.GetUtcNow();
         if (VerifiedTimestamp is { } timestamp && CacheLifetime is { } lifetime)
         {
-            var monotonic = lifetime - clock.GetElapsedTime(timestamp);
-            if (monotonic < remaining) remaining = monotonic;
+            remaining = lifetime - clock.GetElapsedTime(timestamp);
         }
         return remaining;
     }

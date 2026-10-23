@@ -1,10 +1,8 @@
 using System.Text;
 using System.Text.Json;
-using System.Security.Cryptography;
 using AgentSignaler.Configurator;
 using AgentSignaler.Contracts;
 using AgentSignaler.Remote;
-using AgentSignaler.Discovery;
 
 namespace AgentSignaler.Integration.Tests;
 
@@ -101,21 +99,134 @@ public sealed class ConfiguratorSettingsTests : IDisposable
     }
 
     [Fact]
-    public void SavedDiscoveryModeNeverFallsBackToPreviousDirectUrlOrPersistsBearerSecrets()
+    public void DnsChoicePreservesPreviousDirectUrlButSavesOnlyHostnameForDiscovery()
     {
         ConfiguratorSettings.SaveUrl(SettingsPath, Configuration("https://previous.test"));
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var config = Configuration("https://unused.test").WithDiscovery(new(Guid.NewGuid().ToString("N"), new string('a', 64)),
-            Guid.NewGuid(), DiscoveryCodec.ExportPublicKey(key), 1);
+        var config = Configuration("https://unused.test").WithDnsTxtDiscovery("signaler.cablesorter.io");
         ConfiguratorSettings.SaveUrl(SettingsPath, config);
-        Assert.Equal(RemoteConnectionMode.PrivateAzureDiscovery, ConfiguratorSettings.LoadMode(SettingsPath));
-        Assert.Null(ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.Equal(RemoteConnectionMode.DnsTxtDiscovery, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Equal("https://previous.test", ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.Equal("signaler.cablesorter.io", ConfiguratorSettings.LoadDnsRecordName(SettingsPath));
         var saved = File.ReadAllText(SettingsPath);
-        Assert.DoesNotContain("previous.test", saved);
+        Assert.Contains("previous.test", saved);
         Assert.DoesNotContain("unused.test", saved);
-        Assert.DoesNotContain(config.Discovery!.Id, saved);
         Assert.DoesNotContain("sig=", saved);
         Assert.DoesNotContain("discoveryId", saved);
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("\"privateAzureDiscovery\"")]
+    public void RemovedSavedModeNeverOptsIntoDnsOrMutatesPreferences(string mode)
+    {
+        var bytes = Encoding.UTF8.GetBytes("{\"lastSuccessfulDashboardUrl\":\"https://previous.test/\",\"selectedConnectionMode\":" + mode + "}");
+        AtomicFile.Write(SettingsPath, bytes);
+        Assert.Equal(RemoteConnectionMode.Direct, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.True(ConfiguratorSettings.HasRemovedMode(SettingsPath));
+        Assert.Equal("https://previous.test", ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.Equal(bytes, File.ReadAllBytes(SettingsPath));
+        Assert.NotEqual(1, (int)RemoteConnectionMode.DnsTxtDiscovery);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://signaler.cablesorter.io")]
+    [InlineData("name/path")]
+    [InlineData("-bad.example")]
+    [InlineData("two..example")]
+    public void InvalidDnsHostnamesAreRejectedBeforeSaving(string name)
+    {
+        Assert.Throws<InvalidDataException>(() => ConfiguratorSettings.ValidateDnsRecordName(name));
+        Assert.False(File.Exists(SettingsPath));
+    }
+
+    [Fact]
+    public void DnsDefaultsAreSuggestedWithoutSelectingDns()
+    {
+        Assert.Equal(RemoteConnectionMode.Direct, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Equal("signaler.cablesorter.io", ConfiguratorSettings.LoadDnsRecordName(SettingsPath));
+        Assert.Equal("signaler.cablesorter.io", ConfiguratorSettings.ValidateDnsRecordName(" signaler.cablesorter.io "));
+    }
+
+    [Fact]
+    public void DirectSaveRetainsLastDnsChoiceWithoutEnablingIt()
+    {
+        ConfiguratorSettings.SaveUrl(SettingsPath, Configuration("https://unused.test").WithDnsTxtDiscovery("signaler.cablesorter.io"));
+        ConfiguratorSettings.SaveUrl(SettingsPath, Configuration("http://localhost:51820"));
+        Assert.Equal(RemoteConnectionMode.Direct, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Equal("http://localhost:51820", ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.Equal("signaler.cablesorter.io", ConfiguratorSettings.LoadDnsRecordName(SettingsPath));
+    }
+
+    [Fact]
+    public void OldDirectPreferencesRemainDirectAndReadable()
+    {
+        AtomicFile.Write(SettingsPath, Encoding.UTF8.GetBytes("{\"lastSuccessfulDashboardUrl\":\"http://localhost:51820/\"}"));
+        Assert.Equal(RemoteConnectionMode.Direct, ConfiguratorSettings.LoadMode(SettingsPath));
+        Assert.Equal("http://localhost:51820", ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+    }
+
+    [Fact]
+    public void DnsPreviewContainsPublicHostnameAndNoResolvedUrlAndDoesNotWrite()
+    {
+        var relay = Path.Combine(directory, "AgentSignaler.Relay.exe");
+        AtomicFile.Write(relay, []);
+        var configPath = Path.Combine(directory, "remote.json");
+        var configuration = Configuration("https://not-the-dns-endpoint.test").WithDnsTxtDiscovery("signaler.cablesorter.io") with
+        {
+            DetailedReportingEnabled = false,
+            HeartbeatIntervalSeconds = 420
+        };
+
+        var preview = MultiTargetIntegrationManager.Preview(configuration, configPath, [], relay, startClientAtSignIn: false);
+
+        Assert.Equal(7, preview.Config.Version);
+        Assert.Equal(RemoteConnectionMode.DnsTxtDiscovery, preview.Config.ConnectionMode);
+        Assert.Equal("signaler.cablesorter.io", preview.Config.DnsRecordName);
+        Assert.Null(preview.Config.DashboardBaseUrl);
+        Assert.False(preview.Config.DetailedReportingEnabled);
+        Assert.Contains("signaler.cablesorter.io", preview.Preview);
+        Assert.Contains("No direct fallback", preview.Preview);
+        Assert.DoesNotContain("not-the-dns-endpoint", preview.Preview);
+        Assert.DoesNotContain("credential", preview.Preview, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(configPath));
+        Assert.Single(Directory.GetFiles(directory));
+    }
+
+    [Fact]
+    public void UnsupportedSavedPrivateConfigurationIsNotOverwrittenBySupportedPreview()
+    {
+        var relay = Path.Combine(directory, "AgentSignaler.Relay.exe");
+        AtomicFile.Write(relay, []);
+        var configPath = Path.Combine(directory, "remote.json");
+        var bytes = Encoding.UTF8.GetBytes("{\"version\":6,\"machineId\":\"" + machineId +
+            "\",\"connectionMode\":\"privateAzureDiscovery\"}");
+        AtomicFile.Write(configPath, bytes);
+        Assert.Throws<InvalidDataException>(() =>
+            MultiTargetIntegrationManager.Preview(Configuration("http://localhost:51820").ToVersion5(),
+                configPath, [], relay, startClientAtSignIn: false));
+        Assert.Equal(bytes, File.ReadAllBytes(configPath));
+        Assert.Equal(2, Directory.GetFiles(directory).Length);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void ReadingDirectConfigurationNeverImplicitlySelectsDns(int version)
+    {
+        var configPath = Path.Combine(directory, "remote.json");
+        var configuration = version == 1
+            ? new RemoteConfiguration { MachineId = machineId, Host = "localhost", Port = 51820 }
+            : Configuration("http://localhost:51820") with { Version = version };
+        AtomicFile.Write(configPath, JsonSerializer.SerializeToUtf8Bytes(configuration, Protocol.Json));
+        var restored = RemoteConfiguration.Load(configPath);
+        Assert.Equal(RemoteConnectionMode.Direct, restored.ConnectionMode);
+        Assert.False(restored.IsDiscovery);
+        Assert.Equal("http://localhost:51820", restored.BaseUri.GetLeftPart(UriPartial.Authority));
     }
 
     [Fact]
@@ -123,7 +234,7 @@ public sealed class ConfiguratorSettingsTests : IDisposable
     {
         AtomicFile.Write(SettingsPath, Encoding.UTF8.GetBytes("{\"lastSuccessfulDashboardUrl\":\"https://old.test/\",\"selectedConnectionMode\":99}"));
         Assert.Throws<JsonException>(() => ConfiguratorSettings.LoadMode(SettingsPath));
-        Assert.Throws<JsonException>(() => ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.ThrowsAny<JsonException>(() => ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
     }
 
     [Fact]
@@ -151,7 +262,7 @@ public sealed class ConfiguratorSettingsTests : IDisposable
     public void MalformedJsonIsReported()
     {
         AtomicFile.Write(SettingsPath, Encoding.UTF8.GetBytes("{"));
-        Assert.Throws<JsonException>(() => ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
+        Assert.ThrowsAny<JsonException>(() => ConfiguratorSettings.LoadUrl(SettingsPath, machineId));
     }
 
     [Fact]

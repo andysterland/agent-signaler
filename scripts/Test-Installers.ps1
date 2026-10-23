@@ -54,11 +54,8 @@ try {
     foreach ($name in @('Dashboard', 'Remote')) {
         $msi = Join-Path $root "artifacts\msi\AgentSignaler.$name.msi"
         $publish = Join-Path $root ('artifacts\publish\' + $name.ToLowerInvariant())
-        Assert-Msi (Test-Path -LiteralPath (Join-Path $publish 'AgentSignaler.Discovery.dll') -PathType Leaf) "$name discovery assembly is missing from the self-contained payload."
-        if ($name -eq 'Dashboard') {
-            foreach ($dependency in @('Azure.Identity.dll', 'Azure.Storage.Blobs.dll')) {
-                Assert-Msi (Test-Path -LiteralPath (Join-Path $publish $dependency) -PathType Leaf) "Dashboard discovery dependency is missing: $dependency"
-            }
+        foreach ($retired in @('AgentSignaler.Discovery.dll', 'Azure.Storage.Blobs.dll', 'Azure.Storage.Common.dll')) {
+            Assert-Msi (-not (Test-Path -LiteralPath (Join-Path $publish $retired))) "$name contains a retired Azure Blob discovery dependency: $retired"
         }
         $database = $installer.OpenDatabase($msi, 0)
         try {

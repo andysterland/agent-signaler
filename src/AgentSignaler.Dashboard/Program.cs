@@ -29,7 +29,7 @@ internal static class Program
 
         try
         {
-            using var updates = AppUpdateHost.Open(UpdatePackage.Dashboard);
+            using var updates = AppUpdateHost.OpenDashboard();
             using var instance = new SingleInstance();
             if (!instance.IsPrimary)
             {

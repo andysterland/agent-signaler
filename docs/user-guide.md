@@ -31,6 +31,28 @@ already-installed current-user x64 product. Portable/source builds can show
 release information but cannot use in-app MSI servicing. Do not elevate the
 updater or weaken PowerShell execution policy to work around a refusal.
 
+Dashboard startup is separate from in-app update eligibility. If installation
+eligibility cannot be verified, Dashboard can still open **only when read-only
+checks before and after eligibility verification establish that no installer
+maintenance records exist** for its executable directory. A persistent warning
+banner shows a privacy-safe diagnostic category such as
+`update_inventory_unavailable`, `update_inventory_ineligible`,
+`update_inventory_ambiguous`, `update_inventory_limit`, or
+`update_inventory_unverified`. **Update now** is disabled for that launch.
+Routine update checks, cached release offers, and **Later** cannot dismiss or
+replace this warning. Reopen Dashboard to verify eligibility again, or consult
+the signed MSI instructions before any manual servicing. Normal portable/source
+launches without MSI registration do not show this verification-failure warning.
+Client and Configurator startup behavior is unchanged.
+
+This is not a maintenance bypass: active or unresolved servicing still blocks
+Dashboard startup. Existing maintenance records with unverified MSI inventory,
+unreadable maintenance state, or failed coordinator gate checks also refuse
+startup (`update_maintenance_inventory_unavailable`,
+`update_maintenance_unverified`, `update_maintenance_active`, or
+`update_recovery_required`). Unknown maintenance is never treated as absent.
+Do not clear gates or start another installer to work around these refusals.
+
 Before closing anything, the apps prepare cooperatively. Save pending
 Configurator edits through its normal preview/apply flow, explicitly discard
 them, or cancel. Busy work, an unsupported instance or another Windows session
@@ -638,7 +660,7 @@ requires destructive confirmation and retains machine history/display name.
 Only that action or removing the machine deletes its mapping.
 
 Remote configuration v1–v4 continues to load status-only without rewriting files.
-Approved multi-target Apply explicitly migrates to v5 with `integrations`,
+Approved direct-mode multi-target Apply explicitly migrates legacy settings to v5 with `integrations`,
 `dashboardBaseUrl`, `detailedReportingEnabled` and `heartbeatIntervalSeconds`
 (default **300**). **Heartbeat interval (minutes)** accepts whole numbers **1–60**;
 zero does not disable reporting. UUID and metadata are retained.
@@ -654,40 +676,43 @@ Failed migration rollback restores prior readable configuration/runtime without
 starting a stopped reporter. Successfully saved false must not be replaced by
 older true during recovery; report a conflict instead. See `installers\README.md`.
 
-#### Opt-in private Azure discovery (configuration v6)
+#### Opt-in DNS TXT discovery (configuration v7)
 
-On **Connection**, select **Private Azure Blob discovery (opt in)** only when the
-Dashboard owner has explicitly provisioned discovery and supplied a connection
-package. Paste that bearer secret into the masked package control and choose
-**Import / replace package**. Import validates the package and prepares an
-immutable protected slot in memory; it does not write settings, contact Azure,
-install hooks or start Client. Remote machines need no Azure account or sign-in.
+On **Connection**, explicitly select DNS TXT discovery and enter
+`signaler.cablesorter.io`, or another controlled DNS record name. Publish one TXT
+record containing the current root HTTPS Dev Tunnel URL. For example:
 
-**Test connection** reads the private blob, verifies the pinned publisher identity,
-signature, freshness and available endpoint, and rejects revisions below the
-Client's existing protected replay checkpoint before checking Dashboard health. It is
-read-only: no saved credential, hook, replay checkpoint or active configuration is
-created, repaired or advanced. An unavailable or expired document blocks setup; there is no direct-URL
-fallback. Select **Apply settings**, inspect the redacted preview and confirm to
-save the immutable credential and configuration in one ownership-checked,
-recoverable transaction. A running Client must acknowledge both the configuration
-hash and credential revision before the UI calls them effective.
+```text
+Name: signaler.cablesorter.io
+Type: TXT
+Value: https://wg012m7b-51820.usw2.devtunnels.ms/
+TTL: 600 seconds
+```
 
-Only a current-user DPAPI-protected file contains the package/SAS. `remote.json`
-v6 contains the explicit connection mode, opaque protected slot/hash/revision,
-discovery identity and public verification key, never the bearer secret or a
-fallback endpoint. Previews and journals contain no plaintext credential; journals
-may contain opaque ciphertext for rollback. Sharing and integration preferences
-are retained during the explicit v6 upgrade. Upgrade Client, Relay and Configurator
-together; repair cannot downgrade v6 or silently discard its discovery state.
+The URL above is an example of the currently published address, not a permanent
+endpoint. The DNS owner must update the record when the tunnel URL changes;
+Dashboard does not change DNS. DNS records are public and provide no receiver
+authentication or endpoint secrecy.
 
-To replace access, import a fresh package and apply its new immutable slot. To
-remove saved access, choose **Remove saved credential**, enter a verified direct
-Dashboard URL, then preview and Apply. Until Apply succeeds the saved connection is
-unchanged. Explicit conversion retains v6; downgrade is blocked. Modified or
-foreign credential files are never overwritten or deleted. Reader-group
-revocation affects every machine using the same package; private discovery does
-not authenticate the anonymous Dashboard receiver.
+**Test connection** resolves the TXT record and checks Dashboard health without
+installing hooks or starting Client. Then use **Apply settings**, inspect the
+preview and confirm. Version 7 stores `connectionMode: "dnsTxtDiscovery"` and
+`dnsRecordName`, not the resolved URL or Azure credentials. Existing direct
+configurations remain unchanged unless explicitly switched. Upgrade Client,
+Relay and Configurator together; older binaries do not support this mode.
+
+Only running Client performs ongoing resolution and reporting. Hook execution
+does not query DNS or start Client. TTL bounds the endpoint lease; with the record
+above the address is refreshed within its ten-minute lifetime. Reporting suspends
+when the lease expires without a usable replacement. Invalid or ambiguous
+answers cannot select an arbitrary endpoint or fall back to a direct URL.
+See [DNS TXT discovery](dns-txt-discovery.md) for supported values and limitations.
+
+Azure Blob discovery and package import have been removed. Legacy private-Azure
+configurations are explicitly unsupported and are never silently redirected.
+Existing Azure storage resources, policies, SAS credentials, protected credential
+files and publisher state remain untouched. Direct-mode version 6 configurations
+remain supported. Any cloud cleanup or revocation is a separate authorized action.
 
 Newly applied `remote.json` files also include `relayPath`, the absolute path to
 `AgentSignaler.Relay.exe`. Set **Remote relay location** on the **Hooks** tab to
@@ -846,7 +871,7 @@ notification is sent. Ordinary health checks and relay reports do not show it.
 
 Relay `test --config <path>` uses `DashboardConnection.TestAsync` for read-only
 `GET /api/v5/health` with managed configuration (v4 fallback, then source-aware v3 for
-configuration v4/v5, or v2 for configuration v3, only on newer endpoint HTTP 404),
+configuration v4 and later, or v2 for configuration v3, only on newer endpoint HTTP 404),
 or `GET /health` with legacy
 v1/v2 configuration. It does not post status, register a machine, change
 session state, or refresh machine liveness. Like Configurator's test, it includes
@@ -854,13 +879,12 @@ the connection-test header and shows the dashboard's **Test connection** message
 The relay `heartbeat` command is removed.
 
 After an applied install/repair/update, Configurator remembers the selected mode
-and (for direct mode only) the dashboard URL in
-`configurator-settings.json`. These preferences contain no discovery package or
-SAS. A saved `remote.json` connection always takes precedence on reopening; a
-remembered URL cannot override discovery. Failed or cancelled tests do not replace
-the remembered preference. Direct-mode connection tests retain the existing
-last-successful-URL behavior. Private-discovery tests write no settings and never
-persist imported credentials or replay checkpoints.
+and its direct Dashboard URL or DNS record name in `configurator-settings.json`.
+A saved `remote.json` connection always takes precedence on reopening; a remembered
+URL cannot override DNS mode. Failed or cancelled tests do not replace the
+remembered preference. Direct-mode connection tests retain the existing
+last-successful-URL behavior. DNS testing does not persist the resolved tunnel URL.
+Old private-Azure mode preferences are not interpreted as DNS mode.
 
 Standalone CLI discovery is independent of Visual Studio: its owned hook stays under
 `%COPILOT_HOME%\hooks\`, or `%USERPROFILE%\.copilot\hooks\` when unset. An IDE-bundled
@@ -896,7 +920,7 @@ Configurator has three fixed, non-closable, non-reorderable tabs:
 
 | Tab | Controls and workflow |
 | --- | --- |
-| **Connection** | Explicit direct/private-discovery selector; direct Dashboard URL or masked package import/replace/remove; heartbeat; Share detailed conversations with its external-consent/PII notice; machine UUID; saved/effective runtime status; Test connection / Cancel test; Start client. |
+| **Connection** | Explicit direct/DNS TXT selector; direct Dashboard URL or DNS record name; heartbeat; Share detailed conversations with its external-consent/PII notice; machine UUID; saved/effective runtime status; Test connection / Cancel test; Start client. |
 | **Hooks** | Editable remote relay executable location, saved as `relayPath` in `remote.json` when applying settings. Discovered locations with Enable checkboxes and pending-change feedback. Refresh / Cancel discovery and Add custom location. Custom type and path editors appear only for explicitly added rows. |
 | **Review & maintenance** | Optional settings preview, integration transaction recovery, completion of a finished uninstall, cleanup of legacy diagnostic hooks, and full Uninstall integration. |
 
@@ -944,8 +968,9 @@ updated Remote binaries before using it.
 ### Independent CLI / Visual Studio / VS Code integration
 
 Upgrade Dashboard first, then co-install matching Client, Relay and Configurator.
-New previews save configuration **v5** with the complete selected target collection
-and require the source-aware Dashboard capability; there is no older-protocol fallback.
+New direct-mode previews save configuration **v5**; DNS TXT mode uses **v7**.
+Both retain the complete selected target collection and require the source-aware
+Dashboard capability; there is no older-protocol fallback.
 Older configurations remain readable and migration retains machine identity,
 heartbeat, startup ownership and existing owned hooks.
 
@@ -1075,7 +1100,7 @@ Sessions carry source kind, integration scope and opaque host session identity;
 reporter identity/heartbeat remains machine-wide. Identical session IDs across
 CLI, IDEs and profiles do not share state. Dashboard displays per-session sources.
 Only when v5 health returns 404 does negotiation try v4, with names omitted.
-If v4 also returns 404, configuration v4/v5 falls back to source-aware
+If v4 also returns 404, configuration v4 and later falls back to source-aware
 v3 health/reports, while legacy managed configuration v3 falls back to v2
 health/reports. V2/v3 snapshots use explicit legacy projections without the new
 fields; source-aware mode never falls back below v3 or strips source identity.

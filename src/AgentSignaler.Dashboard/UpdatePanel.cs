@@ -14,6 +14,7 @@ internal sealed class UpdatePanel : IAsyncDisposable
     private readonly UpdateMonitor monitor;
     private readonly DispatcherQueue dispatcher;
     private readonly Func<ReleaseCandidate, CancellationToken, Task<string?>> install;
+    private readonly UpdateEligibilityWarning? startupWarning;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Button update = new() { Content = "Update now" };
     private readonly Button later = new() { Content = "Later" };
@@ -39,10 +40,12 @@ internal sealed class UpdatePanel : IAsyncDisposable
 
     public UpdatePanel(UpdatePackage package, DispatcherQueue dispatcher,
         Func<ReleaseCandidate, CancellationToken, Task<string?>> install,
-        Func<CancellationToken, Task<IReadOnlyList<UpdateRecoveryNotice>>> readRecovery)
+        Func<CancellationToken, Task<IReadOnlyList<UpdateRecoveryNotice>>> readRecovery,
+        UpdateEligibilityWarning? startupWarning = null)
     {
         this.dispatcher = dispatcher;
         this.install = install;
+        this.startupWarning = startupWarning;
         monitor = UpdateMonitor.CreateDefault(package, AppContext.BaseDirectory);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(update);
@@ -54,7 +57,12 @@ internal sealed class UpdatePanel : IAsyncDisposable
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
         Settings.Children.Add(check);
         Settings.Children.Add(status);
-        later.Click += (_, _) => { dismissed = monitor.State.Candidate?.Id; Banner.IsOpen = false; };
+        later.Click += (_, _) =>
+        {
+            if (this.startupWarning is not null) return;
+            dismissed = monitor.State.Candidate?.Id;
+            Banner.IsOpen = false;
+        };
         check.Click += async (_, _) => await CheckAsync();
         update.Click += async (_, _) => await InstallAsync();
         monitor.Changed += Changed;
@@ -117,28 +125,22 @@ internal sealed class UpdatePanel : IAsyncDisposable
 
     private void Render(UpdateCheckResult state)
     {
-        var checking = state.Status.ToString() == "Checking";
-        var candidate = state.Status.ToString() == "Available" ? state.Candidate : null;
-        var description = state.Status.ToString() switch
-        {
-            "Checking" => "Checking for updates…",
-            "UpToDate" => "This installation is up to date.",
-            "Available" when candidate is not null => $"Version {candidate.Version}{(candidate.Prerelease ? " (preview)" : "")} is available. Update and restart.",
-            "CheckFailed" => "The update check failed. Try again later. The app will keep running.",
-            "CheckIncomplete" => "The update check is incomplete. No up-to-date result could be established. Try again later.",
-            _ => "Updates have not been checked yet."
-        };
+        var checking = state.Status == UpdateCheckStatus.Checking;
+        var presentation = UpdatePanelPresentation.Create(state, startupWarning, dismissed);
+        var candidate = presentation.Candidate;
+        var description = presentation.Message;
         status.Text = description + (state.CheckedAt is { } checkedAt ? $" Last check: {checkedAt.ToLocalTime():g}." : "")
             + (state.NextCheckAt is { } next ? $" Next check: {next.ToLocalTime():g}." : "")
             + (state.FromCache ? " Cached result." : "");
         check.IsEnabled = !busy && !checking && !conflicting;
-        update.IsEnabled = candidate is not null && !busy && !checking && !conflicting;
-        later.IsEnabled = !busy;
-        details.IsEnabled = !busy;
+        update.IsEnabled = presentation.CanUpdate && !busy && !checking && !conflicting;
+        later.IsEnabled = !busy && !presentation.IsWarning;
+        details.IsEnabled = !busy && !presentation.IsWarning;
+        later.Visibility = details.Visibility = presentation.IsWarning ? Visibility.Collapsed : Visibility.Visible;
         if (busy) return;
         Banner.Message = description;
-        Banner.Severity = InfoBarSeverity.Informational;
-        Banner.IsOpen = candidate is not null && dismissed != candidate.Id;
+        Banner.Severity = presentation.IsWarning ? InfoBarSeverity.Warning : InfoBarSeverity.Informational;
+        Banner.IsOpen = presentation.IsOpen;
         if (candidate is not null)
             details.NavigateUri = new Uri("https://github.com/andysterland/agent-signaler/releases/tag/" + Uri.EscapeDataString(candidate.Tag));
     }
@@ -170,7 +172,9 @@ internal sealed class UpdatePanel : IAsyncDisposable
 
     private async Task InstallAsync()
     {
-        if (busy || conflicting || disposed || monitor.State.Candidate is not { } candidate) return;
+        if (busy || conflicting || disposed ||
+            !UpdatePanelPresentation.Create(monitor.State, startupWarning, dismissed).CanUpdate ||
+            monitor.State.Candidate is not { } candidate) return;
         busy = true;
         Render(monitor.State);
         Banner.IsOpen = true;
@@ -208,8 +212,9 @@ internal sealed class UpdatePanel : IAsyncDisposable
             if (!disposed)
             {
                 check.IsEnabled = !conflicting;
-                update.IsEnabled = !conflicting && monitor.State.Status == UpdateCheckStatus.Available;
-                later.IsEnabled = details.IsEnabled = true;
+                var presentation = UpdatePanelPresentation.Create(monitor.State, startupWarning, dismissed);
+                update.IsEnabled = !conflicting && presentation.CanUpdate;
+                later.IsEnabled = details.IsEnabled = !presentation.IsWarning;
             }
         }
     }

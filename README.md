@@ -69,7 +69,7 @@ containers, and remote IDE extension hosts are not supported integration targets
 | Build installers | Visual Studio x64 C++ tools for native installer components. WiX **4.0.6** is restored through NuGet. |
 | Report real Copilot activity | Copilot CLI **1.0.80+** and an account authorized to use it, or an eligible local IDE/profile. IDE versions and events need independent verification; see [compatibility evidence](docs/user-guide.md#ide-compatibility-evidence-september-15-2026). |
 | Internet sharing, optional | Microsoft Dev Tunnels CLI **1.0.2030+fc9273aa0f**, a valid Microsoft-signed executable, and an explicitly signed-in account. Unsupported CLI versions fail visibly. |
-| Stable private connection discovery, optional | An existing reachable Azure Storage account allowing service SAS, explicit Dashboard-side Azure CLI sign-in and provisioning permissions. Remote computers need only the owner-issued connection package, not Azure sign-in or Azure CLI. See [private Azure discovery](docs/private-azure-discovery.md). |
+| DNS TXT connection discovery, optional | A public DNS TXT record containing the current HTTPS Dev Tunnel URL. Remote Clients use their configured DNS resolvers; no Azure Storage account, SAS, or connection package is required. See [DNS TXT discovery](docs/dns-txt-discovery.md). |
 | Dev Box navigation, optional | Azure CLI **2.90.0+**, an authorized Azure account and Dev Box, and Windows App **2.0.804.0+**. Automatic discovery needs Azure Resource Manager read access to Dev Centers. Discovery by Dev Center name additionally needs the `devcenter` extension. |
 
 LAN status monitoring needs no Azure or Dev Tunnels account. Merely registering
@@ -305,10 +305,10 @@ JSON edits. Both use `%LOCALAPPDATA%\AgentSignaler` by default.
 | Network mode and sharing | `ConnectionMode` defaults to Dev Tunnel mode; `AutoStartSharing` defaults to `true`. Configure through Dashboard's Network and Internet sharing tabs. |
 | Appearance | `Compact`, `ShowCompactViewWhenMinimized`, and `Theme` (`System`, `Light`, or `Dark`). |
 | Optional tools/discovery | `DevTunnelCliPath`, `AzureCliPath`, and either `DevBoxSubscriptionId` or `DevCenterName`. Paths must identify trusted executables; change running paths by saving and restarting. |
-| Remote connection | Direct mode retains `dashboardBaseUrl` in `remote.json`. Opt-in v6 private Azure discovery stores an opaque protected credential reference and signing trust metadata instead; the resolved URL is not written into settings. |
+| Remote connection | Direct mode retains `dashboardBaseUrl` in `remote.json`. Opt-in v7 DNS TXT discovery stores `dnsRecordName` instead; the resolved tunnel URL is not written into settings. |
 | Heartbeat | `heartbeatIntervalSeconds` in `remote.json`; default `300`, valid `60..3600` in whole-minute increments. Managed offline detection is twice the interval plus 60 seconds. |
 | Hook selection | Configurator manages `relayPath` and `integrations` in `remote.json` together with owned hook files. |
-| Conversation details | Remote v5/v6 `detailedReportingEnabled` and receiver `ReceiveDetailedConversations` both default to `true`. Disable explicitly for status-only use. HTTP/LAN and legacy remote v1-v4 remain status-only. |
+| Conversation details | Remote v5 and later `detailedReportingEnabled` and receiver `ReceiveDetailedConversations` both default to `true`. Disable explicitly for status-only use. HTTP/LAN and legacy remote v1-v4 remain status-only. |
 | Windows sign-in | Separate explicit Dashboard/Client startup controls. Client's setting manages an owned current-user Startup shortcut. |
 
 Dashboard settings use PascalCase JSON fields; remote configuration uses camelCase.
@@ -316,21 +316,18 @@ Do not hand-change schema versions or copy a live database to bypass ownership.
 Port/mode/CLI-path changes require restart; the running URL may differ from saved
 settings until then.
 
-Private discovery is an explicit setup in Dashboard's Internet sharing settings
-and Configurator's connection-method selector; existing direct installations are
-not migrated. The copied package is a bearer secret, not encryption or receiver
-authentication. A private container does not bypass Azure network restrictions,
-and the Dev Tunnel receiver remains anonymous. See the
-[permissions, recovery, credential lifecycle, and deferred release checks](docs/private-azure-discovery.md)
-before enabling this mode. Live Azure and manual Windows UI acceptance are not
-implied by local fake-backed tests.
+DNS TXT discovery is an explicit Configurator connection choice; existing direct
+installations are not migrated. For `signaler.cablesorter.io`, publish one TXT
+record containing the current root HTTPS Dev Tunnel URL. Dashboard does not
+create or update DNS records. Running Clients refresh the address according to
+its bounded DNS TTL and suspend reporting if no valid endpoint lease remains.
+DNS is public endpoint discovery, not receiver authentication or secrecy.
+See [configuration, validation, and migration guidance](docs/dns-txt-discovery.md).
 
-**Current platform block:** production Azure provisioning and stored-policy
-changes are deliberately unavailable because the selected container ACL API cannot
-provide the exact atomic concurrency protection required to preserve foreign
-policy edits. Local fake-backed workflows are implemented; direct URL mode remains
-available. The discovery guide explains the limitation rather than relaxing the
-ownership/concurrency guarantees.
+Azure Blob private discovery has been removed. Existing Azure resources and
+protected credential files are left untouched; the apps neither read nor revoke
+them. Legacy private-Azure configurations require explicit reconfiguration, not
+an automatic direct-URL or DNS fallback.
 
 ### Environment variables
 
@@ -368,7 +365,7 @@ sensitive work and is not automatically redacted. Session titles, persistent
 notes and mappings are user data; do not put secrets in them.
 The optional conversation prototype is separate:
 
-- New v5 configuration defaults detailed reporting on. Obtain external informed
+- New v5 and later configuration defaults detailed reporting on. Obtain external informed
   permission for content, destination, and retention before use; installation or
   an Apply confirmation does not establish consent.
 - Supported hooks can supply user text and tool names/status. Text may contain
