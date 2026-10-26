@@ -20,6 +20,8 @@ internal sealed record DashboardSettings
     public string? DevCenterName { get; init; }
     public bool AutoStartSharing { get; init; } = true;
     public bool ReceiveDetailedConversations { get; init; } = true;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastDevTunnelEndpointHash { get; init; }
     [JsonExtensionData]
     public IDictionary<string, JsonElement>? ExtensionData { get; init; }
     [JsonIgnore]
@@ -99,6 +101,8 @@ internal sealed record DashboardSettings
     {
         if (settings.Port is < 1024 or > 65535 ||
             settings.Theme is not ("System" or "Light" or "Dark") || !Enum.IsDefined(settings.ConnectionMode) ||
+            (settings.LastDevTunnelEndpointHash is { } hash &&
+                (hash.Length != 64 || hash.Any(c => !(c is >= '0' and <= '9' or >= 'A' and <= 'F')))) ||
             settings.AzureCliPath is { Length: > 32768 } || settings.DevTunnelCliPath is { Length: > 32768 } ||
             (settings.DevTunnelCliPath is { Length: > 0 } path &&
                 (!Path.IsPathFullyQualified(path) || path.Any(char.IsControl))))

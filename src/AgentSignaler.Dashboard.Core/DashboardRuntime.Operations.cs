@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using AgentSignaler.Service;
 using AgentSignaler.Tunneling;
 
@@ -17,7 +19,11 @@ public sealed partial class DashboardRuntime
         {
             RequireInstance(expectedHostInstanceId);
             if (Settings.Revision != expectedRevision) throw new RuntimeCommandException(new(1004, "expectedRevision", true));
-            next = next with { ExtensionData = Settings.State.Saved.ExtensionData };
+            next = next with
+            {
+                ExtensionData = Settings.State.Saved.ExtensionData,
+                LastDevTunnelEndpointHash = Settings.State.Saved.LastDevTunnelEndpointHash
+            };
             try { DashboardSettings.Validate(next); }
             catch (InvalidDataException) { throw new RuntimeCommandException(new(1001, "settings", false)); }
             token.ThrowIfCancellationRequested();
@@ -60,6 +66,7 @@ public sealed partial class DashboardRuntime
             var effective = current.Effective with
             {
                 AutoStartSharing = next.AutoStartSharing,
+                LastDevTunnelEndpointHash = next.LastDevTunnelEndpointHash,
                 DevBoxSubscriptionId = next.DevBoxSubscriptionId,
                 DevCenterName = next.DevCenterName,
                 ReceiveDetailedConversations = next.ReceiveDetailedConversations && detailedReceptionOptOut == detailedReceptionEnabled,
@@ -172,6 +179,17 @@ public sealed partial class DashboardRuntime
             };
             ApplyTunnelOutcome(outcome, commit, token);
             if (saveFailure is not null) throw new RuntimeCommandException(new(1008, "settings", true));
+            if (enabled && outcome.Status is { CanCopy: true, PublicUrl: { } publicUrl })
+            {
+                var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(publicUrl.AbsoluteUri)));
+                tunnelEndpointChanged.Publish(previousTunnelEndpointHash is not null && previousTunnelEndpointHash != hash);
+                if (Settings.State.Saved.LastDevTunnelEndpointHash != hash)
+                {
+                    next = Settings.State.Saved with { LastDevTunnelEndpointHash = hash };
+                    await SaveSettingsFileAsync(next, commit, token).ConfigureAwait(false);
+                    PublishSettings(next);
+                }
+            }
             return sharing.Publish(outcome.Status);
         }, cancellationToken, control: operation == RuntimeSharingOperation.Stop);
 

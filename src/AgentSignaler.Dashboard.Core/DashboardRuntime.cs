@@ -29,6 +29,8 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
     private readonly RuntimeDomain<RuntimeSettings> settings;
     private readonly RuntimeDomain<RuntimeReceiver> receiver;
     private readonly RuntimeDomain<TunnelStatus> sharing;
+    private readonly RuntimeDomain<bool> tunnelEndpointChanged;
+    private readonly string? previousTunnelEndpointHash;
     private readonly RuntimeDomain<DevBoxCatalogState> catalog;
     private readonly RuntimeDomain<IReadOnlyList<RuntimePrerequisite>> prerequisites;
     private MachineStore? store;
@@ -54,6 +56,7 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
     internal DomainSnapshot<RuntimeSettings> Settings => settings.Read();
     internal DomainSnapshot<RuntimeReceiver> Receiver => receiver.Read();
     internal DomainSnapshot<TunnelStatus> Sharing => sharing.Read();
+    internal DomainSnapshot<bool> TunnelEndpointChanged => tunnelEndpointChanged.Read();
     internal DomainSnapshot<DevBoxCatalogState> Catalog => catalog.Read();
     internal DomainSnapshot<IReadOnlyList<RuntimePrerequisite>> Prerequisites => prerequisites.Read();
     internal MachineStore? Store => store;
@@ -85,6 +88,8 @@ public sealed partial class DashboardRuntime : IAsyncDisposable
         receiver = new(HostInstanceId, "receiver", new(false, this.options.ReceiverPortOverride ?? effective.Port,
             effective.ConnectionMode, effective.ReceiveDetailedConversations), Publish);
         sharing = new(HostInstanceId, "sharing", new(TunnelState.Stopped, "Sharing is stopped."), Publish);
+        previousTunnelEndpointHash = saved.LastDevTunnelEndpointHash;
+        tunnelEndpointChanged = new(HostInstanceId, "sharingEndpoint", false, Publish);
         catalog = new(HostInstanceId, "devboxes", new(null, false, "Not refreshed", "Catalog has not been refreshed."), Publish);
         prerequisites = new(HostInstanceId, "prerequisites", Array.AsReadOnly(Enum.GetValues<RuntimePrerequisiteKind>()
             .Select(kind => new RuntimePrerequisite(kind.ToString(), null, PrerequisiteCheckState.NotChecked, null)).ToArray()), Publish);

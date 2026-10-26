@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using AgentSignaler.Contracts;
 using AgentSignaler.Dashboard;
@@ -931,6 +933,156 @@ public sealed class DashboardRuntimeTests
         Assert.True(runner.LoggedOut);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TunnelEndpointWarningComparesVerifiedEndpointsAcrossApplicationRuns(bool changed)
+    {
+        var runner = new FakeTunnelRunner();
+        var options = new DashboardRuntimeOptions { TunnelRunner = runner, TunnelHealthProbe = new FakeProbe() };
+        await using var fixture = new Fixture(options,
+            """{"ConnectionMode":"DevTunnel","AutoStartSharing":true}""");
+        var first = fixture.Runtime;
+        await first.InitializeAsync();
+        Assert.True(first.Sharing.State.CanCopy);
+        Assert.False(first.TunnelEndpointChanged.State);
+        var firstHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(first.Sharing.State.PublicUrl!.AbsoluteUri)));
+        Assert.Equal(firstHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+        Assert.DoesNotContain(".devtunnels.ms", File.ReadAllText(Path.Combine(fixture.Directory, "dashboard-settings.json")));
+        options = options with { ReceiverPortOverride = first.Receiver.State.Port };
+        Assert.True((await first.ShutdownAsync()).Clean);
+
+        runner.EndpointPrefix = changed ? "replacement" : "sample";
+        await using var second = new DashboardRuntime(fixture.Lease, options);
+        var warnings = new ConcurrentQueue<bool>();
+        second.Changed += change =>
+        {
+            if (change.Domain == "sharingEndpoint") warnings.Enqueue(second.TunnelEndpointChanged.State);
+        };
+        await second.InitializeAsync();
+        Assert.True(second.Sharing.State.CanCopy);
+        Assert.Equal(changed, second.TunnelEndpointChanged.State);
+        Assert.Equal(changed ? new[] { true } : [], warnings.ToArray());
+        var secondHash = DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash;
+        Assert.Equal(changed, firstHash != secondHash);
+        Assert.Equal(secondHash, second.Settings.State.Saved.LastDevTunnelEndpointHash);
+        Assert.True((await second.ShutdownAsync()).Clean);
+
+        await using var third = new DashboardRuntime(fixture.Lease, options);
+        await third.InitializeAsync();
+        Assert.True(third.Sharing.State.CanCopy);
+        Assert.False(third.TunnelEndpointChanged.State);
+        Assert.Equal(secondHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+    }
+
+    [Fact]
+    public async Task TunnelEndpointWarningWaitsForManualStartAndKeepsThePreviousRunBaseline()
+    {
+        var previousHash = new string('A', 64);
+        await using var fixture = new Fixture(new() { TunnelRunner = new FakeTunnelRunner(), TunnelHealthProbe = new FakeProbe() },
+            JsonSerializer.Serialize(new DashboardSettings { AutoStartSharing = false, LastDevTunnelEndpointHash = previousHash }));
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        Assert.False(runtime.TunnelEndpointChanged.State);
+        Assert.Equal(previousHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+
+        Assert.True((await runtime.SharingAsync(RuntimeSharingOperation.Start)).Succeeded);
+        Assert.True(runtime.TunnelEndpointChanged.State);
+        var hash = runtime.Settings.State.Saved.LastDevTunnelEndpointHash;
+        Assert.NotNull(hash);
+        Assert.NotEqual(previousHash, hash);
+        var warningRevision = runtime.TunnelEndpointChanged.Revision;
+        var edited = runtime.Settings.State.Saved with { LastDevTunnelEndpointHash = null, Compact = false };
+        Assert.True((await runtime.UpdateSettingsAsync(edited, runtime.HostInstanceId, runtime.Settings.Revision)).Succeeded);
+        Assert.Equal(hash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+        Assert.True((await runtime.SharingAsync(RuntimeSharingOperation.Stop)).Succeeded);
+        Assert.True((await runtime.SharingAsync(RuntimeSharingOperation.Start)).Succeeded);
+        Assert.True(runtime.TunnelEndpointChanged.State);
+        Assert.Equal(warningRevision, runtime.TunnelEndpointChanged.Revision);
+        Assert.Equal(hash, runtime.Settings.State.Saved.LastDevTunnelEndpointHash);
+    }
+
+    [Fact]
+    public async Task TunnelEndpointHistoryIsPreservedWithoutWarningInLanMode()
+    {
+        var previousHash = new string('A', 64);
+        await using var fixture = new Fixture(json: JsonSerializer.Serialize(new DashboardSettings
+        {
+            ConnectionMode = DashboardConnectionMode.Lan, LastDevTunnelEndpointHash = previousHash
+        }));
+        await fixture.Runtime.InitializeAsync();
+        Assert.Null(fixture.Runtime.Tunnel);
+        Assert.False(fixture.Runtime.TunnelEndpointChanged.State);
+        Assert.Equal(previousHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TunnelEndpointWarningDoesNotRememberFailedOrCancelledPublicVerification(bool cancel)
+    {
+        var previousHash = new string('A', 64);
+        var verifying = Signal();
+        var runner = new FakeTunnelRunner();
+        await using var fixture = new Fixture(new()
+        {
+            TunnelRunner = runner,
+            TunnelHealthProbe = new CallbackTunnelProbe(async (uri, token) =>
+            {
+                if (uri.Scheme != "https") return;
+                verifying.TrySetResult();
+                if (cancel) await Task.Delay(Timeout.Infinite, token);
+                throw new HttpRequestException("Synthetic public verification failure.");
+            })
+        }, JsonSerializer.Serialize(new DashboardSettings { AutoStartSharing = false, LastDevTunnelEndpointHash = previousHash }));
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        var starting = runtime.SharingAsync(RuntimeSharingOperation.Start);
+        await verifying.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancel) runtime.CancelSharing();
+        Assert.False((await starting.WaitAsync(TimeSpan.FromSeconds(5))).Succeeded);
+        Assert.False(runtime.Sharing.State.CanCopy);
+        Assert.False(runtime.TunnelEndpointChanged.State);
+        Assert.Equal(previousHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+        Assert.True(runner.Host!.Disposed);
+    }
+
+    [Fact]
+    public async Task TunnelEndpointPersistenceFailurePreservesBaselineAndReportsFailureWithoutHidingWarning()
+    {
+        var previousHash = new string('A', 64);
+        FileStream? locked = null;
+        string? settingsPath = null;
+        await using var fixture = new Fixture(new()
+        {
+            TunnelRunner = new FakeTunnelRunner(),
+            TunnelHealthProbe = new CallbackTunnelProbe((uri, _) =>
+            {
+                if (uri.Scheme == "https" && locked is null)
+                    locked = new FileStream(settingsPath!, FileMode.Open, FileAccess.Read, FileShare.Read);
+                return Task.CompletedTask;
+            })
+        }, JsonSerializer.Serialize(new DashboardSettings { AutoStartSharing = false, LastDevTunnelEndpointHash = previousHash }));
+        settingsPath = Path.Combine(fixture.Directory, "dashboard-settings.json");
+        var runtime = fixture.Runtime;
+        await runtime.InitializeAsync();
+        try
+        {
+            var result = await runtime.SharingAsync(RuntimeSharingOperation.Start);
+            Assert.Equal(1008, result.Error!.Code);
+            Assert.Equal(RuntimeCommitState.Committed, result.CommitState);
+            Assert.True(runtime.Sharing.State.CanCopy);
+            Assert.True(runtime.TunnelEndpointChanged.State);
+            Assert.Equal(previousHash, runtime.Settings.State.Saved.LastDevTunnelEndpointHash);
+            Assert.Equal(previousHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+            Assert.Empty(Directory.GetFiles(fixture.Directory, "*.new"));
+        }
+        finally { locked?.Dispose(); }
+        Assert.True((await runtime.SharingAsync(RuntimeSharingOperation.Start)).Succeeded);
+        Assert.True(runtime.TunnelEndpointChanged.State);
+        Assert.NotEqual(previousHash, DashboardSettings.Load(fixture.Directory).LastDevTunnelEndpointHash);
+    }
+
     [Fact]
     public async Task StopSharingStopsOwnedHostDespiteCatalogSettingsGateAndPreservesBusyPrivacyOptOut()
     {
@@ -1184,6 +1336,10 @@ public sealed class DashboardRuntimeTests
     {
         public Task VerifyAsync(Uri baseUri, CancellationToken token) => Task.CompletedTask;
     }
+    private sealed class CallbackTunnelProbe(Func<Uri, CancellationToken, Task> verify) : ITunnelHealthProbe
+    {
+        public Task VerifyAsync(Uri baseUri, CancellationToken token) => verify(baseUri, token);
+    }
     internal sealed class FakeTunnelHost : ITunnelHostProcess
     {
         private readonly TaskCompletionSource<int> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1200,6 +1356,7 @@ public sealed class DashboardRuntimeTests
         private bool hasPort, hasAcl, absent;
         public bool LoggedOut { get; private set; }
         public FakeTunnelHost? Host { get; private set; }
+        public string EndpointPrefix { get; set; } = "sample";
         public Task<CliCommandResult> RunAsync(string executable, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
@@ -1247,7 +1404,7 @@ public sealed class DashboardRuntimeTests
         {
             Host = new();
             outputLine($"Hosting port: {port}");
-            outputLine($"Connect via browser: https://sample-{port}.usw2.devtunnels.ms");
+            outputLine($"Connect via browser: https://{EndpointPrefix}-{port}.usw2.devtunnels.ms");
             outputLine($"Ready to accept connections for tunnel: {id}");
             return Task.FromResult<ITunnelHostProcess>(Host);
         }

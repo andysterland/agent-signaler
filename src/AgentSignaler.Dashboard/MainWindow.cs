@@ -149,7 +149,7 @@ internal sealed partial class MainWindow : Window
 
     private void BuildLayout()
     {
-        for (var i = 0; i < 6; i++) _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < 7; i++) _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var heading = new Grid { ColumnSpacing = 16, Margin = new Thickness(0, 0, 0, 12) };
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -242,6 +242,7 @@ internal sealed partial class MainWindow : Window
         AddRow(_problem, 2);
         AddRow(_connectionTest, 3);
         InitializeUpdates();
+        AddRow(_tunnelEndpointWarning, 6);
 
         var body = _machineBody;
         var scroll = new ScrollViewer
@@ -258,7 +259,7 @@ internal sealed partial class MainWindow : Window
         _empty.Text = "Waiting for machines\nConfigure a remote client with the URL above.";
         _empty.TextAlignment = TextAlignment.Center;
         body.Children.Add(_empty);
-        AddRow(body, 6);
+        AddRow(body, 7);
     }
 
     private static StackPanel ActionContent(Symbol symbol, string label)
@@ -292,7 +293,8 @@ internal sealed partial class MainWindow : Window
         {
             if (!_exiting) UpdateStartupPresentation();
         }
-        if (!_exiting && background && _tray is { IsAvailable: true } && !_problem.IsOpen) AppWindow.Hide();
+        if (!_exiting && background && _tray is { IsAvailable: true } && !_problem.IsOpen &&
+            !_tunnelEndpointWarning.IsOpen) AppWindow.Hide();
     }
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)

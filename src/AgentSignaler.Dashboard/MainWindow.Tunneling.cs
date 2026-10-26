@@ -27,6 +27,14 @@ internal sealed partial class MainWindow
     private string? _effectiveTunnelCliPath;
     private int _ownedTunnelPort;
     private bool _transcriptTransportSuspended;
+    private bool _tunnelEndpointWarningShown;
+    private readonly InfoBar _tunnelEndpointWarning = new()
+    {
+        IsClosable = true, Severity = InfoBarSeverity.Warning,
+        Title = "Dev Tunnel endpoint changed",
+        Message = "The Dev Tunnel URL has changed since Dashboard last ran. " +
+            "Copy the current URL above and update remote clients using the previous URL so they can keep reporting."
+    };
 
     private ConnectionPresentation GetConnectionPresentation() =>
         ConnectionPresentation.Create(_runningMode, _running, Dns.GetHostName(), _runningPort,
@@ -40,6 +48,12 @@ internal sealed partial class MainWindow
         _host.Text = view.CopyUrl ?? "";
         _copyUrl.IsEnabled = view.CopyUrl is not null;
         _copyUrl.Visibility = view.CopyUrl is not null ? Visibility.Visible : Visibility.Collapsed;
+        var endpointChanged = _runtime.TunnelEndpointChanged.State;
+        if (!endpointChanged || !_tunnelEndpointWarningShown)
+        {
+            _tunnelEndpointWarning.IsOpen = endpointChanged;
+            _tunnelEndpointWarningShown = endpointChanged;
+        }
         UpdateTunnelControls();
     }
 

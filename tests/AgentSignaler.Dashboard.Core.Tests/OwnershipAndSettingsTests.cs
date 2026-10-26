@@ -51,6 +51,32 @@ public sealed class OwnershipAndSettingsTests
         Assert.Equal(51820, DashboardSettings.FromJson("{}").Port);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(63)]
+    [InlineData(65)]
+    public void TunnelEndpointFingerprintRejectsNonSha256Lengths(int length) =>
+        Assert.Throws<InvalidDataException>(() => DashboardSettings.FromJson(
+            JsonSerializer.Serialize(new { LastDevTunnelEndpointHash = new string('A', length) })));
+
+    [Theory]
+    [InlineData('G')]
+    [InlineData('a')]
+    [InlineData('/')]
+    [InlineData('\n')]
+    public void TunnelEndpointFingerprintRejectsNonCanonicalHex(char character) =>
+        Assert.Throws<InvalidDataException>(() => DashboardSettings.FromJson(
+            JsonSerializer.Serialize(new { LastDevTunnelEndpointHash = new string(character, 64) })));
+
+    [Fact]
+    public void TunnelEndpointFingerprintIsOptionalAndAcceptsExactlyOneCanonicalSha256()
+    {
+        Assert.Null(DashboardSettings.FromJson("{}").LastDevTunnelEndpointHash);
+        var hash = string.Concat(Enumerable.Repeat("0123456789ABCDEF", 4));
+        var json = JsonSerializer.Serialize(new { LastDevTunnelEndpointHash = hash });
+        Assert.Equal(hash, DashboardSettings.FromJson(json).LastDevTunnelEndpointHash);
+    }
+
     [Fact]
     public void LegacyRpcPortMigrationPreservesNestedAndCaseVariantExtensionFields()
     {
