@@ -33,7 +33,13 @@ internal sealed partial class MainWindow
         IsClosable = true, Severity = InfoBarSeverity.Warning,
         Title = "Dev Tunnel endpoint changed",
         Message = "The Dev Tunnel URL has changed since Dashboard last ran. " +
-            "Copy the current URL above and update remote clients using the previous URL so they can keep reporting."
+            "Copy the current URL above and update the DNS TXT record in GoDaddy for cablesorter.io, " +
+            "or update remote clients configured with the previous URL so they can keep reporting.",
+        ActionButton = new HyperlinkButton
+        {
+            Content = "Open GoDaddy domain settings",
+            NavigateUri = new Uri("https://dcc.godaddy.com/control/portfolio/cablesorter.io/settings?ventureId=6c1ab7c9-8f71-4707-b471-d2c5507f8b92&ua_placement=shared_header")
+        }
     };
 
     private ConnectionPresentation GetConnectionPresentation() =>
